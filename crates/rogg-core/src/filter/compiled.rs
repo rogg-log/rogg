@@ -69,6 +69,17 @@ impl TermSet {
                 for m in ac.find_overlapping_iter(region) {
                     let pos = base + m.start() as u64;
                     let rel = starts.partition_point(|&s| s <= pos) - 1;
+                    // The region includes line terminators; a match must end within the line's CR-stripped content.
+                    let mut content_end = match starts.get(rel + 1) {
+                        Some(&next) => next - 1,
+                        None => base + region.len() as u64,
+                    };
+                    if content_end > starts[rel] && text.bytes()[content_end as usize - 1] == b'\r' {
+                        content_end -= 1;
+                    }
+                    if base + m.end() as u64 > content_end {
+                        continue;
+                    }
                     hit[rel] = true;
                     let line = lines.start + rel as u64;
                     let term = terms[m.pattern().as_usize()];
@@ -235,6 +246,30 @@ mod tests {
         assert_eq!(scan_all(&re, &t).matches, vec![0]);
         let plain_cr = spec(&[("ok", Include)]);
         assert_eq!(scan_all(&plain_cr, &t).matches, vec![1]);
+        let plain_with_cr = spec(&[("ok\r", Include)]);
+        assert_eq!(scan_all(&plain_with_cr, &t).matches, Vec::<u64>::new());
+    }
+
+    #[test]
+    fn plain_matches_never_span_line_terminators() {
+        let inputs: [&[u8]; 4] = [b"a\nb\nc", b"a\r\nb\r\nc", b"ok\r\nok", b"ok\r\nx"];
+        for bytes in inputs {
+            let t = LogText::from_bytes(bytes.to_vec());
+            for term in ["a\nb", "a\r\nb", "ok\r", "ok\r\nx", "\nb", "\r"] {
+                let s = spec(&[(term, Include)]);
+                let c = CompiledFilter::compile(&s).unwrap();
+                let by_line: Vec<u64> = (0..t.line_count()).filter(|&i| c.line_matches(t.line(i))).collect();
+                let r = c.scan(&t, 0..t.line_count());
+                assert!(by_line.is_empty(), "{term:?} on {bytes:?}");
+                assert_eq!(r.matches, by_line, "{term:?} on {bytes:?}");
+                assert_eq!(r.term_hits, vec![0], "{term:?} on {bytes:?}");
+            }
+            // An exclude term spanning a terminator must not exclude anything.
+            let s = spec(&[("ok", Include), ("ok\r", Exclude)]);
+            let c = CompiledFilter::compile(&s).unwrap();
+            let by_line: Vec<u64> = (0..t.line_count()).filter(|&i| c.line_matches(t.line(i))).collect();
+            assert_eq!(c.scan(&t, 0..t.line_count()).matches, by_line, "{bytes:?}");
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@ use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState};
 use rogg_core::text::LogText;
 
 const WORDS: &[&str] = &["error", "timeout", "retry", "ok", "ERROR", "Time", "req_1", "req_22", "x", "é"];
-const TERMS: &[&str] = &["error", "time", "timeout", "retry", "req_", "ok", "é", r"req_\d+", "^ok", "error|retry", "t.me"];
+const TERMS: &[&str] = &["error", "time", "timeout", "retry", "req_", "ok", "é", r"req_\d+", "^ok", "error|retry", "t.me", "ok\r", "x\ne", "\n", "ok\r\nx"];
 
 fn naive(line: &str, spec: &FilterSpec) -> bool {
     let hit = |t: &Term| {
@@ -63,6 +63,8 @@ proptest! {
             got.extend(compiled.scan(&text, start..end).matches);
             start = end;
         }
+        let by_line: Vec<u64> = (0..text.line_count()).filter(|&i| compiled.line_matches(text.line(i))).collect();
+        prop_assert_eq!(&got, &by_line);
         let expected: Vec<u64> = (0..text.line_count()).filter(|&i| naive(&text.line_text(i), &spec)).collect();
         prop_assert_eq!(got, expected);
     }
