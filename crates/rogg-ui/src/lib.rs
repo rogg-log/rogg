@@ -10,3 +10,13 @@ pub use theme::{ActiveRoggTheme, RoggTheme};
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
+
+pub mod controls;
+
+use gpui_kit::{App, Window};
+use std::rc::Rc;
+
+/// Callback with no payload, used by every component.
+pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
+/// Callback carrying an index (tab, chip, menu item...).
+pub type IndexCallback = Rc<dyn Fn(usize, &mut Window, &mut App)>;
