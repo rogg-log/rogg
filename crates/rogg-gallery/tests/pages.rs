@@ -66,3 +66,45 @@ fn replica_starts_in_reference_state(cx: &mut TestAppContext) {
     let matched = replica.read_with(cx, |r, _| r.filtered.matched.len());
     assert!(matched > 6);
 }
+
+#[gpui_kit::test]
+fn closing_tabs_follows_reference_active_tab_rules(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
+    });
+    let (_handle, view) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| cx.new(|cx| GalleryView::new(Page::Replica, false, window, cx))).unwrap()
+    });
+    let replica = view.read_with(cx, |v, _| v.replica.clone());
+    let state = |cx: &mut TestAppContext| replica.read_with(cx, |r, _| (r.tabs.clone(), r.tabs[r.active_tab]));
+    let setup = |cx: &mut TestAppContext, active: usize| {
+        replica.update(cx, |r, cx| {
+            r.tabs = vec!["a", "b", "c"];
+            r.select_tab(active, cx);
+        })
+    };
+
+    setup(cx, 1);
+    replica.update(cx, |r, cx| r.close_tab(0, cx));
+    assert_eq!(state(cx), (vec!["b", "c"], "b"), "closing left of the active tab keeps it active");
+
+    setup(cx, 1);
+    replica.update(cx, |r, cx| r.close_tab(1, cx));
+    assert_eq!(state(cx), (vec!["a", "c"], "c"), "closing the active tab selects the tab now at its index");
+
+    setup(cx, 2);
+    replica.update(cx, |r, cx| r.close_tab(2, cx));
+    assert_eq!(state(cx), (vec!["a", "b"], "b"), "closing the active last tab selects the new last tab");
+
+    setup(cx, 1);
+    replica.update(cx, |r, cx| r.close_tab(2, cx));
+    assert_eq!(state(cx), (vec!["a", "b"], "b"), "closing right of the active tab changes nothing");
+
+    replica.update(cx, |r, cx| {
+        r.tabs = vec!["a"];
+        r.select_tab(0, cx);
+        r.close_tab(0, cx);
+    });
+    assert_eq!(state(cx), (vec!["a"], "a"), "closing the only tab is a no-op");
+}

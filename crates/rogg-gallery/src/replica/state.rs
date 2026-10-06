@@ -238,7 +238,13 @@ impl ReplicaState {
     pub fn close_tab(&mut self, i: usize, cx: &mut Context<Self>) {
         if self.tabs.len() > 1 && i < self.tabs.len() {
             self.tabs.remove(i);
-            self.active_tab = self.active_tab.min(self.tabs.len() - 1);
+            // Reference closeTab: only closing the active tab re-selects (the tab now at its index);
+            // closing to the left shifts the active index so the same tab stays active.
+            if i < self.active_tab {
+                self.active_tab -= 1;
+            } else if i == self.active_tab {
+                self.active_tab = i.min(self.tabs.len() - 1);
+            }
         }
         cx.notify();
     }
