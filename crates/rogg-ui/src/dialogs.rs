@@ -233,12 +233,15 @@ impl RenderOnce for PickerItem {
             .w_full()
             .gap(px(10.))
             .p(px(9.))
+            // A reference <button>: 1px transparent border, icon in the inherited text color.
+            .border_1()
+            .border_color(Color::TRANSPARENT)
             .rounded(px(5.))
             .text_size(px(12.))
             .cursor_pointer()
             .when(self.current, |d| d.bg(p.selection))
             .hover(move |s| s.bg(p.hover))
-            .child(icon(IconName::File).size(px(15.)).text_color(p.muted))
+            .child(icon(IconName::File).size(px(15.)).text_color(p.text))
             .child(self.label)
             .when(self.current, |d| d.child(div().ml_auto().text_color(p.accent).child("✓")))
             .on_click(move |_, w, cx| {
