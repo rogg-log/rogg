@@ -60,19 +60,25 @@ is within 5.8 RGB distance.
 - Tab picker rows — height / icon color — 2 px short each (dialog −5.9 px), muted icon → transparent button border, icon in text color (dialog +0.1 px) (1aa4c96)
 
 ## Accepted differences
-- Text rasterization: Chromium vs CoreText anti-aliasing (expected, not fixable). — pending user
-- Font weights 550/650 render as the nearest installed SF Pro face. — pending user
-- "Open as tab" tool button in the filtered pane header (spec §5.3 addition); it shifts the bottom find field 100 px left (find-bottom Δx −100.1). — pending user
-- Monospace font: headless Chromium resolves the reference's `"SFMono-Regular", Consolas, monospace` to a fallback (CDP reports Courier: unslashed zero, 7.2 px advance at 12 px), while rogg uses the system monospace (SF Mono, spec Appearance "System monospace · 12 px"). Log columns sit 7–14 px further right, chips are 1–4 px wider (token-3 Δx 11.7 accumulated), `.*`/`Aa` flags 1.4 px wider, shortcut keys differ in shape. — pending user (see open question 1)
-- Gap rows ("··· 4 lines omitted"): Chromium renders `9px -apple-system` there as Helvetica; rogg uses the system UI font, so the label is about 10 % wider. — pending user
-- Brand "rogg" `letter-spacing:-.7px` is not applied: gpui has no letter spacing and per-glyph emulation does not narrow it (glyph boxes round up), so the brand is about 2 px wider. FILES / RECENT use per-glyph tracking and end up about 1.5 px wider than the reference. — pending user
-- Scrollbar thumb: the gallery draws the thin `#4b545d` thumb whenever a pane overflows (spec §5.5); headless Chromium uses hidden macOS overlay scrollbars, so the reference shows none (visible in the top pane and in the comfortable bottom pane). — pending user (see open question 2)
-- Line-box rounding: Chromium rounds `line-height: normal` per font (ascent and descent separately), gpui uses 1.2 em: the Profile button is 23 vs 24 px, dialog rule rows 43.5 vs 44 px and shortcut rows 33.5 vs 34 px (dialogs end up −2.9 to +1.1 px). The dialog-capture "filter band bg" probes (41.7 / 53.8) sample a dialog divider at these sub-pixel offsets, not the band. — pending user
-- Traffic lights are drawn only for the capture; the native window shows the real ones. — pending user
+- Text rasterization: Chromium vs CoreText anti-aliasing (expected, not fixable). — accepted (user decisions 2026-10-07)
+- Font weights 550/650 render as the nearest installed SF Pro face. — accepted (user decisions 2026-10-07)
+- "Open as tab" tool button in the filtered pane header (spec §5.3 addition); it shifts the bottom find field 100 px left (find-bottom Δx −100.1). — accepted (user decisions 2026-10-07)
+- Monospace font: headless Chromium resolves the reference's `"SFMono-Regular", Consolas, monospace` to a fallback (CDP reports Courier: unslashed zero, 7.2 px advance at 12 px), while rogg uses the system monospace (SF Mono, spec Appearance "System monospace · 12 px"). Log columns sit 7–14 px further right, chips are 1–4 px wider (token-3 Δx 11.7 accumulated), `.*`/`Aa` flags 1.4 px wider, shortcut keys differ in shape. — accepted by user 2026-10-07 (keep SF Mono)
+- Gap rows ("··· 4 lines omitted"): Chromium renders `9px -apple-system` there as Helvetica; rogg uses the system UI font, so the label is about 10 % wider. — accepted by user 2026-10-07 (keep system UI font)
+- Brand "rogg" `letter-spacing:-.7px` is not applied: gpui has no letter spacing and per-glyph emulation does not narrow it (glyph boxes round up), so the brand is about 2 px wider. FILES / RECENT use per-glyph tracking and end up about 1.5 px wider than the reference. — accepted by user 2026-10-07
+- Scrollbar thumb: the gallery draws the thin `#4b545d` thumb whenever a pane overflows (spec §5.5); headless Chromium uses hidden macOS overlay scrollbars, so the reference shows none (visible in the top pane and in the comfortable bottom pane). — accepted by user 2026-10-07 (keep always-visible thumb)
+- Line-box rounding: Chromium rounds `line-height: normal` per font (ascent and descent separately), gpui uses 1.2 em: the Profile button is 23 vs 24 px, dialog rule rows 43.5 vs 44 px and shortcut rows 33.5 vs 34 px (dialogs end up −2.9 to +1.1 px). The dialog-capture "filter band bg" probes (41.7 / 53.8) sample a dialog divider at these sub-pixel offsets, not the band. — accepted (user decisions 2026-10-07)
+- Traffic lights are drawn only for the capture; the native window shows the real ones. — accepted (user decisions 2026-10-07)
 - Missing keys: the reference renders all 40 top-pane rows, the virtualized gallery only the visible ones (rows 15–19 compact, 12–19 comfortable are off-screen). Not a visual difference.
 - Not a difference (checked): the dialog backdrop matches the reference pixel for pixel in both themes (`#0007`; dark backdrop #0d0f11 vs #0d0f11, light #868685 vs #868685). The weak dark / strong light contrast is how the reference itself looks. The "⌄" after "Profile: Services" and "History" is equally small in the reference (same glyph and size). Timestamps are already faint (`.timestamp{color:var(--faint)}`).
 
-## Open questions for the user
+## Accepted additions
+- Sidebar folder rows have a hover background and 4 px rounding; the reference has none (`.folder` is a plain div). Kept by user decision 2026-10-07.
+
+## User decisions (2026-10-07)
+1. Log monospace: keep SF Mono. 2. Scrollbars: keep the always-visible thin thumb. 3. Gap-row label: keep the system UI font. 4. Brand / label letter-spacing approximation: acceptable. 5. Folder-row hover: keep.
+
+## Open questions for the user (answered above)
 1. Log monospace font: keep SF Mono (the system monospace named in the spec, slashed zero, slightly wider), or match the Courier-like fallback the reference shows in Chromium? Recommendation: keep SF Mono.
 2. Scrollbars: keep the always-visible thin thumb (spec §5.5), or behave like macOS overlay scrollbars (thumb only while scrolling), which is what the browser shows?
 3. Gap-row label font: keep the system UI font, or switch to Helvetica to match the Chromium rendering of the reference?
