@@ -21,3 +21,4 @@ pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
 /// Callback carrying an index (tab, chip, menu item...).
 pub type IndexCallback = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 pub mod titlebar;
+pub mod sidebar;
