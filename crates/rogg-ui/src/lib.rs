@@ -23,3 +23,4 @@ pub type IndexCallback = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 pub mod titlebar;
 pub mod sidebar;
 pub mod chrome;
+pub mod filter;
