@@ -28,6 +28,8 @@ impl Density {
 
 /// Fixed sizes from the reference CSS, in logical px.
 pub mod size {
+    /// CSS `line-height: normal` for the system UI font (Chromium rounds SF Pro to ≈1.2 em); gpui defaults to 1.618.
+    pub const LINE_HEIGHT: f32 = 1.2;
     pub const TITLEBAR_H: f32 = 42.;
     pub const SIDEBAR_W: f32 = 211.;
     pub const SIDEBAR_MIN_W: f32 = 155.;

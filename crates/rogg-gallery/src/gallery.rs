@@ -1,10 +1,10 @@
 use crate::{fixtures, pages};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
-use gpui_kit::{AppContext, Context, Entity, FontWeight, SharedString, Window, div, px};
+use gpui_kit::{AppContext, Context, Entity, FontWeight, SharedString, Window, div, px, relative};
 use rogg_ui::controls::{FindField, Segmented, TextButton};
 use rogg_ui::logview::{LogViewState, VecRows};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme, size};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -124,7 +124,7 @@ impl Render for GalleryView {
         let p = t.palette;
         let content = pages::render(self, window, cx);
         if !self.chrome {
-            return div().size_full().bg(p.bg).text_color(p.text).font_family(t.fonts.ui.clone()).text_size(px(13.)).child(content).into_any_element();
+            return div().size_full().bg(p.bg).text_color(p.text).font_family(t.fonts.ui.clone()).text_size(px(13.)).line_height(relative(size::LINE_HEIGHT)).child(content).into_any_element();
         }
         let view = cx.entity().downgrade();
         let nav = div()
@@ -180,6 +180,7 @@ impl Render for GalleryView {
             .text_color(p.text)
             .font_family(t.fonts.ui.clone())
             .text_size(px(13.))
+            .line_height(relative(size::LINE_HEIGHT))
             .child(nav)
             .child(
                 div()

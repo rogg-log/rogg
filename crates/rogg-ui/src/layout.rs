@@ -1,4 +1,4 @@
-use crate::theme::ActiveRoggTheme;
+use crate::theme::{ActiveRoggTheme, size};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, TestSupportExt, Window, div, px, relative};
 
@@ -64,6 +64,7 @@ impl RenderOnce for MainWindowLayout {
             .text_color(p.text)
             .font_family(t.fonts.ui.clone())
             .text_size(px(13.))
+            .line_height(relative(size::LINE_HEIGHT))
             .child(parts.titlebar)
             .child(
                 div()
