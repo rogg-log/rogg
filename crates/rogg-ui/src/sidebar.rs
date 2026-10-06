@@ -92,8 +92,17 @@ impl Default for Sidebar {
 }
 
 /// `.small-label`: 10px uppercase, 600 weight, muted.
+/// `.small-label`: 10px uppercase with `letter-spacing:1px`. gpui has no letter spacing, so each glyph is its own
+/// flex item with a 1px gap (plus the trailing 1px CSS adds after the last glyph).
 fn small_label(text: &'static str, p: &Palette) -> gpui_kit::Div {
-    div().text_size(px(10.)).font_weight(FontWeight(600.)).text_color(p.muted).child(text.to_uppercase())
+    div()
+        .flex()
+        .gap(px(1.))
+        .pr(px(1.))
+        .text_size(px(10.))
+        .font_weight(FontWeight(600.))
+        .text_color(p.muted)
+        .children(text.to_uppercase().chars().map(|c| div().child(c.to_string())))
 }
 
 fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -> AnyElement {
