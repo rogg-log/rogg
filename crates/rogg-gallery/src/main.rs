@@ -6,6 +6,21 @@ use std::time::Duration;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--capture") {
+        match rogg_gallery::capture::CaptureOptions::parse(&args) {
+            Ok(opts) => {
+                if let Err(e) = rogg_gallery::capture::run(opts) {
+                    eprintln!("capture failed: {e:#}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+    }
     let page = args
         .iter()
         .position(|a| a == "--page")

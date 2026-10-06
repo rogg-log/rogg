@@ -107,6 +107,17 @@ impl GalleryView {
     }
 }
 
+impl GalleryView {
+    /// Page only, no gallery chrome; the replica opens `dialog` if given.
+    pub fn for_capture(page: Page, dialog: Option<crate::replica::ReplicaDialog>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let this = Self::new(page, false, window, cx);
+        if let Some(d) = dialog {
+            this.replica.update(cx, |r, cx| r.open_dialog(d, cx));
+        }
+        this
+    }
+}
+
 impl Render for GalleryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.rogg().clone();
