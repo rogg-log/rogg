@@ -24,3 +24,4 @@ pub mod titlebar;
 pub mod sidebar;
 pub mod chrome;
 pub mod filter;
+pub mod logview;
