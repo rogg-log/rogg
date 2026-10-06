@@ -147,7 +147,6 @@ pub struct LogViewPrepaint {
     selected: Option<u64>,
     force_hover_row: Option<usize>,
     text_left: Pixels,
-    text_right: Pixels,
     scroll_x: Pixels,
 }
 
@@ -305,7 +304,7 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, theme, selected, force_hover_row, text_left, text_right, scroll_x: px(scroll_x) }
+        LogViewPrepaint { hitbox, rows, thumb, theme, selected, force_hover_row, text_left, scroll_x: px(scroll_x) }
     }
 
     fn paint(
@@ -361,7 +360,9 @@ impl Element for LogViewElement {
                             row.bounds.left() + px(size::GUTTER_PIN_W + size::GUTTER_NUMBER_W - size::NUMBER_PAD_R) - number_line.width();
                         number_line.paint(point(number_x, row.bounds.top()), row_h, TextAlign::Left, None, window, cx).ok();
 
-                        let clip = Bounds::from_corners(point(pre.text_left, row.bounds.top()), point(pre.text_right, row.bounds.bottom()));
+                        // `.line{overflow:hidden; padding-right:20px}` clips at its padding box: the 20px only narrows
+                        // the wrap width, unwrapped text runs to the row's right edge.
+                        let clip = Bounds::from_corners(point(pre.text_left, row.bounds.top()), point(row.bounds.right(), row.bounds.bottom()));
                         let origin = point(pre.text_left - pre.scroll_x, row.bounds.top());
                         window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
                             let box_h = text.box_height();
