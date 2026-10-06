@@ -41,45 +41,148 @@ fn resolve(style: SpanStyle, p: &Palette) -> Option<Color> {
 
 /// Splits `0..len` into maximal runs of identical style. Later foreground spans override earlier ones,
 /// a filter hit overrides foreground (first hit wins), and search hits add an outline.
+///
+/// O(n log n) event-based sweep algorithm: creates start/end events for each span,
+/// processes in position order while tracking active spans. Each span is added/removed once.
 pub fn segments(len: usize, spans: &[Span], base: Color, p: &Palette) -> Vec<Segment> {
-    let mut cuts = vec![0, len];
-    for s in spans {
-        cuts.push(s.range.start.min(len));
-        cuts.push(s.range.end.min(len));
+    if len == 0 {
+        return Vec::new();
     }
-    cuts.sort_unstable();
-    cuts.dedup();
+
+    use std::collections::BTreeSet;
+
+    // Create events for span boundaries: (position, is_start, span_index)
+    let mut events = Vec::new();
+    for (idx, span) in spans.iter().enumerate() {
+        let start = span.range.start.min(len);
+        let end = span.range.end.min(len);
+        if start < end {
+            events.push((start, true, idx));   // Start event
+            events.push((end, false, idx));    // End event
+        }
+    }
+
+    // Sort by position, then ends before starts at same position
+    events.sort_by_key(|e| (e.0, !e.1));
+
+    // Track active spans by type
+    let mut active_fg: BTreeSet<usize> = BTreeSet::new();
+    let mut active_hits: BTreeSet<usize> = BTreeSet::new();
+    let mut active_search_hits: usize = 0;
+
     let mut out: Vec<Segment> = Vec::new();
-    for w in cuts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        if a >= b {
-            continue;
-        }
-        let mut fg = base;
-        let mut hit: Option<(Color, Color)> = None;
-        let mut outline = false;
-        for s in spans.iter().filter(|s| s.range.start <= a && s.range.end >= b) {
-            match s.style {
-                SpanStyle::Hit(slot) => {
+    let mut last_pos = 0;
+
+    let mut event_idx = 0;
+    while event_idx < events.len() {
+        let pos = events[event_idx].0;
+
+        // Emit segment for [last_pos, pos) with current active style
+        if last_pos < pos {
+            // Compute style from active spans
+            let fg = if let Some(&idx) = active_fg.iter().next_back() {
+                resolve(spans[idx].style, p).unwrap_or(base)
+            } else {
+                base
+            };
+
+            let (hit_fg, hit_bg) = if let Some(&idx) = active_hits.iter().next() {
+                if let SpanStyle::Hit(slot) = spans[idx].style {
                     let h = p.hits[slot % p.hits.len()];
-                    hit.get_or_insert((h.fg, h.bg));
+                    (h.fg, h.bg)
+                } else {
+                    (fg, base)
                 }
-                SpanStyle::SearchHit => outline = true,
-                other => fg = resolve(other, p).unwrap_or(fg),
+            } else {
+                (fg, base)
+            };
+
+            let final_fg = if active_hits.is_empty() { fg } else { hit_fg };
+            let hit_bg_opt = if active_hits.is_empty() { None } else { Some(hit_bg) };
+            let outline = active_search_hits > 0;
+
+            if let Some(last) = out.last_mut() {
+                if last.range.end == last_pos && last.fg == final_fg && last.hit_bg == hit_bg_opt && last.outline == outline {
+                    last.range.end = pos;
+                } else {
+                    out.push(Segment { range: last_pos..pos, fg: final_fg, hit_bg: hit_bg_opt, outline });
+                }
+            } else {
+                out.push(Segment { range: last_pos..pos, fg: final_fg, hit_bg: hit_bg_opt, outline });
             }
         }
-        let (fg, hit_bg) = match hit {
-            Some((hfg, hbg)) => (hfg, Some(hbg)),
-            None => (fg, None),
-        };
-        if let Some(last) = out.last_mut() {
-            if last.range.end == a && last.fg == fg && last.hit_bg == hit_bg && last.outline == outline {
-                last.range.end = b;
-                continue;
+
+        // Process all events at this position
+        while event_idx < events.len() && events[event_idx].0 == pos {
+            let (_, is_start, idx) = events[event_idx];
+            let style = spans[idx].style;
+
+            if is_start {
+                match style {
+                    SpanStyle::Faint | SpanStyle::Muted | SpanStyle::Error | SpanStyle::Amber | SpanStyle::Fg(_) => {
+                        active_fg.insert(idx);
+                    }
+                    SpanStyle::Hit(_) => {
+                        active_hits.insert(idx);
+                    }
+                    SpanStyle::SearchHit => {
+                        active_search_hits += 1;
+                    }
+                }
+            } else {
+                match style {
+                    SpanStyle::Faint | SpanStyle::Muted | SpanStyle::Error | SpanStyle::Amber | SpanStyle::Fg(_) => {
+                        active_fg.remove(&idx);
+                    }
+                    SpanStyle::Hit(_) => {
+                        active_hits.remove(&idx);
+                    }
+                    SpanStyle::SearchHit => {
+                        active_search_hits = active_search_hits.saturating_sub(1);
+                    }
+                }
             }
+
+            event_idx += 1;
         }
-        out.push(Segment { range: a..b, fg, hit_bg, outline });
+
+        last_pos = pos;
     }
+
+    // Emit final segment [last_pos, len)
+    if last_pos < len {
+        let fg = if let Some(&idx) = active_fg.iter().next_back() {
+            resolve(spans[idx].style, p).unwrap_or(base)
+        } else {
+            base
+        };
+
+        let (hit_fg, hit_bg) = if let Some(&idx) = active_hits.iter().next() {
+            if let SpanStyle::Hit(slot) = spans[idx].style {
+                let h = p.hits[slot % p.hits.len()];
+                (h.fg, h.bg)
+            } else {
+                (fg, base)
+            }
+        } else {
+            (fg, base)
+        };
+
+        let final_fg = if active_hits.is_empty() { fg } else { hit_fg };
+        let hit_bg_opt = if active_hits.is_empty() { None } else { Some(hit_bg) };
+        let outline = active_search_hits > 0;
+
+        if let Some(last) = out.last_mut() {
+            if last.range.end == last_pos && last.fg == final_fg && last.hit_bg == hit_bg_opt && last.outline == outline {
+                last.range.end = len;
+            } else {
+                out.push(Segment { range: last_pos..len, fg: final_fg, hit_bg: hit_bg_opt, outline });
+            }
+        } else {
+            out.push(Segment { range: last_pos..len, fg: final_fg, hit_bg: hit_bg_opt, outline });
+        }
+    }
+
     out
 }
 
@@ -162,5 +265,77 @@ mod tests {
         assert_eq!(segs.last().unwrap().hit_bg, Some(p().hits[2].bg));
         let total: usize = segs.iter().map(|s| s.range.len()).sum();
         assert_eq!(total, 6);
+    }
+
+    #[test]
+    fn many_spans_hostile_line() {
+        // 64 KB line with ~16,000 non-overlapping Hit spans (each 4 bytes)
+        // Tests that O(n log n) algorithm handles hostile input efficiently
+        let mut spans = Vec::new();
+        const SPAN_SIZE: usize = 4;
+        const LINE_LEN: usize = 64 * 1024;
+        for i in 0..LINE_LEN / SPAN_SIZE {
+            let start = i * SPAN_SIZE;
+            let end = (i + 1) * SPAN_SIZE;
+            spans.push(Span { range: start..end, style: SpanStyle::Hit(i % 4) });
+        }
+
+        let segs = segments(LINE_LEN, &spans, p().log_text, &p());
+
+        // Verify full coverage (no gaps)
+        let total: usize = segs.iter().map(|s| s.range.len()).sum();
+        assert_eq!(total, LINE_LEN);
+
+        // Verify every segment has a Hit background
+        for seg in &segs {
+            assert!(seg.hit_bg.is_some(), "segment {:?} missing hit_bg", seg.range);
+        }
+
+        // Verify runs alternate correctly at sampled positions
+        for i in 0..10 {
+            let pos = i * (LINE_LEN / 10);
+            if pos < LINE_LEN {
+                let seg = segs.iter().find(|s| s.range.contains(&pos)).expect(&format!("no segment at {}", pos));
+                assert!(seg.hit_bg.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn later_fg_overrides_earlier_fg() {
+        // When two Fg spans overlap, the one with higher span index wins
+        let spans = vec![
+            Span { range: 0..10, style: SpanStyle::Faint },
+            Span { range: 5..15, style: SpanStyle::Muted },
+        ];
+        let segs = segments(15, &spans, p().log_text, &p());
+
+        // [0, 5): only Faint
+        assert_eq!(segs[0].range, 0..5);
+        assert_eq!(segs[0].fg, p().faint);
+
+        // [5, 15): Muted wins (higher span index) and merges
+        assert_eq!(segs[1].range, 5..15);
+        assert_eq!(segs[1].fg, p().muted);
+    }
+
+    #[test]
+    fn first_hit_wins_on_overlap() {
+        // When two Hit spans overlap, the one with lower span index wins
+        let spans = vec![
+            Span { range: 0..10, style: SpanStyle::Hit(2) },
+            Span { range: 5..15, style: SpanStyle::Hit(0) },
+        ];
+        let segs = segments(15, &spans, p().log_text, &p());
+
+        // [0, 10): Hit(2) wins (lower span index = earlier span in input)
+        assert_eq!(segs[0].range, 0..10);
+        assert_eq!(segs[0].hit_bg, Some(p().hits[2].bg));
+        assert_eq!(segs[0].fg, p().hits[2].fg);
+
+        // [10, 15): Hit(0)
+        assert_eq!(segs[1].range, 10..15);
+        assert_eq!(segs[1].hit_bg, Some(p().hits[0].bg));
+        assert_eq!(segs[1].fg, p().hits[0].fg);
     }
 }
