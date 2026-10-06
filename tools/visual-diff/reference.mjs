@@ -47,7 +47,9 @@ for (const v of VARIANTS) {
   await fs.writeFile(path.join(dir, `${name}.json`), JSON.stringify({ elements: await geometry(page) }, null, 2));
   for (const d of DIALOGS) {
     await page.evaluate((id) => {
-      document.getElementById(id).showModal();
+      // The tab picker list is filled by showTabPicker(); a bare showModal() would capture it empty.
+      if (id === 'tabs-dialog') showTabPicker();
+      else document.getElementById(id).showModal();
       document.activeElement?.blur(); // showModal() autofocuses the first control
     }, d.html);
     const file = `${name}--${d.gallery}`;
