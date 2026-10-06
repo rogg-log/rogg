@@ -2,3 +2,5 @@ target/
 node_modules/
 .DS_Store
 .claude/worktrees/
+tools/visual-diff/node_modules/
+target/visual/

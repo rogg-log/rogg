@@ -1,0 +1,16 @@
+[package]
+name = "rogg-gallery"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rogg-ui = { path = "../rogg-ui" }
+# test-support provides HeadlessAppContext + capture_screenshot + element snapshots for --capture (Task 15).
+gpui-kit = { workspace = true, features = ["test-support"] }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
