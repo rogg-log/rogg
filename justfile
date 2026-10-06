@@ -18,3 +18,6 @@ capture page="replica" theme="dark" density="compact":
 visual:
     cd tools/visual-diff && npm run all
     open target/visual/report.html
+
+visual-check:
+    cd tools/visual-diff && npm run check
