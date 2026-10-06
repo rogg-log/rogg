@@ -83,3 +83,9 @@ is within 5.8 RGB distance.
 2. Scrollbars: keep the always-visible thin thumb (spec §5.5), or behave like macOS overlay scrollbars (thumb only while scrolling), which is what the browser shows?
 3. Gap-row label font: keep the system UI font, or switch to Helvetica to match the Chromium rendering of the reference?
 4. Brand letter spacing (about 2 px) and per-glyph tracking on FILES / RECENT: is the current approximation acceptable?
+
+## Approval
+
+Approved by the user on 2026-10-07 ("Approved"), after answering the five open questions as recorded above. Golden set: 9 captures in tools/visual-diff/golden/ (tolerance 0.5 % each); check with `just visual-check`.
+
+`just visual-check` on a fresh re-capture of HEAD: all 9 captures at 0.000 % (dark-compact, dark-compact--all-tabs, --profile, --appearance, --shortcuts, --history, dark-comfortable, light-compact, light-comfortable), all ✓. `just test` green.
