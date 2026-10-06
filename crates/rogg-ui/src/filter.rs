@@ -283,6 +283,7 @@ impl RenderOnce for FilterBand {
                         .text_size(px(11.))
                         .text_color(p.accent)
                         .cursor_pointer()
+                        .hover(move |s| s.bg(p.hover))
                         .child("Apply ↵")
                         .on_click({
                             let f = call(&self.on_apply);
