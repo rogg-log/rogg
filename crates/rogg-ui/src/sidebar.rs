@@ -119,9 +119,11 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
             .text_size(px(11.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(p.text)
-            .child(div().text_color(p.muted).child(if expanded { "⌄" } else { "›" }))
+            .rounded(px(4.))
+            .hover(move |s| s.bg(p.hover))
+            .child(div().flex_none().text_color(p.muted).child(if expanded { "⌄" } else { "›" }))
             .child(icon(IconName::Folder).size(px(13.)).text_color(p.muted))
-            .child(label)
+            .child(div().min_w_0().truncate().child(label))
             .into_any_element(),
         TreeRow::File { label, size: file_size, active, depth, failed } => base
             .pl(px(27. + depth.saturating_sub(1) as f32 * 18.))
