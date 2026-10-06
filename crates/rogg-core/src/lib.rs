@@ -2,6 +2,7 @@
 
 pub mod cancel;
 pub mod encoding;
+pub mod engine;
 pub mod error;
 pub mod filter;
 pub mod index;
