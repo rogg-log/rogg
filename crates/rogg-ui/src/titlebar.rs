@@ -206,7 +206,9 @@ impl RenderOnce for TabShell {
             .border_1()
             .map(|d| {
                 if active {
-                    d.bg(p.raised).border_color(p.border)
+                    // The border is drawn by an overlay child (below), so the accent underline can paint over it:
+                    // gpui paints an element's own border on top of its children.
+                    d.bg(p.raised).border_color(Color::TRANSPARENT)
                 } else if self.force_hover {
                     d.bg(p.hover).border_color(Color::TRANSPARENT)
                 } else {
@@ -263,6 +265,9 @@ impl RenderOnce for TabShell {
                         }
                     }),
             )
-            .when(active, |d| d.child(div().absolute().bottom(px(-1.)).left(px(9.)).right(px(9.)).h(px(1.)).bg(p.accent).opacity(0.7)))
+            .when(active, |d| {
+                d.child(div().absolute().top(px(-1.)).bottom(px(-1.)).left(px(-1.)).right(px(-1.)).rounded(px(5.)).border_1().border_color(p.border))
+                    .child(div().absolute().bottom(px(-1.)).left(px(9.)).right(px(9.)).h(px(1.)).bg(p.accent).opacity(0.7))
+            })
     }
 }
