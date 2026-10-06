@@ -6206,7 +6206,47 @@ pub const FIRST_LINE_NUMBER: u64 = 120480;
 pub const STAMP_LEN: usize = 23;
 
 pub const SAMPLES: [(&str, &str, &str); 40] = [
-@@SAMPLES@@];
+    ("INFO ", "server", "request started method=POST path=/v1/payments request_id=req_8f29"),
+    ("DEBUG", "router", "matched route=payments.create upstream=payments-primary"),
+    ("INFO ", "auth", "token validated subject=svc_checkout scopes=payments:write"),
+    ("DEBUG", "pool", "acquired connection pool=primary active=24 idle=8"),
+    ("WARN ", "client", "retry attempt=1 backoff=250ms target=payments-primary"),
+    ("INFO ", "healthcheck", "upstream=cache status=ok latency=2ms"),
+    ("ERROR", "healthcheck", "timeout waiting for metrics sidecar target=metrics:9090"),
+    ("INFO ", "config", "deployment revision=8d72f6a feature_flags={payments_v2:true, strict_idempotency:true} changed_by=release-controller region=eu-west-1"),
+    ("DEBUG", "client", "connection opened host=payments-primary.internal port=8443 tls=1.3"),
+    ("WARN ", "client", "retry attempt=2 backoff=500ms target=payments-primary"),
+    ("INFO ", "queue", "payment accepted job_id=job_4271 request_id=req_8f29"),
+    ("DEBUG", "worker", "processing job_id=job_4271 queue=payments priority=normal"),
+    ("ERROR", "client", "upstream timeout after 30000ms request_id=req_8f29 host=payments-primary.internal:8443 path=/v1/authorize retry_count=3 circuit_state=half_open trace_id=4bf92f3577b34da6a3ce929d0e0e4736 region=eu-west-1"),
+    ("WARN ", "circuit", "circuit opened upstream=payments-primary failures=5 window=60s"),
+    ("INFO ", "router", "switching upstream payments-primary → payments-secondary"),
+    ("ERROR", "payments", "authorization failed error=UPSTREAM_UNAVAILABLE request_id=req_8f29"),
+    ("INFO ", "server", "request completed status=503 duration=30241ms request_id=req_8f29"),
+    ("DEBUG", "pool", "released connection pool=primary active=23 idle=9"),
+    ("INFO ", "healthcheck", "upstream=database status=ok latency=4ms"),
+    ("INFO ", "server", "request started method=GET path=/v1/accounts request_id=req_91d2"),
+    ("WARN ", "cache", "timeout reading key=account:7239 fallback=database"),
+    ("INFO ", "database", "query completed rows=1 duration=14ms"),
+    ("INFO ", "server", "request completed status=200 duration=48ms request_id=req_91d2"),
+    ("ERROR", "worker", "job failed error=DEADLINE_EXCEEDED job_id=job_4271 attempt=3"),
+    ("INFO ", "queue", "job scheduled for retry job_id=job_4271 delay=60s"),
+    ("DEBUG", "metrics", "flush completed counters=148 histograms=23 duration=2ms"),
+    ("WARN ", "healthcheck", "timeout target=payments-primary latency=5000ms"),
+    ("INFO ", "circuit", "upstream probe scheduled after=30s"),
+    ("ERROR", "client", "connection reset by peer upstream=payments-secondary request_id=req_a273"),
+    ("INFO ", "server", "request completed status=502 duration=1304ms request_id=req_a273"),
+    ("DEBUG", "router", "routing table refreshed revision=248 endpoints=12"),
+    ("INFO ", "server", "request started method=GET path=/status request_id=req_b7c1"),
+    ("INFO ", "server", "request completed status=200 duration=1ms request_id=req_b7c1"),
+    ("WARN ", "pool", "connection pool utilization=92% active=46 limit=50"),
+    ("ERROR", "database", "timeout acquiring connection after 5000ms pool=primary request_id=req_c389"),
+    ("INFO ", "circuit", "upstream recovered target=payments-primary probe_status=200"),
+    ("INFO ", "queue", "job resumed job_id=job_4271 attempt=4"),
+    ("INFO ", "payments", "authorization completed job_id=job_4271 status=approved"),
+    ("DEBUG", "metrics", "flush completed counters=153 histograms=24 duration=1ms"),
+    ("INFO ", "server", "idle connections pruned count=8 remaining=16"),
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Term {
