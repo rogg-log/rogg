@@ -16,10 +16,10 @@ input is a single log up to ~1 GB, or a zip/tar.gz bundle of ~10 such logs.
 **Success criteria**
 
 1. The UI matches the HTML reference closely: layout, sizes, colors,
-   typography, states, in dark and light themes and both densities. This is
-   verified by an automated visual comparison and approved by the user
-   *before* the main app is assembled (milestone M0) and again on the real
-   app (milestone M2).
+   typography, states, in dark and light themes and both densities. The user
+   and I review this together, with the help of an automated visual
+   comparison report, and the user approves it *before* the main app is
+   assembled (milestone M0) and again on the real app (milestone M2).
 2. A 1 GB file is scrollable within moments of opening; indexing and filtering
    run in the background with progress, never freeze the UI, and are
    cancellable.
@@ -326,8 +326,10 @@ component uses gpui-kit's default colors.
 | 2 | `#415762` / `#263037` / `#a2c9d8` | `#b9d0da` / `#e7f0f4` / `#426b7b` |
 | 3 | `#5c4c6c` / `#302a37` / `#c2acd9` | `#cdbdda` / `#ece5f5` / `#776083` |
 
-**Fonts:** UI 13 px system font (SF Pro). Log 12 px system monospace (see the
-font check in §7.2).
+**Fonts:** UI 13 px system font (SF Pro). Log text defaults to SF Mono at
+12 px; the family and size are user-selectable (§6.2). Layout metrics (row
+height, gutters) do not depend on the chosen family; only glyph widths
+change.
 
 **Density:**
 - **Compact:** row 23 px, log font 12 px, pane header 35 px.
@@ -553,8 +555,12 @@ immediately.
 - **Appearance:**
   - Theme: System / Light / Dark, following macOS appearance changes live
   - UI font size
-  - Log font family (installed monospace fonts)
-  - Log font size
+  - Log font family: a short curated list of monospace fonts that ship with
+    macOS (SF Mono default, Menlo, Monaco, Courier New), plus "Other…" to
+    pick any installed monospace font. Fonts that are not available are
+    hidden.
+  - Log font size (9–20 px). The row height follows the density and scales
+    with the font size.
   - Density: Compact / Comfortable
 - **Behavior:**
   - Default wrap
@@ -640,16 +646,14 @@ renamed to `*.bak`, replaced with defaults, and reported with a toast.
 
 ### 7.2 `tools/visual-diff`
 
-1. **Font check** (first step of M0): query in Chromium which font actually
-   rendered the reference's monospace and system text. Make the gallery use
-   the same faces for comparison runs. If `SFMono-Regular` falls back in
-   Chromium, the comparison profile uses the fallback face, while the app's
-   default stays SF Mono. The choice is recorded in the report.
+1. **Fonts:** an exact font match is not required. Comparison runs use the
+   app's default faces (system UI font, SF Mono). Differences that come only
+   from glyph shapes are expected and are not treated as defects.
 2. **Render the reference** in headless Chromium (Playwright) at device scale
    2. Hide the study header and footer, size the `.app` element to the
    target window size, and screenshot it for each theme × density. Each
    dialog is captured opened.
-3. **Record reference geometry:** `getBoundingClientRect` for a fixed list of
+3. **Record reference geometry** (a guide, not a hard gate): `getBoundingClientRect` for a fixed list of
    selectors (titlebar, tab-shell, sidebar rows, meta, pane-head, find,
    tool, filter-band, token, flag, row, gap-row, footer, dialog), relative
    to `.app`.
@@ -661,15 +665,23 @@ renamed to `*.bak`, replaced with defaults, and reported with a toast.
    - sampled color checks at fixed points (backgrounds, borders, chip
      fills)
 6. **Report:** `target/visual/report.html` with side-by-side, overlay and
-   diff images, plus geometry and color tables with pass/fail.
+   diff images, plus geometry and color tables. The tables sort elements by
+   largest deviation so the most visible differences come first.
 
-**Pass criteria:**
-- Geometry within ±1 pt for every recorded element.
-- Sampled colors exact (ΔE < 1).
-- Pixel difference under 2% (excluding anti-aliasing).
+**Approval process:** there are no fixed numeric pass thresholds. The report
+is a tool for a joint review:
 
-These thresholds can be tuned in M0 with user agreement. Approved captures
-are committed as golden images, and `just visual` fails on regressions.
+1. I iterate on the components until there are no obvious mismatches in
+   layout, proportions, colors or states.
+2. The user and I go through the report and the live gallery together.
+3. Each mismatch found is either fixed or explicitly accepted.
+
+The gate is passed when the user approves. The report's numbers are
+guidance, not criteria.
+
+After approval, the captures are committed as golden images. `just visual`
+then flags regressions with loose tolerances agreed during the review, so
+font rendering noise does not fail the check.
 
 ## 8. Testing
 
@@ -707,7 +719,8 @@ Each milestone gets its own implementation plan, review and sign-off.
 - Theme tokens, icons, all `rogg-ui` components (log view on canned data),
   `rogg-gallery` with every page and the mockup replica,
   `tools/visual-diff`.
-- **Gate:** visual report passes and the user approves the gallery.
+- **Gate:** joint review of the visual report and live gallery (§7.2); the
+  user approves.
 
 **M1 — Engine**
 - Plain-file source, encoding, line index, filter parsing, semantics and
@@ -719,8 +732,8 @@ Each milestone gets its own implementation plan, review and sign-off.
   engine, filter band, follow selection, wrap, find, keyboard, menu bar,
   empty states, progress, recent files.
 - `rogg --demo` loads the reference sample data.
-- **Gate:** visual diff of the real app against the reference passes and the
-  user approves.
+- **Gate:** joint review of the real app against the reference, using the
+  same report; the user approves.
 
 **M3 — Sources**
 - Folders, `.gz`, zip, tar, tar.gz/tgz, nested archives, cache with eviction.
