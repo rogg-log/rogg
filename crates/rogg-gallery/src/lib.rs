@@ -2,3 +2,4 @@
 pub mod fixtures;
 pub mod gallery;
 pub mod pages;
+pub mod replica;

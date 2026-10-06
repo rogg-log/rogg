@@ -27,6 +27,23 @@ pub fn render(view: &mut GalleryView, window: &mut Window, cx: &mut Context<Gall
         Page::Chrome => chrome(view, &p),
         Page::Empty => empty_states(&p),
         Page::Dialogs => dialogs_page(view, &p),
+        Page::Replica => {
+            let window_el = crate::replica::replica_window(&view.replica.clone(), cx);
+            if view.chrome {
+                div()
+                    .w(px(1440.))
+                    .h(px(900.))
+                    .flex()
+                    .border_1()
+                    .border_color(p.border)
+                    .rounded(px(10.))
+                    .overflow_hidden()
+                    .child(window_el)
+                    .into_any_element()
+            } else {
+                window_el
+            }
+        }
     }
 }
 

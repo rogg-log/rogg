@@ -18,11 +18,22 @@ pub enum Page {
     Chrome,
     Empty,
     Dialogs,
+    Replica,
 }
 
 impl Page {
-    pub const ALL: [Page; 9] =
-        [Page::Tokens, Page::Controls, Page::Tabs, Page::Sidebar, Page::Filter, Page::LogView, Page::Chrome, Page::Empty, Page::Dialogs];
+    pub const ALL: [Page; 10] = [
+        Page::Tokens,
+        Page::Controls,
+        Page::Tabs,
+        Page::Sidebar,
+        Page::Filter,
+        Page::LogView,
+        Page::Chrome,
+        Page::Empty,
+        Page::Dialogs,
+        Page::Replica,
+    ];
 
     pub fn slug(self) -> &'static str {
         match self {
@@ -35,6 +46,7 @@ impl Page {
             Page::Chrome => "chrome",
             Page::Empty => "empty",
             Page::Dialogs => "dialogs",
+            Page::Replica => "replica",
         }
     }
 
@@ -49,6 +61,7 @@ impl Page {
             Page::Chrome => "Info, pane & status bars",
             Page::Empty => "Empty states",
             Page::Dialogs => "Dialogs",
+            Page::Replica => "Mockup replica",
         }
     }
 
@@ -70,6 +83,7 @@ pub struct GalleryView {
     pub inputs: Inputs,
     pub log_compact: Entity<LogViewState>,
     pub log_wrapped: Entity<LogViewState>,
+    pub replica: Entity<crate::replica::ReplicaState>,
 }
 
 impl GalleryView {
@@ -88,7 +102,8 @@ impl GalleryView {
         });
         let log_wrapped = cx.new(|_| LogViewState::new(rows));
         log_wrapped.update(cx, |s, cx| s.set_wrap(true, cx));
-        Self { page, chrome, inputs, log_compact, log_wrapped }
+        let replica = cx.new(|cx| crate::replica::ReplicaState::new(window, cx));
+        Self { page, chrome, inputs, log_compact, log_wrapped, replica }
     }
 }
 
