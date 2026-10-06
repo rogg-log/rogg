@@ -1,11 +1,11 @@
 {
-  "dark-compact": 0.5,
-  "dark-compact--all-tabs": 0.5,
-  "dark-compact--profile": 0.5,
-  "dark-compact--appearance": 0.5,
-  "dark-compact--shortcuts": 0.5,
-  "dark-compact--history": 0.5,
-  "dark-comfortable": 0.5,
-  "light-compact": 0.5,
-  "light-comfortable": 0.5
+  "dark-compact": 0.05,
+  "dark-compact--all-tabs": 0.05,
+  "dark-compact--profile": 0.05,
+  "dark-compact--appearance": 0.05,
+  "dark-compact--shortcuts": 0.05,
+  "dark-compact--history": 0.05,
+  "dark-comfortable": 0.05,
+  "light-compact": 0.05,
+  "light-comfortable": 0.05
 }

@@ -86,6 +86,6 @@ is within 5.8 RGB distance.
 
 ## Approval
 
-Approved by the user on 2026-10-07 ("Approved"), after answering the five open questions as recorded above. Golden set: 9 captures in tools/visual-diff/golden/ (tolerance 0.5 % each); check with `just visual-check`.
+Approved by the user on 2026-10-07 ("Approved"), after answering the five open questions as recorded above. Golden set: 9 captures in tools/visual-diff/golden/ (tolerance 0.05 % each, tightened from 0.5 % at the final branch review because captures are deterministic at 0.000 %; `approve.mjs` writes 0.05 too); check with `just visual-check`.
 
 `just visual-check` on a fresh re-capture of HEAD: all 9 captures at 0.000 % (dark-compact, dark-compact--all-tabs, --profile, --appearance, --shortcuts, --history, dark-comfortable, light-compact, light-comfortable), all ✓. `just test` green.
