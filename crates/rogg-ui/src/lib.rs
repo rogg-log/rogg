@@ -27,3 +27,4 @@ pub mod filter;
 pub mod logview;
 pub mod dialogs;
 pub mod empty;
+pub mod layout;
