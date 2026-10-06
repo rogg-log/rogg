@@ -5665,6 +5665,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rogg-core"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "encoding_rs",
+ "memchr",
+ "memmap2",
+ "proptest",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "rogg-gallery"
 version = "0.1.0"
 dependencies = [
