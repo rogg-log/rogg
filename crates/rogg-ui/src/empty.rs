@@ -1,3 +1,4 @@
+use crate::chrome::bar_fraction;
 use crate::controls::ActionButton;
 use crate::icons::{IconName, icon};
 use crate::sidebar::RecentItem;
@@ -133,6 +134,8 @@ impl RenderOnce for LoadingBar {
             .h(px(3.))
             .rounded(px(2.))
             .bg(p.border)
-            .child(div().h_full().rounded(px(2.)).bg(p.accent).w(relative(self.fraction.unwrap_or(0.3).clamp(0., 1.))))
+            .child(
+                div().id("loading-fill").test_support().h_full().rounded(px(2.)).bg(p.accent).w(relative(self.fraction.map_or(0.3, bar_fraction))),
+            )
     }
 }

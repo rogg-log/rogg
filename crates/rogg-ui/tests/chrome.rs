@@ -68,7 +68,7 @@ fn progress_is_absent_without_a_value_and_clamped_with_one(cx: &mut TestAppConte
     common::setup(cx);
     let none = common::open(cx, 600., 100., |_, _| StatusBar::new("UTF-8 · LF".into()).into_any_element());
     assert!(!common::exists(cx, none, "progress"));
-    for (fraction, expected) in [(0.5, 40.), (7.0, 80.), (-1.0, 0.)] {
+    for (fraction, expected) in [(0.5, 40.), (7.0, 80.), (-1.0, 0.), (f32::NAN, 0.), (f32::INFINITY, 0.), (f32::NEG_INFINITY, 0.)] {
         let w = common::open(cx, 600., 100., move |_, _| {
             StatusBar::new("n".into()).progress(Some(Progress { label: "x".into(), fraction })).into_any_element()
         });

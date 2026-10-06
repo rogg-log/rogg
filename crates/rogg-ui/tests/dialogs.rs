@@ -2,7 +2,7 @@ mod common;
 use gpui_kit::prelude::*;
 use gpui_kit::{SharedString, TestAppContext, TestSupportExt, div, point, px};
 use rogg_ui::dialogs::{ModalLayer, all_tabs, shortcuts};
-use rogg_ui::empty::no_matches;
+use rogg_ui::empty::{loading, no_matches};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -81,4 +81,16 @@ fn no_matches_fills_its_box(cx: &mut TestAppContext) {
     common::setup(cx);
     let w = common::open(cx, 600., 300., |_, _| no_matches("empty-results").into_any_element());
     assert_eq!(common::bounds(cx, w, "empty-results").size.height, px(300.));
+}
+
+#[gpui_kit::test]
+fn loading_bar_fill_is_clamped_and_ignores_non_finite_fractions(cx: &mut TestAppContext) {
+    common::setup(cx);
+    // The bar is 220px wide; no fraction shows the indeterminate 30%.
+    for (fraction, expected) in
+        [(None, 66.), (Some(0.5), 110.), (Some(2.), 220.), (Some(-1.), 0.), (Some(f32::NAN), 0.), (Some(f32::INFINITY), 0.), (Some(f32::NEG_INFINITY), 0.)]
+    {
+        let w = common::open(cx, 600., 300., move |_, _| loading("Opening", fraction, Rc::new(|_, _| {})).into_any_element());
+        assert_eq!(common::bounds(cx, w, "loading-fill").size.width, px(expected), "fraction {fraction:?}");
+    }
 }

@@ -377,8 +377,8 @@ impl Element for LogViewElement {
             }
         }
 
-        // Horizontal extent for no-wrap scrolling.
-        let longest = self.state.read(cx).rows().longest_line_chars() as f32;
+        // Horizontal extent for no-wrap scrolling: a displayed line holds at most MAX_DISPLAY_BYTES chars plus `…`.
+        let longest = self.state.read(cx).rows().longest_line_chars().min(MAX_DISPLAY_BYTES + 1) as f32;
         let font_id = window.text_system().resolve_font(&mono);
         let advance = window.text_system().ch_advance(font_id, theme.metrics.log_font_size).map(f32::from).unwrap_or(7.);
         self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));

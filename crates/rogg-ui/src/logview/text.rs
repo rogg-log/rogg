@@ -62,7 +62,8 @@ pub fn segments(len: usize, spans: &[Span], base: Color, p: &Palette) -> Vec<Seg
         }
     }
 
-    // Sort by position, then ends before starts at same position
+    // Sort by position (starts before ends at the same position). Order within a position does not
+    // matter: every event there is applied before the next segment is emitted.
     events.sort_by_key(|e| (e.0, !e.1));
 
     // Track active spans by type

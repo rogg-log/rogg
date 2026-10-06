@@ -91,7 +91,6 @@ impl Default for Sidebar {
     }
 }
 
-/// `.small-label`: 10px uppercase, 600 weight, muted.
 /// `.small-label`: 10px uppercase with `letter-spacing:1px`. gpui has no letter spacing, so each glyph is its own
 /// flex item with a 1px gap (plus the trailing 1px CSS adds after the last glyph).
 fn small_label(text: &'static str, p: &Palette) -> gpui_kit::Div {

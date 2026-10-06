@@ -52,6 +52,32 @@ fn tab_select_and_close_report_index(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn middle_click_closes_the_tab(cx: &mut TestAppContext) {
+    use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PlatformInput};
+    common::setup(cx);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let e = events.clone();
+    let w = common::open(cx, 1440., 200., move |_, _| {
+        let (s, c) = (e.clone(), e.clone());
+        TitleBar::new(tabs(3))
+            .on_select_tab(move |i, _, _| s.borrow_mut().push(format!("select {i}")))
+            .on_close_tab(move |i, _, _| c.borrow_mut().push(format!("close {i}")))
+            .into_any_element()
+    });
+    let position = common::bounds(cx, w, "tab-shell-1").center();
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+        window.render_frame(cx);
+        let down = MouseDownEvent { button: MouseButton::Middle, position, click_count: 1, ..Default::default() };
+        window.dispatch_event(PlatformInput::MouseDown(down), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*events.borrow(), vec!["close 1".to_string()]);
+}
+
+#[gpui_kit::test]
 fn overflowing_tab_strip_stays_left_of_actions(cx: &mut TestAppContext) {
     common::setup(cx);
     // 60 tabs overflow even with zero-size text; the strip must clip/scroll inside its own box.

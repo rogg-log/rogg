@@ -167,6 +167,11 @@ pub struct Progress {
     pub fraction: f32,
 }
 
+/// A progress fraction as a bar width: clamped to `0..=1`, and empty for NaN or ±∞ (e.g. 0/0 on an empty file).
+pub(crate) fn bar_fraction(f: f32) -> f32 {
+    if f.is_finite() { f.clamp(0., 1.) } else { 0. }
+}
+
 /// `.footer`: statistics, selected line, then progress and the encoding note on the right.
 #[derive(IntoElement)]
 pub struct StatusBar {
@@ -243,7 +248,7 @@ impl RenderOnce for StatusBar {
                                             .h_full()
                                             .rounded(px(2.))
                                             .bg(p.accent)
-                                            .w(relative(pr.fraction.clamp(0., 1.))),
+                                            .w(relative(bar_fraction(pr.fraction))),
                                     ),
                                 )
                                 .child(pr.label),
@@ -251,5 +256,17 @@ impl RenderOnce for StatusBar {
                     })
                     .child(div().text_color(p.faint).child(self.note)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bar_fraction;
+
+    #[test]
+    fn bar_fraction_clamps_and_zeroes_non_finite() {
+        for (f, expected) in [(0.25, 0.25), (1.5, 1.), (-0.5, 0.), (f32::NAN, 0.), (f32::INFINITY, 0.), (f32::NEG_INFINITY, 0.)] {
+            assert_eq!(bar_fraction(f), expected, "fraction {f}");
+        }
     }
 }

@@ -146,3 +146,26 @@ fn wrap_toggle_and_set_rows_reset_safely(cx: &mut TestAppContext) {
     assert_eq!(geo.len(), 3);
     assert_eq!(geo[0].row, 0);
 }
+
+#[gpui_kit::test]
+fn horizontal_scroll_stops_at_the_display_cut(cx: &mut TestAppContext) {
+    use rogg_ui::logview::text::MAX_DISPLAY_BYTES;
+    common::setup(cx);
+    // Scrolled fully right, a 1 MB line reaches exactly as far as a line holding the cut text plus its `…`.
+    let max_scroll = |cx: &mut TestAppContext, chars: usize| {
+        let line = LogRow::Line(LogLine { number: 1, text: "x".repeat(chars).into(), spans: vec![], pinned: false, context: false, tint: None });
+        let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![line]))));
+        let w = open(cx, state.clone());
+        cx.update_window(w, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.scroll("log-test", ScrollDelta::Pixels(point(px(-1e9), px(0.))), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        state.read_with(cx, |s, _| s.scroll_x())
+    };
+    let cut = max_scroll(cx, MAX_DISPLAY_BYTES + 1);
+    assert!(cut > px(0.));
+    assert_eq!(max_scroll(cx, 1024 * 1024), cut);
+}
