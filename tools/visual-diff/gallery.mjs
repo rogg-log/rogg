@@ -5,6 +5,7 @@ import { DIALOGS, GALLERY_BIN, OUT, ROOT, SIZE, VARIANTS, variantName } from './
 
 execFileSync('cargo', ['build', '-p', 'rogg-gallery'], { cwd: ROOT, stdio: 'inherit' });
 const dir = path.join(OUT, 'gallery');
+fs.rmSync(dir, { recursive: true, force: true });
 fs.mkdirSync(dir, { recursive: true });
 const capture = (file, v, extra = []) =>
   execFileSync(

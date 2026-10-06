@@ -13,7 +13,7 @@ export function writeReport(results) {
         .map((g) => `<tr class="${g.max > 2 ? 'bad' : g.max > 0.5 ? 'warn' : ''}"><td>${esc(g.key)}</td><td>${rect(g.ref)}</td><td>${rect(g.gallery)}</td><td>${g.dx.toFixed(1)}</td><td>${g.dy.toFixed(1)}</td><td>${g.dw.toFixed(1)}</td><td>${g.dh.toFixed(1)}</td></tr>`)
         .join('');
       const probes = r.probes
-        .map((p) => `<tr class="${p.distance > 12 ? 'bad' : p.distance > 4 ? 'warn' : ''}"><td>${esc(p.name)}</td><td>${p.x}, ${p.y}</td><td><span class="sw" style="background:${p.ref}"></span>${p.ref}</td><td><span class="sw" style="background:${p.gallery}"></span>${p.gallery}</td><td>${p.distance}</td></tr>`)
+        .map((p) => `<tr class="${p.distance > 12 ? 'bad' : p.distance > 4 ? 'warn' : ''}"><td>${esc(p.name)}</td><td>ref ${p.refAt.join(', ')}<br>gal ${p.galleryAt.join(', ')}</td><td><span class="sw" style="background:${p.ref}"></span>${p.ref}</td><td><span class="sw" style="background:${p.gallery}"></span>${p.gallery}</td><td>${p.distance}</td></tr>`)
         .join('');
       return `<section id="${esc(r.name)}"><h2>${esc(r.name)} <small>${r.sizeMismatch ? 'SIZE MISMATCH' : r.diffPercent.toFixed(2) + '% pixels differ'} · ${r.missing.length} geometry keys missing</small></h2>
 <div class="overlay"><img src="reference/${r.name}.png"><img class="top" src="gallery/${r.name}.png" style="opacity:.5"></div>
@@ -21,7 +21,7 @@ export function writeReport(results) {
 <div class="grid"><figure><img src="reference/${r.name}.png"><figcaption>reference</figcaption></figure><figure><img src="gallery/${r.name}.png"><figcaption>gallery</figcaption></figure><figure><img src="diff/${r.name}.png"><figcaption>diff</figcaption></figure></div>
 <h3>Geometry (largest deviation first, logical px)</h3><table><tr><th>key</th><th>reference</th><th>gallery</th><th>Δx</th><th>Δy</th><th>Δw</th><th>Δh</th></tr>${geometry}</table>
 ${r.missing.length ? `<p class="missing">Missing in gallery: ${r.missing.map(esc).join(', ')}</p>` : ''}
-<h3>Color probes</h3><table><tr><th>probe</th><th>at</th><th>reference</th><th>gallery</th><th>Δ (RGB distance)</th></tr>${probes}</table></section>`;
+<h3>Color probes</h3><table><tr><th>probe</th><th>sampled at (logical px)</th><th>reference</th><th>gallery</th><th>Δ (RGB distance)</th></tr>${probes}</table>${r.skipped.length ? `<p class="missing">Skipped probes: ${r.skipped.map((p) => esc(`${p.name} [${p.key}: ${p.reason}]`)).join('; ')}</p>` : ''}</section>`;
     })
     .join('\n');
   const toc = results.map((r) => `<a href="#${esc(r.name)}">${esc(r.name)}</a>`).join(' · ');

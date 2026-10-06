@@ -84,8 +84,13 @@ export const PROBES = [
   { name: 'chip 3 (off) fill', key: 'token-3', fx: 0.92, fy: 0.12 },
   { name: 'regex flag border', key: 'flag-regex', fx: 0.5, fy: 0.0 },
   { name: 'follow (pressed) fill', key: 'tool-follow', fx: 0.05, fy: 0.5 },
-  { name: 'selected row (top)', key: 'row-top-12', fx: 0.995, fy: 0.5 },
-  { name: 'error row tint (top)', key: 'row-top-6', fx: 0.995, fy: 0.5 },
+  // Row probes sample the left gutter (pin column, never text), because the gallery's vertical scrollbar thumb and
+  // overflowing text both occupy the right edge.
+  // Top-pane rows 0-11 are visible at both densities. The selected row (top, 12) is clipped when comfortable, so it is
+  // skipped there; the selected row is also probed in the bottom pane (row-bottom-1 is line 120492).
+  { name: 'selected row (top)', key: 'row-top-12', fx: 0.01, fy: 0.5 },
+  { name: 'selected row (bottom)', key: 'row-bottom-1', fx: 0.01, fy: 0.5 },
+  { name: 'error row tint (top)', key: 'row-top-6', fx: 0.01, fy: 0.5 },
   { name: 'gap row bg', key: 'gap-bottom-0', fx: 0.9, fy: 0.5 },
   { name: 'status bar bg', key: 'statusbar', fx: 0.5, fy: 0.5 },
   { name: 'dialog bg', key: 'dialog', fx: 0.5, fy: 0.03 },

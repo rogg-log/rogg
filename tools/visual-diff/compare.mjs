@@ -13,9 +13,11 @@ const pixel = (png, x, y) => {
   const i = (yi * png.width + xi) * 4;
   return [png.data[i], png.data[i + 1], png.data[i + 2]];
 };
+const BORDER_NUDGE = 0.25; // logical px, keeps 1 px border probes inside the border after device-pixel snapping
 const hex = (c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+fs.rmSync(path.join(OUT, 'diff'), { recursive: true, force: true });
 fs.mkdirSync(path.join(OUT, 'diff'), { recursive: true });
 const results = [];
 for (const name of captureNames()) {
@@ -40,14 +42,28 @@ for (const name of captureNames()) {
     })
     .sort((a, b) => b.max - a.max);
   result.missing = Object.keys(rg).filter((k) => !(k in gg));
-  result.probes = PROBES.filter((p) => rg[p.key])
+  // A probe runs only when its element exists in BOTH geometries, and each image is sampled at that image's own
+  // element rect, so geometry offsets are not conflated with color errors. 1 px borders (fy = 0) are nudged inward.
+  result.skipped = PROBES.filter((p) => !rg[p.key] || !gg[p.key]).map((p) => ({
+    name: p.name,
+    key: p.key,
+    reason: !rg[p.key] && !gg[p.key] ? 'missing in both' : !rg[p.key] ? 'missing in reference' : 'missing in gallery',
+  }));
+  const at = (r, p) => [r.x + r.w * p.fx, r.y + r.h * p.fy + (p.fy === 0 ? BORDER_NUDGE : 0)];
+  result.probes = PROBES.filter((p) => rg[p.key] && gg[p.key])
     .map((p) => {
-      const r = rg[p.key];
-      const x = r.x + r.w * p.fx;
-      const y = r.y + r.h * p.fy;
-      const a = pixel(ref, x, y);
-      const b = pixel(gal, x, y);
-      return { name: p.name, x: +x.toFixed(1), y: +y.toFixed(1), ref: hex(a), gallery: hex(b), distance: +distance(a, b).toFixed(1) };
+      const [rx, ry] = at(rg[p.key], p);
+      const [gx, gy] = at(gg[p.key], p);
+      const a = pixel(ref, rx, ry);
+      const b = pixel(gal, gx, gy);
+      return {
+        name: p.name,
+        refAt: [+rx.toFixed(2), +ry.toFixed(2)],
+        galleryAt: [+gx.toFixed(2), +gy.toFixed(2)],
+        ref: hex(a),
+        gallery: hex(b),
+        distance: +distance(a, b).toFixed(1),
+      };
     })
     .sort((a, b) => b.distance - a.distance);
   results.push(result);
@@ -61,6 +77,7 @@ console.table(
     'worst geometry Δ px': r.geometry[0] ? `${r.geometry[0].key} ${r.geometry[0].max.toFixed(1)}` : '-',
     'worst probe Δ': r.probes[0] ? `${r.probes[0].name} ${r.probes[0].distance}` : '-',
     'missing keys': r.missing.length,
+    'skipped probes': r.skipped.length,
   })),
 );
 console.log(`report: ${path.join(OUT, 'report.html')}`);
