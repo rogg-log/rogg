@@ -51,6 +51,7 @@ impl RenderOnce for FindField {
             .rounded(px(4.))
             .child(icon(IconName::Search).size(px(12.)).text_color(p.faint))
             .child(input)
-            .when_some(self.count, |d, c| d.child(div().flex_none().text_size(px(9.)).text_color(p.faint).whitespace_nowrap().child(c)))
+            // `.found` is always present (empty without a query), so its leading 5px gap is part of the width.
+            .child(div().flex_none().text_size(px(9.)).text_color(p.faint).whitespace_nowrap().children(self.count))
     }
 }

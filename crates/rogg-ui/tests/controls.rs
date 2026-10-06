@@ -45,6 +45,17 @@ fn flag_tool_and_find_heights(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn empty_find_field_keeps_the_count_slot_gap(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let w = common::open(cx, 600., 100., |window, cx| {
+        let input = FindField::state("Find in full log", window, cx);
+        div().flex().child(FindField::new("find", input)).into_any_element()
+    });
+    // The reference keeps an empty `.found` span, so its 5px gap stays: 1 + 6 + 12 + 5 + 112 + 5 + 0 + 6 + 1 = 148.
+    assert_eq!(common::bounds(cx, w, "find").size.width, px(148.));
+}
+
+#[gpui_kit::test]
 fn click_invokes_callback(cx: &mut TestAppContext) {
     common::setup(cx);
     let clicked = Rc::new(Cell::new(0));
