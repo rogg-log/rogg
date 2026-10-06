@@ -113,7 +113,7 @@ impl RenderOnce for TitleBar {
             .w(self.sidebar_width)
             .px(px(13.))
             .child(traffic)
-            .child(button(IconButton::icon("toggle-sidebar", IconName::Side).compact(), self.on_toggle_sidebar))
+            .child(button(IconButton::icon("toggle-sidebar", IconName::Side), self.on_toggle_sidebar))
             .child(div().text_size(px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).child("rogg"));
 
         let tab_strip = div()
