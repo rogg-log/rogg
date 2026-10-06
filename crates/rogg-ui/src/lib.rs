@@ -1,6 +1,8 @@
 //! rogg's design system: theme, icons and components shared by the app and the gallery.
 
 pub mod theme;
+pub mod assets;
+pub mod icons;
 
 pub use theme::{ActiveRoggTheme, RoggTheme};
 
