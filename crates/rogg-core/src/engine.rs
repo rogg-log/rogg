@@ -11,6 +11,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_CHUNK_LINES: u64 = 65_536;
+/// Upper bound on the bytes in one chunk (a chunk always holds at least one line), so progress,
+/// parallelism and cancellation stay responsive when lines are very long.
+pub const MAX_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FilterEvent {
@@ -29,6 +32,33 @@ pub struct FilterResult {
     pub duration: Duration,
 }
 
+/// Splits `lines` into ascending, contiguous chunks of at most `chunk_lines` lines and at most
+/// `MAX_CHUNK_BYTES` bytes each (but never fewer than one line).
+fn chunk_ranges(text: &LogText, lines: Range<u64>, chunk_lines: u64) -> Vec<Range<u64>> {
+    let index = text.index();
+    let offset = |line: u64| if line < index.line_count() { index.line_start(line) } else { index.data_len() };
+    let mut ranges = Vec::new();
+    let mut start = lines.start;
+    while start < lines.end {
+        let first = start + 1;
+        let max_end = start.saturating_add(chunk_lines).min(lines.end).max(first);
+        let base = offset(start);
+        // Largest end in `first..=max_end` whose byte span fits; `first` is always accepted.
+        let (mut lo, mut hi) = (first, max_end);
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            if offset(mid) - base <= MAX_CHUNK_BYTES {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        ranges.push(start..lo);
+        start = lo;
+    }
+    ranges
+}
+
 /// Scans `lines` on all cores, emitting chunk results in order after each wave.
 pub fn scan_lines(
     text: &LogText,
@@ -41,13 +71,7 @@ pub fn scan_lines(
     let started = Instant::now();
     let lines = lines.start..lines.end.min(text.line_count());
     let total = lines.end.saturating_sub(lines.start);
-    let chunk = chunk_lines.max(1);
-    let ranges: Vec<Range<u64>> = (0..total.div_ceil(chunk))
-        .map(|k| {
-            let s = lines.start + k * chunk;
-            s..(s + chunk).min(lines.end)
-        })
-        .collect();
+    let ranges = chunk_ranges(text, lines.clone(), chunk_lines.max(1));
     let mut term_hits = vec![0u64; filter.spec().terms.len()];
     let wave = rayon::current_num_threads().max(1) * 4;
     let mut done = 0;

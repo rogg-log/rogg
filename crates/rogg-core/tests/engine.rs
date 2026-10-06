@@ -1,5 +1,6 @@
 use rogg_core::CancelToken;
-use rogg_core::engine::{FilterEvent, FilterJob, run_filter, scan_lines};
+use rogg_core::CoreError;
+use rogg_core::engine::{FilterEvent, FilterJob, MAX_CHUNK_BYTES, run_filter, scan_lines};
 use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState};
 use rogg_core::text::LogText;
 use std::sync::Arc;
@@ -80,7 +81,7 @@ fn cancel_mid_scan_stops_without_finished() {
     assert_eq!(events.last(), Some(&FilterEvent::Cancelled));
     assert!(!events.iter().any(|e| matches!(e, FilterEvent::Finished { .. })));
     let chunks = events.iter().filter(|e| matches!(e, FilterEvent::Chunk { .. })).count();
-    assert!(chunks < 10_000, "stopped early ({chunks} chunks)");
+    assert!(chunks <= 4 * rayon::current_num_threads(), "stopped within one wave ({chunks} chunks)");
 }
 
 #[test]
@@ -101,7 +102,70 @@ fn job_wait_matches_run_filter_and_drop_joins() {
     let got = job.wait().unwrap();
     assert_eq!(got.matches, expected.matches);
     assert_eq!(got.term_hits, expected.term_hits);
+}
+
+#[test]
+fn dropping_a_job_cancels_and_joins_the_worker() {
     let big = Arc::new(sample(200_000));
-    let job = FilterJob::spawn(big, f, 16);
-    drop(job); // must cancel and join without hanging
+    let probe = big.clone();
+    let job = FilterJob::spawn(big, Arc::new(filter()), 16);
+    drop(job);
+    // The worker owns the other Arc clone; it is released only once the thread has finished.
+    assert_eq!(Arc::strong_count(&probe), 1, "Drop must join the worker thread");
+}
+
+#[test]
+fn cancelled_job_wait_returns_cancelled() {
+    let job = FilterJob::spawn(Arc::new(sample(400_000)), Arc::new(filter()), 16);
+    job.cancel();
+    assert!(matches!(job.wait(), Err(CoreError::Cancelled)));
+}
+
+#[test]
+fn cancelled_job_events_end_at_first_cancelled() {
+    let job = FilterJob::spawn(Arc::new(sample(400_000)), Arc::new(filter()), 16);
+    job.cancel();
+    let events: Vec<FilterEvent> = job.events().iter().collect(); // ends when the worker drops its sender
+    let first = events.iter().position(|e| *e == FilterEvent::Cancelled).expect("a Cancelled event");
+    assert_eq!(first, events.len() - 1, "nothing may follow Cancelled");
+    assert!(!events.iter().any(|e| matches!(e, FilterEvent::Finished { .. })));
+}
+
+#[test]
+fn long_lines_are_split_by_bytes_not_just_lines() {
+    let line = "x".repeat(1024 * 1024 - 8);
+    let rows: Vec<String> = (0..100).map(|i| if i % 3 == 0 { format!("{i} error {line}") } else { format!("{i} ok {line}") }).collect();
+    let text = LogText::from_bytes(rows.join("\n").into_bytes());
+    let f = filter();
+    let mut events = Vec::new();
+    scan_lines(&text, &f, 0..100, 65_536, &CancelToken::new(), |e| events.push(e));
+    let chunks: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            FilterEvent::Chunk { lines, .. } => Some(lines.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(chunks.len() > 1, "expected several chunks, got {}", chunks.len());
+    let mut next = 0;
+    for r in &chunks {
+        assert_eq!(r.start, next);
+        let end = if r.end < 100 { text.index().line_start(r.end) } else { text.index().data_len() };
+        let bytes = end - text.index().line_start(r.start);
+        assert!(r.end - r.start == 1 || bytes <= MAX_CHUNK_BYTES, "chunk {r:?} too large ({bytes} bytes)");
+        next = r.end;
+    }
+    assert_eq!(next, 100);
+    let result = run_filter(&text, &f, 65_536, &CancelToken::new()).unwrap();
+    let expected: Vec<u64> = (0..text.line_count()).filter(|&i| f.line_matches(text.line(i))).collect();
+    assert_eq!(result.matches, expected);
+}
+
+#[test]
+fn huge_chunk_lines_does_not_overflow() {
+    let text = sample(100);
+    let f = filter();
+    let r = run_filter(&text, &f, u64::MAX, &CancelToken::new()).unwrap();
+    let expected: Vec<u64> = (0..text.line_count()).filter(|&i| f.line_matches(text.line(i))).collect();
+    assert_eq!(r.matches, expected);
 }
