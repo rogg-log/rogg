@@ -32,6 +32,16 @@ fn chips_and_flags_use_reference_heights(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn chip_state_segment_includes_the_transparent_button_border(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let w = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(1)).into_any_element());
+    // `.state`: 1px transparent left border + 5px padding + 11px icon + 4px gap + label + 5px padding + 1px divider.
+    // The test text system lays out the 9px "IN" label 11px wide, so 38px; 26px tall inside the chip's 1px border.
+    let state = common::bounds(cx, w, "token-state-0");
+    assert_eq!((state.size.width, state.size.height), (px(38.), px(26.)));
+}
+
+#[gpui_kit::test]
 fn twenty_chips_keep_actions_visible(cx: &mut TestAppContext) {
     common::setup(cx);
     let w = common::open(cx, 900., 200., |_, _| FilterBand::new(terms(20)).into_any_element());

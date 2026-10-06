@@ -94,7 +94,9 @@ impl RenderOnce for FilterChip {
                     .justify_center()
                     .gap(px(4.))
                     .h_full()
-                    .px(px(5.))
+                    // `.state` is a button: 1px transparent border on top/bottom/left plus 5px padding.
+                    .pl(px(6.))
+                    .pr(px(5.))
                     .rounded_l(px(3.))
                     .border_r_1()
                     .border_color(p.chip_divider)
