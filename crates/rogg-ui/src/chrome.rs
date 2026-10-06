@@ -47,7 +47,7 @@ impl InfoBar {
 impl RenderOnce for InfoBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
-        let sep = move |s: &'static str| div().mx(px(3.)).text_color(p.faint).child(s);
+        let sep = move |s: &'static str| div().flex_none().mx(px(3.)).text_color(p.faint).child(s);
         let count = self.crumbs.len();
         let on_profile = self.on_profile;
         let on_export = self.on_export;
@@ -63,13 +63,16 @@ impl RenderOnce for InfoBar {
             .border_b_1()
             .border_color(p.line)
             .text_size(px(11.))
-            .text_color(p.muted);
+            .text_color(p.muted)
+            .whitespace_nowrap();
         for (i, crumb) in self.crumbs.into_iter().enumerate() {
             let on_crumb = self.on_crumb.clone();
             bar = bar.child(
                 div()
                     .id(SharedString::from(format!("crumb-{i}")))
                     .test_support()
+                    .min_w_0()
+                    .truncate()
                     .cursor_pointer()
                     .child(crumb)
                     .on_click(move |_, window, cx| {
@@ -82,9 +85,10 @@ impl RenderOnce for InfoBar {
                 bar = bar.child(sep("›"));
             }
         }
-        bar.when_some(self.snapshot, |d, s| d.child(div().id("snapshot").test_support().text_color(p.faint).child(s))).child(
+        bar.when_some(self.snapshot, |d, s| d.child(div().id("snapshot").test_support().flex_none().text_color(p.faint).child(s))).child(
             div()
                 .ml_auto()
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(9.))
@@ -144,9 +148,10 @@ impl RenderOnce for PaneHeader {
             .px(px(12.))
             .border_b_1()
             .border_color(p.line)
-            .child(div().text_size(px(11.)).font_weight(FontWeight(550.)).text_color(p.text).child(self.title))
-            .child(div().text_size(px(10.)).text_color(p.faint).child(self.count))
-            .child(div().ml_auto().flex().items_center().gap(px(6.)).children(self.find).children(self.tools))
+            .whitespace_nowrap()
+            .child(div().min_w_0().truncate().text_size(px(11.)).font_weight(FontWeight(550.)).text_color(p.text).child(self.title))
+            .child(div().flex_none().text_size(px(10.)).text_color(p.faint).child(self.count))
+            .child(div().ml_auto().flex_none().flex().items_center().gap(px(6.)).children(self.find).children(self.tools))
     }
 }
 
@@ -209,6 +214,7 @@ impl RenderOnce for StatusBar {
             .border_color(p.border)
             .text_size(px(10.))
             .text_color(p.muted)
+            .whitespace_nowrap()
             .child(div().flex().items_center().children(self.stats.into_iter().map(|part| match part {
                 StatPart::Strong(s) => div().font_weight(FontWeight::MEDIUM).text_color(p.text).child(s),
                 StatPart::Text(s) => div().child(s),
@@ -217,6 +223,7 @@ impl RenderOnce for StatusBar {
             .child(
                 div()
                     .ml_auto()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -229,7 +236,7 @@ impl RenderOnce for StatusBar {
                                 .items_center()
                                 .gap(px(6.))
                                 .child(
-                                    div().w(px(80.)).h(px(3.)).rounded(px(2.)).bg(p.border).child(
+                                    div().flex_none().w(px(80.)).h(px(3.)).rounded(px(2.)).bg(p.border).child(
                                         div()
                                             .id("progress-fill")
                                             .test_support()
