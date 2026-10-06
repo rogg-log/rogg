@@ -349,12 +349,16 @@ impl RenderOnce for FilterBand {
             .relative()
             .flex_none()
             .bg(p.side)
+            // gpui paints an element's own border over its children, which would cut through the handle; the 1px
+            // lines are drawn as children instead, before the handle.
             .border_t_1()
             .border_b_1()
-            .border_color(p.band_border)
+            .border_color(Color::TRANSPARENT)
             .pt(px(10.))
             .px(px(12.))
             .pb(px(8.))
+            .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(1.)).bg(p.band_border))
+            .child(div().absolute().bottom(px(-1.)).left_0().right_0().h(px(1.)).bg(p.band_border))
             .child(
                 div()
                     .absolute()
