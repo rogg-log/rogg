@@ -25,3 +25,5 @@ pub mod sidebar;
 pub mod chrome;
 pub mod filter;
 pub mod logview;
+pub mod dialogs;
+pub mod empty;
