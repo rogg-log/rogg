@@ -269,7 +269,8 @@ impl RenderOnce for TextButton {
     }
 }
 
-/// `.decision button`: bordered 11px buttons for empty states and dialogs; primary uses the accent.
+/// `.decision button`: bordered 11px buttons for empty states and dialogs; muted text (inherited in the reference),
+/// primary uses the accent.
 #[derive(IntoElement)]
 pub struct ActionButton {
     id: SharedString,
@@ -308,7 +309,7 @@ impl RenderOnce for ActionButton {
             .text_size(px(11.))
             .font_weight(FontWeight::NORMAL)
             .cursor_pointer()
-            .map(|d| if self.primary { d.text_color(p.accent).border_color(p.accent_border) } else { d.text_color(p.text).border_color(p.border) })
+            .map(|d| if self.primary { d.text_color(p.accent).border_color(p.accent_border) } else { d.text_color(p.muted).border_color(p.border) })
             .hover(move |s| s.bg(p.hover))
             .child(self.label)
             .when_some(self.on_click, |d, f| d.on_click(move |_, window, cx| f(window, cx)))
