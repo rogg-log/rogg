@@ -10,3 +10,7 @@ rust-embed.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+
+[[test]]
+name = "logview_real_text"
+harness = false

@@ -8,7 +8,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, Entity, Font, GlobalElementId, Hitbox,
     HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent,
-    ShapedLine, SharedString, Style, TextAlign, TextRun, TransformationMatrix, Window, WrappedLine, fill, font, outline, point, px,
+    LineLayout, ShapedLine, SharedString, Style, TextAlign, TextRun, TransformationMatrix, Window, WrappedLine, fill, font, outline, point, px,
     relative, size as gsize,
 };
 use std::collections::HashMap;
@@ -46,28 +46,30 @@ impl Shaped {
         }
     }
 
-    /// Text boxes covering byte `range`, one per visual line: (visual line, x start, x end), x relative to the text origin.
-    fn boxes(&self, range: &Range<usize>) -> Vec<(usize, Pixels, Pixels)> {
+    /// Hit-box geometry for this text, built once per row so each box costs O(log n), not a line scan.
+    fn geometry(&self) -> TextGeometry {
         match self {
-            Shaped::Line(line) => vec![(0, line.x_for_index(range.start), line.x_for_index(range.end))],
+            Shaped::Line(line) => {
+                let only = LineGeometry { base: 0, len: line.len, first_visual: 0, starts: vec![0], start_xs: vec![px(0.)], xs: XIndex::new(line) };
+                TextGeometry { lines: vec![only] }
+            }
             Shaped::Wrapped(lines) => {
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(lines.len());
                 let (mut base, mut visual) = (0, 0);
                 for l in lines {
+                    let layout = &l.unwrapped_layout;
+                    let xs = XIndex::new(layout);
                     let starts: Vec<usize> = std::iter::once(0)
                         .chain(l.wrap_boundaries().iter().map(|b| l.runs()[b.run_ix].glyphs[b.glyph_ix].index))
                         .collect();
-                    let local = range.start.saturating_sub(base).min(l.len())..range.end.saturating_sub(base).min(l.len());
-                    let layout = &l.unwrapped_layout;
-                    for (ix, sub) in split_at_lines(local, &starts, l.len()) {
-                        let line_x = layout.x_for_index(starts[ix]);
-                        out.push((visual + ix, layout.x_for_index(sub.start) - line_x, layout.x_for_index(sub.end) - line_x));
-                    }
-                    // shape_text splits on '\n' (one byte) into separate WrappedLines.
-                    base += l.len() + 1;
+                    let start_xs = starts.iter().map(|&i| xs.x(i)).collect();
+                    let first_visual = visual;
                     visual += starts.len();
+                    out.push(LineGeometry { base, len: layout.len, first_visual, starts, start_xs, xs });
+                    // shape_text splits on '\n' (one byte) into separate WrappedLines.
+                    base += layout.len + 1;
                 }
-                out
+                TextGeometry { lines: out }
             }
         }
     }
@@ -88,6 +90,106 @@ impl Shaped {
     }
 }
 
+/// `LineLayout::x_for_index` as a lookup: the x of the first glyph (in layout order) whose byte index is
+/// `>= index`, else the line width. `reach` is the running maximum of glyph indices, so it is sorted
+/// and binary-searchable even if glyph indices are not.
+struct XIndex {
+    reach: Vec<usize>,
+    xs: Vec<Pixels>,
+    width: Pixels,
+    /// Glyph x never decreases in layout order (true for left-to-right text), so x grows with the byte index.
+    monotone: bool,
+}
+
+impl XIndex {
+    fn new(layout: &LineLayout) -> Self {
+        let glyphs = layout.runs.iter().flat_map(|r| r.glyphs.iter());
+        let (mut reach, mut xs) = (Vec::new(), Vec::new());
+        for g in glyphs {
+            reach.push(reach.last().map_or(g.index, |&r: &usize| r.max(g.index)));
+            xs.push(g.position.x);
+        }
+        let monotone = xs.windows(2).all(|w| w[0] <= w[1]) && xs.last().is_none_or(|&x| x <= layout.width);
+        Self { reach, xs, width: layout.width, monotone }
+    }
+
+    fn x(&self, index: usize) -> Pixels {
+        let ix = self.reach.partition_point(|&r| r < index);
+        self.xs.get(ix).copied().unwrap_or(self.width)
+    }
+}
+
+/// One shaped (possibly wrapped) line: its byte span in the row text and its visual line starts.
+struct LineGeometry {
+    base: usize,
+    len: usize,
+    first_visual: usize,
+    starts: Vec<usize>,
+    /// x of each visual line start; boxes are relative to it.
+    start_xs: Vec<Pixels>,
+    xs: XIndex,
+}
+
+struct TextGeometry {
+    lines: Vec<LineGeometry>,
+}
+
+impl TextGeometry {
+    /// Text boxes covering byte `range`, one per visual line: (visual line, x start, x end), x relative to the text origin.
+    fn boxes(&self, range: &Range<usize>, mut each: impl FnMut((usize, Pixels, Pixels))) {
+        for l in &self.lines {
+            let local = range.start.saturating_sub(l.base).min(l.len)..range.end.saturating_sub(l.base).min(l.len);
+            for (ix, sub) in split_at_lines(local, &l.starts, l.len) {
+                let line_x = l.start_xs[ix];
+                each((l.first_visual + ix, l.xs.x(sub.start) - line_x, l.xs.x(sub.end) - line_x));
+            }
+        }
+    }
+
+    /// (visual line, x from that line's start) of byte `index`; non-decreasing in `index` for monotone lines.
+    fn position(&self, index: usize) -> (f32, f32) {
+        let Some(l) = self.lines.get(self.lines.partition_point(|l| l.base <= index).saturating_sub(1)) else {
+            return (0., 0.);
+        };
+        let local = index.saturating_sub(l.base).min(l.len);
+        let ix = l.starts.partition_point(|&s| s <= local).saturating_sub(1);
+        ((l.first_visual + ix) as f32, f32::from(l.xs.x(local) - l.start_xs[ix]))
+    }
+
+    /// Bytes whose boxes can reach `visible` (relative to the text origin): a superset with generous margins
+    /// (two visual lines, 8px for outline dilation). Everything when glyph x is not monotone.
+    fn visible_bytes(&self, visible: Bounds<Pixels>, row_h: Pixels) -> Range<usize> {
+        let end = self.lines.last().map_or(0, |l| l.base + l.len);
+        if !self.lines.iter().all(|l| l.xs.monotone) {
+            return 0..end + 1;
+        }
+        // A visible box is within both the line bounds and the x bounds; clamping the line bounds to the
+        // text's lines makes the x bounds bite on single-line (unwrapped) text.
+        let last_line = self.lines.last().map_or(0., |l| (l.first_visual + l.starts.len() - 1) as f32);
+        let line_of = |y: Pixels| (f32::from(y) / f32::from(row_h)).floor().clamp(0., last_line);
+        let lower = (line_of(visible.top() - row_h * 2.), f32::from(visible.left()) - 8.);
+        let upper = (line_of(visible.bottom() + row_h * 2.), f32::from(visible.right()) + 8.);
+        // First byte in 0..=end where the monotone predicate holds (end + 1 if none).
+        let first = |pred: &dyn Fn((f32, f32)) -> bool| {
+            let (mut lo, mut hi) = (0, end + 1);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if pred(self.position(mid)) { hi = mid } else { lo = mid + 1 }
+            }
+            lo
+        };
+        first(&|p| p >= lower)..first(&|p| p > upper)
+    }
+}
+
+/// The items of sorted, disjoint `items` whose byte range can be visible: ends at or after `bytes.start`
+/// and starts before `bytes.end`.
+fn in_window<'a, T>(items: &'a [T], range: impl Fn(&T) -> &Range<usize>, bytes: &Range<usize>) -> &'a [T] {
+    let from = items.partition_point(|it| range(it).end < bytes.start);
+    let to = items.partition_point(|it| range(it).start < bytes.end).max(from);
+    &items[from..to]
+}
+
 /// Rectangle for a text box, vertically centred in its visual line like the glyphs.
 fn hit_box(origin: Point<Pixels>, row_h: Pixels, box_h: Pixels, (visual, x0, x1): (usize, Pixels, Pixels)) -> Bounds<Pixels> {
     let top = origin.y + row_h * visual as f32 + (row_h - box_h) / 2.;
@@ -106,11 +208,15 @@ fn merge_abutting<T: PartialEq>(items: impl IntoIterator<Item = (Range<usize>, T
     out
 }
 
-/// Splits `range` at the visual line starts of a wrapped line of `len` bytes: (visual line, sub-range).
+/// Splits `range` at the sorted visual line starts of a wrapped line of `len` bytes: (visual line, sub-range).
+/// Only the lines the range touches are visited.
 fn split_at_lines(range: Range<usize>, starts: &[usize], len: usize) -> Vec<(usize, Range<usize>)> {
+    let first = starts.partition_point(|&s| s <= range.start).saturating_sub(1);
     starts
         .iter()
         .enumerate()
+        .skip(first)
+        .take_while(|&(_, &start)| start < range.end)
         .filter_map(|(ix, &start)| {
             let end = starts.get(ix + 1).copied().unwrap_or(len);
             let sub = range.start.max(start)..range.end.min(end);
@@ -154,12 +260,15 @@ fn run(len: usize, font: &Font, fg: Color, bg: Option<Color>) -> TextRun {
     TextRun { len, font: font.clone(), color: fg.hsla(), background_color: bg.map(|c| c.hsla()), underline: None, strikethrough: None }
 }
 
-/// Spans clipped to the original text kept by `display_text`, so a trailing `…` stays base-colored.
-fn clip_spans(spans: &[Span], cut: usize) -> Vec<Span> {
+/// Spans clipped to the original text kept by `display_text` (its first `cut` bytes), so a trailing `…`
+/// stays base-colored, and widened to whole chars: text runs must end on char boundaries, and producers
+/// may hand us byte offsets inside a multi-byte char.
+fn clip_spans(spans: &[Span], display: &str, cut: usize) -> Vec<Span> {
+    let kept = &display[..cut];
     spans
         .iter()
         .filter_map(|s| {
-            let range = s.range.start.min(cut)..s.range.end.min(cut);
+            let range = kept.floor_char_boundary(s.range.start.min(cut))..kept.ceil_char_boundary(s.range.end.min(cut));
             (range.start < range.end).then_some(Span { range, style: s.style })
         })
         .collect()
@@ -176,7 +285,7 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font
         LogRow::Line(line) => {
             let (display, truncated) = display_text(&line.text, MAX_DISPLAY_BYTES);
             let cut = if truncated { display.len() - '…'.len_utf8() } else { display.len() };
-            let spans = clip_spans(&line.spans, cut);
+            let spans = clip_spans(&line.spans, &display, cut);
             let display: SharedString = display.into();
             let base = if line.context { p.muted } else { p.log_text };
             let segs: Vec<Segment> = segments(display.len(), &spans, base, &p);
@@ -365,18 +474,34 @@ impl Element for LogViewElement {
                         let clip = Bounds::from_corners(point(pre.text_left, row.bounds.top()), point(row.bounds.right(), row.bounds.bottom()));
                         let origin = point(pre.text_left - pre.scroll_x, row.bounds.top());
                         window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                            // Boxes wholly outside the visible clip would paint nothing: skip them, and only
+                            // look at the marks in the visible byte window.
+                            let visible = window.content_mask().bounds;
                             let box_h = text.box_height();
-                            for (range, color) in marks {
-                                for b in text.boxes(range) {
-                                    let mark = hit_box(origin, row_h, box_h, b);
-                                    window.paint_quad(fill(mark, *color).corner_radii(Corners::all(px(2.))));
+                            let geometry = (!marks.is_empty() || !outlines.is_empty()).then(|| {
+                                let geometry = text.geometry();
+                                let bytes = geometry.visible_bytes(Bounds::new(visible.origin - origin, visible.size), row_h);
+                                (geometry, bytes)
+                            });
+                            if let Some((geometry, bytes)) = &geometry {
+                                for (range, color) in in_window(marks, |m| &m.0, bytes) {
+                                    geometry.boxes(range, |b| {
+                                        let mark = hit_box(origin, row_h, box_h, b);
+                                        if mark.intersects(&visible) {
+                                            window.paint_quad(fill(mark, *color).corner_radii(Corners::all(px(2.))));
+                                        }
+                                    });
                                 }
                             }
                             text.paint(origin, row_h, window, cx);
-                            for range in outlines {
-                                for b in text.boxes(range) {
-                                    let ring = hit_box(origin, row_h, box_h, b).dilate(px(2.));
-                                    window.paint_quad(outline(ring, p.accent, BorderStyle::Solid));
+                            if let Some((geometry, bytes)) = &geometry {
+                                for range in in_window(outlines, |r| r, bytes) {
+                                    geometry.boxes(range, |b| {
+                                        let ring = hit_box(origin, row_h, box_h, b).dilate(px(2.));
+                                        if ring.intersects(&visible) {
+                                            window.paint_quad(outline(ring, p.accent, BorderStyle::Solid));
+                                        }
+                                    });
                                 }
                             }
                         });
@@ -457,8 +582,81 @@ mod tests {
             Span { range: 2..10, style: SpanStyle::Hit(0) },
             Span { range: 6..9, style: SpanStyle::SearchHit },
         ];
-        let clipped = clip_spans(&spans, 5);
+        let clipped = clip_spans(&spans, "abcdefghij", 5);
         assert_eq!(clipped, vec![Span { range: 0..3, style: SpanStyle::Error }, Span { range: 2..5, style: SpanStyle::Hit(0) }]);
+    }
+
+    #[test]
+    fn clip_spans_widens_to_char_boundaries() {
+        // "é" 0..2, " " 2..3, "日" 3..6, "x" 6..7, then the cut at 7 and a 3-byte "…".
+        let display = "é 日x…";
+        let span = |range: Range<usize>| Span { range, style: SpanStyle::Hit(0) };
+        let clipped = clip_spans(&[span(1..2), span(1..4), span(4..5), span(5..99), span(7..9)], display, 7);
+        assert_eq!(clipped, vec![span(0..2), span(0..6), span(3..6), span(3..7)]);
+    }
+
+    fn layout(glyphs: &[(usize, f32)], width: f32, len: usize) -> LineLayout {
+        let glyphs = glyphs
+            .iter()
+            .map(|&(index, x)| gpui_kit::ShapedGlyph { id: gpui_kit::GlyphId(0), position: point(px(x), px(0.)), index, is_emoji: false })
+            .collect();
+        LineLayout { width: px(width), len, runs: vec![gpui_kit::ShapedRun { font_id: gpui_kit::FontId(0), glyphs }], ..Default::default() }
+    }
+
+    #[test]
+    fn x_index_matches_x_for_index() {
+        let multibyte = layout(&[(0, 0.), (2, 7.), (3, 14.), (6, 21.), (7, 28.)], 35., 8);
+        // Out-of-order glyphs (as in right-to-left runs) still answer like the linear scan.
+        let reordered = layout(&[(4, 14.), (5, 21.), (0, 0.), (1, 7.), (6, 28.)], 35., 7);
+        for l in [&multibyte, &reordered] {
+            let xs = XIndex::new(l);
+            for i in 0..=l.len + 1 {
+                assert_eq!(xs.x(i), l.x_for_index(i), "index {i}");
+            }
+        }
+        assert!(XIndex::new(&multibyte).monotone);
+        assert!(!XIndex::new(&reordered).monotone);
+    }
+
+    fn one_line(l: &LineLayout) -> TextGeometry {
+        TextGeometry { lines: vec![LineGeometry { base: 0, len: l.len, first_visual: 0, starts: vec![0], start_xs: vec![px(0.)], xs: XIndex::new(l) }] }
+    }
+
+    /// Asserts that every mark with a (dilated) box inside `visible` survives the byte-window cut; returns the kept count.
+    fn kept_marks(geometry: &TextGeometry, marks: &[Range<usize>], visible: Bounds<Pixels>, row_h: Pixels) -> usize {
+        let kept = in_window(marks, |r| r, &geometry.visible_bytes(visible, row_h));
+        for m in marks {
+            let mut shown = false;
+            geometry.boxes(m, |b| shown |= hit_box(point(px(0.), px(0.)), row_h, px(15.), b).dilate(px(2.)).intersects(&visible));
+            assert!(!shown || kept.contains(m), "visible mark {m:?} skipped");
+        }
+        kept.len()
+    }
+
+    #[test]
+    fn visible_window_keeps_every_visible_mark_and_little_else() {
+        let glyphs: Vec<(usize, f32)> = (0..1000).map(|i| (i, i as f32 * 7.)).collect();
+        let marks: Vec<Range<usize>> = (0..200).map(|i| i * 5..i * 5 + 3).collect();
+        let row_h = px(23.);
+        let geometry = one_line(&layout(&glyphs, 7000., 1000));
+        for left in [0., 3., 700., 6990.] {
+            let kept = kept_marks(&geometry, &marks, Bounds::new(point(px(left), px(0.)), gsize(px(700.), row_h)), row_h);
+            assert!(kept < 25, "kept {kept} of {} at x {left}", marks.len());
+        }
+
+        // Wrapped into 10 visual lines of 100 bytes: only marks on the lines near the viewport.
+        let mut wrapped = one_line(&layout(&glyphs, 7000., 1000));
+        let line = wrapped.lines.first_mut().unwrap();
+        line.starts = (0..10).map(|v| v * 100).collect();
+        line.start_xs = line.starts.iter().map(|&s| line.xs.x(s)).collect();
+        for top in [0., 3., 5. * 23., 9. * 23.] {
+            let kept = kept_marks(&wrapped, &marks, Bounds::new(point(px(0.), px(top)), gsize(px(700.), row_h)), row_h);
+            assert!(kept <= 6 * 20 + 1, "kept {kept} at y {top}");
+        }
+
+        // Not monotone: nothing can be skipped.
+        let reordered = one_line(&layout(&[(4, 14.), (5, 21.), (0, 0.), (1, 7.), (6, 28.)], 35., 7));
+        assert_eq!(reordered.visible_bytes(Bounds::new(point(px(100.), px(0.)), gsize(px(10.), row_h)), row_h), 0..8);
     }
 
     #[test]
