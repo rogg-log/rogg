@@ -7,6 +7,9 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, BoxShadow, Entity, FontWeight, MouseButton, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
 
+/// Space kept free around a dialog that is taller than the window; the body scrolls instead.
+const VIEWPORT_MARGIN: f32 = 80.;
+
 /// The reference `dialog`: 500px, 22px padding, 10px radius, side background, large soft shadow.
 #[derive(IntoElement)]
 pub struct DialogFrame {
@@ -44,13 +47,16 @@ impl DialogFrame {
 }
 
 impl RenderOnce for DialogFrame {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
         let on_close = self.on_close;
         div()
             .id("dialog")
             .test_support()
             .occlude()
+            .flex()
+            .flex_col()
+            .max_h(window.viewport_size().height - px(VIEWPORT_MARGIN))
             .w(px(size::DIALOG_W))
             .p(px(size::DIALOG_PAD))
             .bg(p.side)
@@ -71,11 +77,21 @@ impl RenderOnce for DialogFrame {
                         }
                     })),
             )
-            .when_some(self.description, |d, text| {
-                d.child(div().my(px(12.)).text_size(px(12.)).line_height(px(20.4)).text_color(p.muted).child(text))
-            })
-            .children(self.body)
-            .when_some(self.note, |d, text| d.child(div().my(px(10.)).text_size(px(10.)).line_height(px(17.)).text_color(p.muted).child(text)))
+            .child(
+                div()
+                    .id("dialog-body")
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .when_some(self.description, |d, text| {
+                        d.child(div().my(px(12.)).text_size(px(12.)).line_height(px(20.4)).text_color(p.muted).child(text))
+                    })
+                    .children(self.body)
+                    .when_some(self.note, |d, text| {
+                        d.child(div().my(px(10.)).text_size(px(10.)).line_height(px(17.)).text_color(p.muted).child(text))
+                    }),
+            )
     }
 }
 
@@ -104,6 +120,7 @@ impl RenderOnce for ModalLayer {
         div()
             .id("modal-layer")
             .test_support()
+            .occlude()
             .absolute()
             .inset_0()
             .flex()
