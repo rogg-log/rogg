@@ -247,4 +247,72 @@ mod tests {
         assert!(!dst.exists());
         assert!(!partial_path(&dst).exists());
     }
+
+    #[test]
+    fn surrogate_pair_across_read_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let chunk_size = 1usize << 20; // 1 MiB
+
+        for le in [true, false] {
+            // Placement 1: Emoji (surrogate pair) starts at post-BOM offset chunk_size - 2
+            // This spans the first read boundary, with the pair split across two chunks
+            // Post-BOM offset X means file byte 2 + X
+            // So emoji is at file bytes chunk_size to chunk_size + 3
+            // First read: bytes 2 to 2 + chunk_size - 1 (includes first 2 bytes of emoji)
+            // Second read starts at byte chunk_size + 2 (includes last 2 bytes of emoji)
+            let padding_chars = (chunk_size - 2) / 2; // Each 'a' is 2 bytes in UTF-16
+            let test_string = "a".repeat(padding_chars) + "😀";
+
+            let src = dir.path().join(if le { "le_boundary.log" } else { "be_boundary.log" });
+            let dst = dir.path().join(if le { "le_boundary.utf8" } else { "be_boundary.utf8" });
+
+            std::fs::write(&src, utf16(&test_string, le)).unwrap();
+            let enc = Encoding::detect(&std::fs::read(&src).unwrap());
+            transcode_to_utf8(&src, &dst, enc, &CancelToken::new(), |_, _| {}).unwrap();
+
+            let result = std::fs::read_to_string(&dst).unwrap();
+            assert_eq!(result, test_string, "Placement 1 (pair at offset {}, LE={}) failed", chunk_size - 2, le);
+
+            // Placement 2: Emoji ends exactly at first read boundary
+            // Emoji is at post-BOM offsets chunk_size - 4 to chunk_size - 1
+            // First 2 bytes in first chunk, last 2 bytes in second chunk
+            let padding_chars2 = (chunk_size - 4) / 2;
+            let test_string2 = "a".repeat(padding_chars2) + "😀";
+
+            let src2 = dir.path().join(if le { "le_boundary2.log" } else { "be_boundary2.log" });
+            let dst2 = dir.path().join(if le { "le_boundary2.utf8" } else { "be_boundary2.utf8" });
+
+            std::fs::write(&src2, utf16(&test_string2, le)).unwrap();
+            let enc2 = Encoding::detect(&std::fs::read(&src2).unwrap());
+            transcode_to_utf8(&src2, &dst2, enc2, &CancelToken::new(), |_, _| {}).unwrap();
+
+            let result2 = std::fs::read_to_string(&dst2).unwrap();
+            assert_eq!(result2, test_string2, "Placement 2 (pair at offset {}, LE={}) failed", chunk_size - 4, le);
+        }
+    }
+
+    #[test]
+    fn source_shorter_than_bom_is_a_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Test with 0 bytes
+        let src0 = dir.path().join("zero.log");
+        let dst0 = dir.path().join("zero.utf8");
+        std::fs::write(&src0, vec![]).unwrap();
+
+        let result = transcode_to_utf8(&src0, &dst0, Encoding::Utf16Le, &CancelToken::new(), |_, _| {});
+        assert!(matches!(result, Err(CoreError::Io { .. })), "Expected Io error for 0-byte file");
+        assert!(!dst0.exists(), "Destination should not exist after error");
+        assert!(!partial_path(&dst0).exists(), "Partial file should not exist after error");
+
+        // Test with 1 byte
+        let src1 = dir.path().join("one.log");
+        let dst1 = dir.path().join("one.utf8");
+        std::fs::write(&src1, vec![0xFF]).unwrap();
+
+        let result = transcode_to_utf8(&src1, &dst1, Encoding::Utf16Le, &CancelToken::new(), |_, _| {});
+        assert!(matches!(result, Err(CoreError::Io { .. })), "Expected Io error for 1-byte file");
+        assert!(!dst1.exists(), "Destination should not exist after error");
+        assert!(!partial_path(&dst1).exists(), "Partial file should not exist after error");
+    }
 }
