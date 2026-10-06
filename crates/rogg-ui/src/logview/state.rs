@@ -1,7 +1,7 @@
 use super::model::LogRowSource;
 use super::scroll::{ScrollAnchor, ScrollGeometry};
 use crate::theme::size;
-use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size};
+use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size, px};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -79,6 +79,11 @@ impl LogViewState {
         self.scroll_x = 0.;
         self.heights.clear();
         cx.notify();
+    }
+
+    /// Horizontal scroll offset of the text column (always zero in wrap mode).
+    pub fn scroll_x(&self) -> Pixels {
+        px(self.scroll_x)
     }
 
     pub fn selected(&self) -> Option<u64> {
@@ -159,6 +164,12 @@ impl LogViewState {
 
     pub(crate) fn thumb(&self) -> Option<(f32, f32)> {
         self.with_geometry(|g| g.thumb(self.anchor))
+    }
+
+    /// Updates the horizontal extent and re-clamps the offset (lines may have shrunk or the view widened).
+    pub(crate) fn set_max_scroll_x(&mut self, max: f32) {
+        self.max_scroll_x = max.max(0.);
+        self.scroll_x = if self.wrap { 0. } else { self.scroll_x.clamp(0., self.max_scroll_x) };
     }
 
     pub(crate) fn scroll_by_px(&mut self, dy: f32, dx: f32) {

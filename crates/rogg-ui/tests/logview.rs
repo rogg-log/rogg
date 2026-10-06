@@ -93,6 +93,44 @@ fn wheel_scrolls_and_center_on_row_centres(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn horizontal_scroll_is_reclamped_when_lines_get_shorter(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let long = LogRow::Line(LogLine { number: 1, text: "x".repeat(500).into(), spans: vec![], pinned: false, context: false, tint: None });
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![long]))));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(-300.), px(0.))), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.scroll_x()), px(300.));
+    state.update(cx, |s, cx| s.set_rows(rows(3, None), cx));
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| s.scroll_x()), px(0.));
+}
+
+#[gpui_kit::test]
+fn wrapped_line_with_hits_across_wrap_boundaries_paints(cx: &mut TestAppContext) {
+    use rogg_ui::logview::{Span, SpanStyle};
+    common::setup(cx);
+    let spans = vec![
+        Span { range: 0..20, style: SpanStyle::Faint },
+        Span { range: 10..250, style: SpanStyle::Hit(1) },
+        Span { range: 15..240, style: SpanStyle::SearchHit },
+    ];
+    let long = LogRow::Line(LogLine { number: 1, text: "word ".repeat(60).into(), spans, pinned: false, context: false, tint: None });
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![long]))));
+    state.update(cx, |s, cx| s.set_wrap(true, cx));
+    let w = open(cx, state.clone());
+    render(cx, w);
+    let geo = state.read_with(cx, |s, _| s.last_rows().to_vec());
+    let h = f32::from(geo[0].bounds.size.height);
+    assert!(h > 23. && h % 23. == 0., "wrapped row spans several visual lines, got {h}");
+}
+
+#[gpui_kit::test]
 fn wrap_toggle_and_set_rows_reset_safely(cx: &mut TestAppContext) {
     common::setup(cx);
     let state = cx.new(|_| LogViewState::new(rows(100, None)));

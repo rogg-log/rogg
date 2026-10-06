@@ -7,7 +7,7 @@ use crate::logview::RowTint;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, Entity, Font, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent,
+    HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent,
     ShapedLine, SharedString, Style, TextAlign, TextRun, TransformationMatrix, Window, WrappedLine, fill, font, outline, point, px,
     relative, size as gsize,
 };
@@ -35,6 +35,88 @@ impl IntoElement for LogViewElement {
 enum Shaped {
     Line(ShapedLine),
     Wrapped(Vec<WrappedLine>),
+}
+
+impl Shaped {
+    /// Height of a hit box: the font's ascent plus descent.
+    fn box_height(&self) -> Pixels {
+        match self {
+            Shaped::Line(line) => line.ascent + line.descent,
+            Shaped::Wrapped(lines) => lines.first().map(|l| l.ascent() + l.descent()).unwrap_or_default(),
+        }
+    }
+
+    /// Text boxes covering byte `range`, one per visual line: (visual line, x start, x end), x relative to the text origin.
+    fn boxes(&self, range: &Range<usize>) -> Vec<(usize, Pixels, Pixels)> {
+        match self {
+            Shaped::Line(line) => vec![(0, line.x_for_index(range.start), line.x_for_index(range.end))],
+            Shaped::Wrapped(lines) => {
+                let mut out = Vec::new();
+                let (mut base, mut visual) = (0, 0);
+                for l in lines {
+                    let starts: Vec<usize> = std::iter::once(0)
+                        .chain(l.wrap_boundaries().iter().map(|b| l.runs()[b.run_ix].glyphs[b.glyph_ix].index))
+                        .collect();
+                    let local = range.start.saturating_sub(base).min(l.len())..range.end.saturating_sub(base).min(l.len());
+                    let layout = &l.unwrapped_layout;
+                    for (ix, sub) in split_at_lines(local, &starts, l.len()) {
+                        let line_x = layout.x_for_index(starts[ix]);
+                        out.push((visual + ix, layout.x_for_index(sub.start) - line_x, layout.x_for_index(sub.end) - line_x));
+                    }
+                    // shape_text splits on '\n' (one byte) into separate WrappedLines.
+                    base += l.len() + 1;
+                    visual += starts.len();
+                }
+                out
+            }
+        }
+    }
+
+    fn paint(&self, origin: Point<Pixels>, row_h: Pixels, window: &mut Window, cx: &mut App) {
+        match self {
+            Shaped::Line(line) => {
+                line.paint(origin, row_h, TextAlign::Left, None, window, cx).ok();
+            }
+            Shaped::Wrapped(lines) => {
+                let mut y = origin.y;
+                for l in lines {
+                    l.paint(point(origin.x, y), row_h, TextAlign::Left, None, window, cx).ok();
+                    y += l.size(row_h).height;
+                }
+            }
+        }
+    }
+}
+
+/// Rectangle for a text box, vertically centred in its visual line like the glyphs.
+fn hit_box(origin: Point<Pixels>, row_h: Pixels, box_h: Pixels, (visual, x0, x1): (usize, Pixels, Pixels)) -> Bounds<Pixels> {
+    let top = origin.y + row_h * visual as f32 + (row_h - box_h) / 2.;
+    Bounds::new(point(origin.x + x0, top), gsize(x1 - x0, box_h))
+}
+
+/// Joins abutting ranges with equal values: `segments()` splits a hit wherever any other style changes.
+fn merge_abutting<T: PartialEq>(items: impl IntoIterator<Item = (Range<usize>, T)>) -> Vec<(Range<usize>, T)> {
+    let mut out: Vec<(Range<usize>, T)> = Vec::new();
+    for (range, value) in items {
+        match out.last_mut() {
+            Some((last, v)) if last.end == range.start && *v == value => last.end = range.end,
+            _ => out.push((range, value)),
+        }
+    }
+    out
+}
+
+/// Splits `range` at the visual line starts of a wrapped line of `len` bytes: (visual line, sub-range).
+fn split_at_lines(range: Range<usize>, starts: &[usize], len: usize) -> Vec<(usize, Range<usize>)> {
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, &start)| {
+            let end = starts.get(ix + 1).copied().unwrap_or(len);
+            let sub = range.start.max(start)..range.end.min(end);
+            (sub.start < sub.end).then_some((ix, sub))
+        })
+        .collect()
 }
 
 enum RowBody {
@@ -99,10 +181,10 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font
             let display: SharedString = display.into();
             let base = if line.context { p.muted } else { p.log_text };
             let segs: Vec<Segment> = segments(display.len(), &spans, base, &p);
-            let wrapped = wrap_width.is_some();
-            let runs: Vec<TextRun> = segs.iter().map(|s| run(s.range.len(), mono, s.fg, if wrapped { s.hit_bg } else { None })).collect();
-            let marks = if wrapped { vec![] } else { segs.iter().filter_map(|s| s.hit_bg.map(|bg| (s.range.clone(), bg))).collect() };
-            let outlines = segs.iter().filter(|s| s.outline).map(|s| s.range.clone()).collect();
+            let runs: Vec<TextRun> = segs.iter().map(|s| run(s.range.len(), mono, s.fg, None)).collect();
+            let marks = merge_abutting(segs.iter().filter_map(|s| s.hit_bg.map(|bg| (s.range.clone(), bg))));
+            let outlines =
+                merge_abutting(segs.iter().filter(|s| s.outline).map(|s| (s.range.clone(), ()))).into_iter().map(|(r, _)| r).collect();
             let number_text: SharedString = line.number.to_string().into();
             let number_runs = [run(number_text.len(), mono, p.faint, None)];
             let number_line = window.text_system().shape_line(number_text, px(10.), &number_runs, None);
@@ -191,7 +273,7 @@ impl Element for LogViewElement {
         let longest = self.state.read(cx).rows().longest_line_chars() as f32;
         let font_id = window.text_system().resolve_font(&mono);
         let advance = window.text_system().ch_advance(font_id, theme.metrics.log_font_size).map(f32::from).unwrap_or(7.);
-        self.state.update(cx, |s, _| s.max_scroll_x = (longest * advance - text_w).max(0.));
+        self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (visible, rows_src, selected, force_hover_row, scroll_x, thumb) = {
@@ -281,29 +363,19 @@ impl Element for LogViewElement {
 
                         let clip = Bounds::from_corners(point(pre.text_left, row.bounds.top()), point(pre.text_right, row.bounds.bottom()));
                         let origin = point(pre.text_left - pre.scroll_x, row.bounds.top());
-                        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| match text {
-                            Shaped::Line(line) => {
-                                let box_h = line.ascent + line.descent;
-                                let box_y = row.bounds.top() + (row_h - box_h) / 2.;
-                                for (range, color) in marks {
-                                    let x0 = line.x_for_index(range.start);
-                                    let x1 = line.x_for_index(range.end);
-                                    let mark = Bounds::new(point(origin.x + x0, box_y), gsize(x1 - x0, box_h));
+                        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                            let box_h = text.box_height();
+                            for (range, color) in marks {
+                                for b in text.boxes(range) {
+                                    let mark = hit_box(origin, row_h, box_h, b);
                                     window.paint_quad(fill(mark, *color).corner_radii(Corners::all(px(2.))));
                                 }
-                                line.paint(origin, row_h, TextAlign::Left, None, window, cx).ok();
-                                for range in outlines {
-                                    let x0 = line.x_for_index(range.start);
-                                    let x1 = line.x_for_index(range.end);
-                                    let ring = Bounds::new(point(origin.x + x0 - px(2.), box_y - px(2.)), gsize(x1 - x0 + px(4.), box_h + px(4.)));
-                                    window.paint_quad(outline(ring, p.accent, BorderStyle::Solid));
-                                }
                             }
-                            Shaped::Wrapped(lines) => {
-                                let mut y = origin.y;
-                                for l in lines {
-                                    l.paint(point(origin.x, y), row_h, TextAlign::Left, None, window, cx).ok();
-                                    y += l.size(row_h).height;
+                            text.paint(origin, row_h, window, cx);
+                            for range in outlines {
+                                for b in text.boxes(range) {
+                                    let ring = hit_box(origin, row_h, box_h, b).dilate(px(2.));
+                                    window.paint_quad(outline(ring, p.accent, BorderStyle::Solid));
                                 }
                             }
                         });
@@ -386,5 +458,26 @@ mod tests {
         ];
         let clipped = clip_spans(&spans, 5);
         assert_eq!(clipped, vec![Span { range: 0..3, style: SpanStyle::Error }, Span { range: 2..5, style: SpanStyle::Hit(0) }]);
+    }
+
+    #[test]
+    fn merge_abutting_joins_only_touching_equal_ranges() {
+        let (a, b) = (Color(0x11), Color(0x22));
+        // abutting + same color merge; abutting + different color stay; separated stay.
+        let merged = merge_abutting(vec![(0..2, a), (2..5, a), (5..7, b), (9..10, b), (10..12, b), (14..15, a)]);
+        assert_eq!(merged, vec![(0..5, a), (5..7, b), (9..12, b), (14..15, a)]);
+        assert_eq!(merge_abutting(Vec::<(Range<usize>, ())>::new()), vec![]);
+        // a search hit split by a style change becomes one outline
+        assert_eq!(merge_abutting(vec![(3..6, ()), (6..9, ()), (9..11, ())]), vec![(3..11, ())]);
+    }
+
+    #[test]
+    fn split_at_lines_cuts_ranges_at_wrap_starts() {
+        let starts = [0, 10, 20];
+        assert_eq!(split_at_lines(2..5, &starts, 25), vec![(0, 2..5)]);
+        assert_eq!(split_at_lines(8..22, &starts, 25), vec![(0, 8..10), (1, 10..20), (2, 20..22)]);
+        assert_eq!(split_at_lines(10..12, &starts, 25), vec![(1, 10..12)]);
+        assert_eq!(split_at_lines(24..30, &starts, 25), vec![(2, 24..25)]);
+        assert!(split_at_lines(5..5, &starts, 25).is_empty());
     }
 }
