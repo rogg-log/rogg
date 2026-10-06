@@ -74,6 +74,11 @@ pub fn split_expression(text: &str) -> Vec<String> {
 }
 
 /// Inverse of `split_expression` for display in the expression editor.
+///
+/// Inverts `split_expression` for every term list that `split_expression` can produce;
+/// a term whose text itself contains the literal sequence `\|\|` (only possible when
+/// constructed programmatically) re-parses as `||`. The editor cycle
+/// split → join → split is stable for all terms that originate from `split_expression`.
 pub fn join_expression(terms: &[Term]) -> String {
     terms.iter().map(|t| t.text.replace("||", "\\|\\|")).collect::<Vec<_>>().join(" || ")
 }
@@ -196,5 +201,16 @@ mod tests {
         let spec = FilterSpec { regex: true, case_sensitive: true, context: 2, ..FilterSpec::from_expression("a || b") };
         let json = serde_json::to_string(&spec).unwrap();
         assert_eq!(serde_json::from_str::<FilterSpec>(&json).unwrap(), spec);
+    }
+
+    #[test]
+    fn known_limitation_backslash_pipe_pipe() {
+        // A term whose text contains the literal sequence \|\| (only possible when
+        // constructed programmatically) re-parses as ||. This is the known limitation:
+        // split(join([Term::include(r"a\|\|b")])) produces ["a||b"] not ["a\|\|b"].
+        assert_eq!(
+            split_expression(&join_expression(&[Term::include(r"a\|\|b")])),
+            ["a||b"]
+        );
     }
 }
