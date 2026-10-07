@@ -3,7 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { GOLDEN, OUT, ROOT } from './config.mjs';
+import { GOLDEN, OUT, PAGE, ROOT } from './config.mjs';
+
+// The goldens are replica-page captures: never approve or check against another page.
+if (PAGE !== 'replica') {
+  console.error(`approve/check only run on the replica page (ROGG_VISUAL_PAGE=${PAGE})`);
+  process.exit(1);
+}
 
 // Re-capture the gallery, then compare against the approved golden images.
 execFileSync('node', [path.join(ROOT, 'tools/visual-diff/gallery.mjs')], { stdio: 'inherit' });

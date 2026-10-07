@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { GOLDEN, OUT, captureNames } from './config.mjs';
+import { GOLDEN, OUT, PAGE, captureNames } from './config.mjs';
+
+// The goldens are replica-page captures: never approve or check against another page.
+if (PAGE !== 'replica') {
+  console.error(`approve/check only run on the replica page (ROGG_VISUAL_PAGE=${PAGE})`);
+  process.exit(1);
+}
 
 // Golden set: all four window variants plus every dialog in dark-compact (keeps the repo small).
 const names = captureNames().filter((n) => !n.includes('--') || n.startsWith('dark-compact--'));
