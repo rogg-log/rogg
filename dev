@@ -1,0 +1,304 @@
+#!/usr/bin/env zsh
+# rogg developer entry point. `./dev help` lists every command.
+# DRY=1 ./dev <command> prints the commands without running them.
+
+set -euo pipefail
+
+ROOT=${0:A:h}
+cd "$ROOT"
+# rustup from Homebrew is keg-only: put it (and cargo's bin) on PATH for every command.
+export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
+
+VISUAL_DIR=tools/visual-diff
+CACHE_DIR="$HOME/Library/Caches/rogg"
+DRY=${DRY:-0}
+
+if [[ -t 1 ]]; then
+  BOLD=$'\e[1m' CYAN=$'\e[36m' GREEN=$'\e[32m' RED=$'\e[31m' DIM=$'\e[2m' RESET=$'\e[0m'
+else
+  BOLD='' CYAN='' GREEN='' RED='' DIM='' RESET=''
+fi
+
+step() { print -r -- "${BOLD}${CYAN}==> $*${RESET}"; }
+ok()   { print -r -- "${GREEN}✓ $*${RESET}"; }
+die()  { print -ru2 -- "${RED}error:${RESET} $*"; exit 1; }
+
+# Shows a command, then runs it (unless DRY=1).
+run() {
+  print -r -- "${DIM}\$ ${(j: :)${(q-)@}}${RESET}"
+  [[ $DRY == 1 ]] && return 0
+  "$@"
+}
+
+# Like `run`, inside the visual-diff tool's directory.
+run_visual() {
+  print -r -- "${DIM}\$ (cd $VISUAL_DIR && ${(j: :)${(q-)@}})${RESET}"
+  [[ $DRY == 1 ]] && return 0
+  ( cd "$VISUAL_DIR" && "$@" )
+}
+
+confirm() {
+  [[ $DRY == 1 ]] && { print -r -- "${DIM}(would ask: $1)${RESET}"; return 0; }
+  local answer
+  read -r "answer?$1 [y/N] "
+  [[ $answer == [yY]* ]]
+}
+
+open_report() {
+  [[ $DRY == 1 ]] && { print -r -- "${DIM}\$ open $1${RESET}"; return 0; }
+  [[ -f $1 ]] && open "$1"
+}
+
+toolchain() { sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml; }
+
+# --- prerequisites -----------------------------------------------------------------------------------------------
+
+need_rust() {
+  command -v cargo >/dev/null 2>&1 || die "the Rust toolchain is not installed — run ./dev setup"
+}
+
+need_node() {
+  command -v npm >/dev/null 2>&1 || die "Node.js is not installed — run ./dev setup"
+  [[ -d $VISUAL_DIR/node_modules ]] || die "the visual-diff packages are not installed — run ./dev setup"
+}
+
+# --- commands ----------------------------------------------------------------------------------------------------
+
+cmd_help() {
+  cat <<EOF
+${BOLD}rogg developer commands${RESET}   (./dev <command> [args])
+
+${BOLD}Setup${RESET}
+  setup                         Install or verify everything: Rust $(toolchain) (rustup), Node, visual-diff packages, Playwright Chromium
+  clean [--cache]               cargo clean; --cache also empties $CACHE_DIR (asks first)
+
+${BOLD}Build and run${RESET}
+  build [--release]             Build every crate (tests and benches included)
+  run [files...]                Run the app (release); '-' reads stdin
+  demo                          Run the app with the reference sample data (--demo)
+  gallery                       Open the component gallery
+  smoke                         Gallery smoke run (opens, renders, exits)
+
+${BOLD}Quality${RESET}
+  check [--no-visual]           Build, clippy, all tests and the golden visual check — the pre-commit / pre-merge gate
+  test [crate] [filter...]      cargo test: all crates, one crate (core, ui, app, gallery, genlog), optionally filtered
+  lint                          cargo clippy --workspace --all-targets -D warnings
+  fmt                           cargo fmt --check (report only; the code is not rustfmt-formatted wholesale)
+  bench                         Engine benchmarks and the memory test (release)
+
+${BOLD}Visual${RESET}
+  visual-check                  Compare the gallery replica with the approved goldens (must be 0.000%)
+  visual                        Replica vs the HTML reference: full report, opens target/visual/report.html
+  visual-app                    Real app (demo) vs the HTML reference: opens target/visual-app/report.html
+  visual-approve                Re-capture the replica and make it the new goldens (asks first)
+  capture <page> [theme] [density]
+                                One gallery capture into target/visual/manual/ (theme dark|light, density compact|comfortable)
+
+${BOLD}Test data${RESET}
+  genlog [size] [out]           Synthetic log (default 64M → target/genlog/sample.log)
+  bundle [zip|tar|tgz] [files] [size]
+                                Synthetic support bundle (default zip, 10 files of 64M → target/genlog/bundle.<kind>)
+  live [out]                    Append a log line every 100 ms (live follow by hand; Ctrl-C stops)
+  pipe [file]                   Pipe a file into the app (stdin capture)
+
+Set DRY=1 to print the commands without running them.
+EOF
+}
+
+cmd_setup() {
+  step "Homebrew packages"
+  if ! command -v brew >/dev/null 2>&1; then
+    die "Homebrew is required: https://brew.sh"
+  fi
+  local pkg missing=()
+  for pkg in rustup node just; do
+    brew list --formula "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+  done
+  if (( ${#missing} )); then run brew install "${missing[@]}"; else ok "rustup, node and just are installed"; fi
+
+  step "Rust $(toolchain)"
+  run rustup toolchain install "$(toolchain)" --profile minimal --component rustfmt --component clippy
+  need_rust
+  [[ $DRY == 1 ]] || ok "$(cargo --version)"
+
+  step "Visual-diff packages"
+  run_visual npm ci
+  run_visual npx playwright install chromium
+
+  step "Done"
+  ok "./dev check runs the full gate"
+}
+
+cmd_build() {
+  need_rust
+  local release=()
+  [[ ${1:-} == --release ]] && release=(--release)
+  step "Build${release:+ (release)}"
+  run cargo build --workspace --all-targets "${release[@]}"
+}
+
+cmd_run()     { need_rust; run cargo run --release -p rogg-app -- "$@"; }
+cmd_demo()    { need_rust; run cargo run --release -p rogg-app -- --demo; }
+cmd_gallery() { need_rust; run cargo run -p rogg-gallery; }
+cmd_smoke()   { need_rust; ROGG_GALLERY_SMOKE=1 run cargo run -p rogg-gallery; }
+
+cmd_test() {
+  need_rust
+  local pkg=()
+  if [[ $# -gt 0 && $1 != -* ]]; then
+    local crate=${1#rogg-}
+    case $crate in
+      core|ui|app|gallery|genlog) pkg=(-p "rogg-$crate"); shift ;;
+      *) pkg=(--workspace) ;;   # not a crate name: treat it as a test filter
+    esac
+  else
+    pkg=(--workspace)
+  fi
+  step "Tests"
+  run cargo test "${pkg[@]}" "$@"
+}
+
+cmd_lint()  { need_rust; step "Clippy"; run cargo clippy --workspace --all-targets -- -D warnings; }
+cmd_fmt()   { need_rust; step "rustfmt (check only)"; run cargo fmt --all -- --check; }
+
+cmd_bench() {
+  need_rust
+  step "Engine benchmarks"
+  run cargo bench -p rogg-core --bench engine
+  step "Memory test"
+  run cargo test -p rogg-core --release --test memory -- --ignored --nocapture
+}
+
+cmd_visual_check() { need_rust; need_node; step "Visual check against the goldens"; run_visual npm run check; }
+
+cmd_visual() {
+  need_rust; need_node
+  step "Replica vs reference"
+  run_visual npm run all
+  open_report target/visual/report.html
+}
+
+cmd_visual_app() {
+  need_rust; need_node
+  step "Real app vs reference"
+  run_visual env ROGG_VISUAL_PAGE=app npm run all
+  open_report target/visual-app/report.html
+}
+
+cmd_visual_approve() {
+  need_rust; need_node
+  confirm "Overwrite the approved goldens in $VISUAL_DIR/golden with fresh replica captures?" || die "cancelled"
+  step "Capture and approve"
+  run_visual npm run all
+  run_visual npm run approve
+  ok "review and commit the changes under $VISUAL_DIR/golden"
+}
+
+cmd_capture() {
+  need_rust
+  local page=${1:-replica} theme=${2:-dark} density=${3:-compact}
+  local out=target/visual/manual/$page-$theme-$density
+  run mkdir -p target/visual/manual
+  run cargo run -p rogg-gallery -- --capture "$page" --theme "$theme" --density "$density" --out "$out.png" --geometry "$out.json"
+  ok "$out.png"
+}
+
+cmd_genlog() {
+  need_rust
+  local size=${1:-64M} out=${2:-target/genlog/sample.log}
+  run mkdir -p "${out:h}"
+  run cargo run --release -p rogg-genlog -- --size "$size" --out "$out"
+}
+
+cmd_bundle() {
+  need_rust
+  local kind=${1:-zip} files=${2:-10} size=${3:-64M}
+  case $kind in zip|tar|tgz) ;; *) die "bundle kind must be zip, tar or tgz" ;; esac
+  run mkdir -p target/genlog
+  run cargo run --release -p rogg-genlog -- --bundle "$kind" --files "$files" --size "$size" --out "target/genlog/bundle.$kind"
+}
+
+cmd_live() {
+  local out=${1:-target/genlog/live.log}
+  run mkdir -p "${out:h}"
+  run touch "$out"
+  step "Appending to $out every 100 ms (Ctrl-C stops)"
+  [[ $DRY == 1 ]] && return 0
+  while true; do
+    print -r -- "$(date '+%Y-%m-%d %H:%M:%S').000  INFO   ticker       tick $RANDOM" >> "$out"
+    sleep 0.1
+  done
+}
+
+cmd_pipe() {
+  need_rust
+  local file=${1:-target/genlog/sample.log}
+  [[ -f $file || $DRY == 1 ]] || die "$file does not exist — ./dev genlog creates it"
+  print -r -- "${DIM}\$ cat $file | cargo run --release -p rogg-app${RESET}"
+  [[ $DRY == 1 ]] && return 0
+  cat "$file" | cargo run --release -p rogg-app
+}
+
+cmd_clean() {
+  need_rust
+  run cargo clean
+  if [[ ${1:-} == --cache ]]; then
+    confirm "Delete rogg's cache ($CACHE_DIR)?" || die "cancelled"
+    run rm -rf "$CACHE_DIR"
+  fi
+}
+
+cmd_check() {
+  need_rust
+  local visual=1
+  [[ ${1:-} == --no-visual ]] && visual=0
+  (( visual )) && need_node
+  local -a names=(build lint test)
+  (( visual )) && names+=(visual-check)
+  local -a results=()
+  local name start failed=0
+  for name in $names; do
+    start=$SECONDS
+    if "cmd_${name//-/_}"; then
+      results+=("${GREEN}✓${RESET} $name ($((SECONDS - start))s)")
+    else
+      failed=1
+      results+=("${RED}✗${RESET} $name ($((SECONDS - start))s)")
+      break
+    fi
+  done
+  print
+  step "Summary"
+  print -rl -- "${results[@]}"
+  (( failed == 0 )) && ok "all checks passed" || die "check failed at: $name"
+}
+
+# --- dispatch ----------------------------------------------------------------------------------------------------
+
+command=${1:-help}
+(( $# )) && shift
+case $command in
+  help|-h|--help) cmd_help ;;
+  setup) cmd_setup "$@" ;;
+  build) cmd_build "$@" ;;
+  run) cmd_run "$@" ;;
+  demo) cmd_demo ;;
+  gallery) cmd_gallery ;;
+  smoke) cmd_smoke ;;
+  check) cmd_check "$@" ;;
+  test) cmd_test "$@" ;;
+  lint) cmd_lint ;;
+  fmt) cmd_fmt ;;
+  bench) cmd_bench ;;
+  visual-check) cmd_visual_check ;;
+  visual) cmd_visual ;;
+  visual-app) cmd_visual_app ;;
+  visual-approve) cmd_visual_approve ;;
+  capture) cmd_capture "$@" ;;
+  genlog) cmd_genlog "$@" ;;
+  bundle) cmd_bundle "$@" ;;
+  live) cmd_live "$@" ;;
+  pipe) cmd_pipe "$@" ;;
+  clean) cmd_clean "$@" ;;
+  *) die "unknown command '$command' — ./dev help lists them" ;;
+esac
