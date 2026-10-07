@@ -125,6 +125,7 @@ fn rebuild_level(spec: &DerivedSpec, cache: &Arc<Cache>, cancel: &CancelToken, p
             (r.derived.text, r.leases, Some(r.derived.path))
         }
     };
+    let _temp = temp.map(TempFile);
     let count = parent.line_count();
     let lines = match &spec.lines {
         Some(lines) => {
@@ -135,9 +136,14 @@ fn rebuild_level(spec: &DerivedSpec, cache: &Arc<Cache>, cancel: &CancelToken, p
         }
         None => view_lines(&parent, &spec.filter, &spec.pins.iter().copied().collect(), cancel)?,
     };
-    let derived = materialize(&parent, &lines, cache, cancel, progress);
-    if let Some(path) = temp {
-        let _ = std::fs::remove_file(path);
+    Ok(Rebuilt { derived: materialize(&parent, &lines, cache, cancel, progress)?, leases })
+}
+
+/// An intermediate level's file, removed on every exit of the rebuild (success, error or cancellation).
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
-    Ok(Rebuilt { derived: derived?, leases })
 }

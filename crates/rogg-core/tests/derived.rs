@@ -77,3 +77,17 @@ fn rebuild_reads_a_whole_gz_parent() {
     let r = rebuild(&spec, &cache, &CancelToken::new(), |_, _| {}).unwrap();
     assert_eq!(lines(&r.derived.text), ["line 0 hit", "line 10000 hit", "line 20000 hit", "line 30000 hit", "line 40000 hit"]);
 }
+
+#[test]
+fn a_failed_nested_rebuild_removes_its_intermediate_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = Cache::new(dir.path().join("cache"), 1 << 30);
+    let log = dir.path().join("app.log");
+    std::fs::write(&log, "error a\nok\nerror b\n").unwrap();
+    let first = DerivedSpec { parent: SessionSource::File { path: log }, filter: FilterSpec::from_expression("error"), pins: vec![], lines: None, snapshot: None };
+    let broken = FilterSpec { regex: true, ..FilterSpec::from_expression("(unclosed") };
+    let nested = DerivedSpec { parent: SessionSource::Derived(Box::new(first)), filter: broken, pins: vec![], lines: None, snapshot: None };
+    assert!(rebuild(&nested, &cache, &CancelToken::new(), |_, _| {}).is_err());
+    let left = std::fs::read_dir(cache.streams_dir()).unwrap().count();
+    assert_eq!(left, 0, "the inner level's file does not outlive the failed rebuild");
+}
