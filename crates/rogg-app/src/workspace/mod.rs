@@ -57,6 +57,8 @@ pub struct Workspace {
     pub(crate) theme: ThemeChoice,
     pub(crate) density: Density,
     goto_subscription: Option<Subscription>,
+    /// A dialog just closed: its input's focus handle outlives it until the frame is replaced, so check again after.
+    refocus_after_dialog: bool,
     _appearance_subscription: Subscription,
 }
 
@@ -97,6 +99,7 @@ impl Workspace {
             theme: ThemeChoice::System,
             density: cx.rogg().density,
             goto_subscription: None,
+            refocus_after_dialog: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme == ThemeChoice::System {
                     ws.apply_theme(window, cx);
@@ -184,6 +187,7 @@ impl Workspace {
     pub fn close_dialog(&mut self, cx: &mut Context<Self>) {
         self.dialog = None;
         self.goto_subscription = None;
+        self.refocus_after_dialog = true;
         cx.notify();
     }
 
@@ -315,8 +319,20 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Keep keys flowing to the window's actions when the focused element went away (an applied editor, a
         // closed dialog's input).
-        if window.focused(cx).is_none() {
+        // Also when focus sits on a handle the active tab does not render (a placeholder tab, an empty filtered pane).
+        let unrendered = self.active_tab().is_some_and(|t| t.read(cx).has_unrendered_focus(window, cx));
+        let dialog_closed = std::mem::take(&mut self.refocus_after_dialog);
+        if window.focused(cx).is_none() || unrendered {
             cx.defer_in(window, |ws, window, cx| ws.focus.focus(window, cx));
+        } else if dialog_closed {
+            // The closed dialog's input stays the focused handle for a frame or two (gpui keeps the previous frame's
+            // elements alive); take focus back unless the close already moved it into the tab.
+            cx.defer_in(window, |ws, window, cx| {
+                let in_tab = ws.active_tab().is_some_and(|t| t.read(cx).has_focus(window, cx));
+                if !in_tab {
+                    ws.focus.focus(window, cx);
+                }
+            });
         }
         let this = cx.entity();
         let titlebar = self.titlebar(&this, cx).into_any_element();

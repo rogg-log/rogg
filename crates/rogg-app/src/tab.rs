@@ -3,7 +3,7 @@
 
 use crate::document::{Document, DocumentInit, Pane, Source};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, FocusHandle, SharedString, Subscription, Window};
+use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
 use rogg_ui::controls::FindField;
 use rogg_ui::layout::MainWindowParts;
 use rogg_ui::logview::{LogRowSource, LogViewEvent, LogViewState, ScrollTo, VecRows};
@@ -246,8 +246,38 @@ impl Tab {
         cx.notify();
     }
 
+    /// True once the document's text is loaded, i.e. the panes, band and find fields are rendered (a loading or
+    /// failed tab shows a placeholder instead, whose focus handles are attached to nothing).
+    pub fn is_ready(&self, cx: &App) -> bool {
+        self.doc.read(cx).text().is_some()
+    }
+
+    /// False while the filtered pane shows the no-matches state (see `tab_view`), where `focus[2]` is unattached.
+    fn filtered_focusable(&self, cx: &App) -> bool {
+        let doc = self.doc.read(cx);
+        !doc.filter.view.shown_lines().is_empty() || doc.filter.progress.is_some()
+    }
+
+    /// True when focus sits on a handle that is not attached to a rendered element: keys would then bypass the
+    /// workspace's actions, so the workspace takes focus back.
+    pub fn has_unrendered_focus(&self, window: &Window, cx: &App) -> bool {
+        if !self.is_ready(cx) {
+            return self.has_focus(window, cx);
+        }
+        !self.filtered_focusable(cx) && self.focus[2].contains_focused(window, cx)
+    }
+
+    /// True when focus is inside one of the tab's regions, find fields or the expression editor.
+    pub fn has_focus(&self, window: &Window, cx: &App) -> bool {
+        let inputs = self.find.iter().map(|i| i.focus_handle(cx)).chain(self.editing.iter().map(|i| i.focus_handle(cx)));
+        self.focus.iter().cloned().chain(inputs).any(|f| f.contains_focused(window, cx))
+    }
+
     /// ⌘F: focuses the find field of the pane used last.
     pub fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_ready(cx) {
+            return;
+        }
         let input = self.find[self.last_pane.index()].clone();
         input.update(cx, |i, cx| i.focus(window, cx));
     }
@@ -255,8 +285,10 @@ impl Tab {
     /// Tab / ⇧Tab: full log → filter line → filtered log (spec §5.9). The filtered log is skipped while its pane
     /// shows the no-matches state, where its focus handle is attached to nothing.
     pub fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let doc = self.doc.read(cx);
-        let filtered_focusable = !doc.filter.view.shown_lines().is_empty() || doc.filter.progress.is_some();
+        if !self.is_ready(cx) {
+            return;
+        }
+        let filtered_focusable = self.filtered_focusable(cx);
         let current = self.focus.iter().position(|f| f.contains_focused(window, cx));
         let mut next = match current {
             None => 0,
@@ -294,7 +326,7 @@ impl Tab {
 
     /// Edit mode (edit button, ⌘L, Enter on the filter line): the chips become an expression input.
     pub fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || !self.is_ready(cx) {
             return;
         }
         let text = self.doc.read(cx).filter.spec.expression();

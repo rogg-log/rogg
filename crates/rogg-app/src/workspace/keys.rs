@@ -44,8 +44,8 @@ pub(super) fn bind(root: Stateful<Div>, cx: &mut Context<Workspace>) -> Stateful
                 t.toggle_wrap(pane, cx);
             })
         }))
-        .on_action(cx.listener(|ws, _: &FocusNext, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(true, window, cx))))
-        .on_action(cx.listener(|ws, _: &FocusPrev, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(false, window, cx))))
+        .on_action(cx.listener(|ws, _: &FocusNext, window, cx| ws.cycle_focus(true, window, cx)))
+        .on_action(cx.listener(|ws, _: &FocusPrev, window, cx| ws.cycle_focus(false, window, cx)))
         .on_action(cx.listener(|ws, _: &GoToLine, window, cx| ws.open_go_to_line(window, cx)))
         .on_action(cx.listener(|ws, _: &ThemeSystem, window, cx| ws.set_theme(ThemeChoice::System, window, cx)))
         .on_action(cx.listener(|ws, _: &ThemeLight, window, cx| ws.set_theme(ThemeChoice::Light, window, cx)))
@@ -67,6 +67,13 @@ impl Workspace {
         if let Some(tab) = self.active_tab() {
             let doc = tab.read(cx).doc.clone();
             doc.update(cx, f);
+        }
+    }
+
+    /// Tab / ⇧Tab; ignored behind a modal dialog.
+    fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_none() {
+            self.with_tab(cx, |t, cx| t.cycle_focus(forward, window, cx));
         }
     }
 

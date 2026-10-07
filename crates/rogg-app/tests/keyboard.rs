@@ -162,3 +162,62 @@ fn theme_and_density_actions_reinstall_the_theme(cx: &mut TestAppContext) {
     cx.update_window(w, |_, window, cx| window.dispatch_action(Box::new(DensityComfortable), cx)).unwrap();
     assert_eq!(cx.update(|cx| cx.rogg().density), Density::Comfortable);
 }
+
+/// Ruling R9: a loading or failed tab renders a placeholder; focusing its unattached handles would leave the
+/// workspace shortcuts dead.
+#[gpui_kit::test]
+fn focus_keys_do_nothing_on_a_placeholder_tab(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, _ws) = common::open_workspace(cx, Args { demo: false, paths: vec![dir.path().join("missing.log")] });
+    assert!(common::exists(cx, w, "error"));
+    for keys in ["tab", "shift-tab", "cmd-f", "cmd-l"] {
+        common::press(cx, w, keys);
+        common::render(cx, w);
+        cx.run_until_parked();
+        common::press(cx, w, "cmd-g");
+        assert!(common::exists(cx, w, "dialog"), "{keys} left the workspace shortcuts dead");
+        common::press(cx, w, "escape");
+        assert!(!common::exists(cx, w, "dialog"), "escape after {keys}");
+    }
+}
+
+#[gpui_kit::test]
+fn escaping_a_dialog_with_an_input_keeps_the_shortcuts_alive(cx: &mut TestAppContext) {
+    let (_dir, w, _, _) = open_one(cx);
+    for round in 0..3 {
+        common::press(cx, w, "cmd-g");
+        assert!(common::exists(cx, w, "dialog"), "round {round}: the shortcut worked");
+        common::press(cx, w, "escape");
+        assert!(!common::exists(cx, w, "dialog"), "round {round}: escape closed it");
+    }
+}
+
+#[gpui_kit::test]
+fn focus_returns_to_the_workspace_when_the_filtered_log_empties(cx: &mut TestAppContext) {
+    let (_dir, w, _, tab) = open_one(cx);
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
+    for _ in 0..3 {
+        common::press(cx, w, "tab");
+    }
+    assert!(focused(cx, w, &tab, 2));
+    doc.update(cx, |d, cx| d.set_expression("no such text", cx)).unwrap();
+    common::render(cx, w);
+    cx.run_until_parked();
+    assert!(!focused(cx, w, &tab, 2), "the unrendered filtered log gave focus back");
+    common::press(cx, w, "cmd-g");
+    assert!(common::exists(cx, w, "dialog"), "workspace shortcuts still work");
+}
+
+#[gpui_kit::test]
+fn tab_does_not_move_focus_behind_a_dialog(cx: &mut TestAppContext) {
+    let (_dir, w, _, tab) = open_one(cx);
+    common::press(cx, w, "cmd-g");
+    common::press(cx, w, "tab");
+    assert!(common::exists(cx, w, "dialog"));
+    for i in 0..3 {
+        assert!(!focused(cx, w, &tab, i), "region {i} took focus behind the modal");
+    }
+    common::press(cx, w, "escape");
+    assert!(!common::exists(cx, w, "dialog"));
+}
