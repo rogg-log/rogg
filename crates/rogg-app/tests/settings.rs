@@ -168,6 +168,19 @@ fn the_settings_dialog_applies_each_change_at_once(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_log_fonts_are_looked_up_once_when_settings_open(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let (w, _ws) = common::open_workspace(cx, Args::default());
+    assert!(cx.update(|cx| !cx.has_global::<rogg_app::settings::LogFonts>()));
+    common::press(cx, w, "cmd-,");
+    assert!(common::exists(cx, w, "setting-theme"));
+    let cached = cx.update(|cx| cx.try_global::<rogg_app::settings::LogFonts>().map(|f| f.0.clone()));
+    assert_eq!(cached.as_deref(), Some(&["SF Mono".to_string()][..]), "the test text system has no other fonts; SF Mono is always offered");
+    cx.update(|cx| cx.set_global(rogg_app::settings::LogFonts(vec!["SF Mono".into(), "Menlo".into()])));
+    cx.update(|cx| assert_eq!(rogg_app::settings::available_log_fonts(cx), ["SF Mono", "Menlo"], "renders read the cache"));
+}
+
+#[gpui_kit::test]
 fn picking_another_log_font_returns_to_settings(cx: &mut TestAppContext) {
     common::setup(cx);
     let (w, ws) = common::open_workspace(cx, Args::default());

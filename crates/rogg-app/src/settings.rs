@@ -76,8 +76,30 @@ pub fn log_font_family(name: &str) -> SharedString {
     if name == DEFAULT_LOG_FONT { MONO_FONT.into() } else { SharedString::from(name.to_string()) }
 }
 
+/// The curated log fonts installed on this Mac, looked up once per run (`all_font_names` lists every installed family:
+/// too slow for every frame of the Settings dialog).
+pub struct LogFonts(pub Vec<String>);
+
+impl Global for LogFonts {}
+
 /// The curated log fonts installed on this Mac (spec §6.2: fonts that are not available are hidden). SF Mono always is.
+/// Cached by `cache_log_fonts`; looked up afresh until then.
 pub fn available_log_fonts(cx: &App) -> Vec<String> {
+    match cx.try_global::<LogFonts>() {
+        Some(fonts) => fonts.0.clone(),
+        None => find_log_fonts(cx),
+    }
+}
+
+/// Looks the curated log fonts up once (when the Settings dialog opens).
+pub fn cache_log_fonts(cx: &mut App) {
+    if !cx.has_global::<LogFonts>() {
+        let fonts = find_log_fonts(cx);
+        cx.set_global(LogFonts(fonts));
+    }
+}
+
+fn find_log_fonts(cx: &App) -> Vec<String> {
     let installed = cx.text_system().all_font_names();
     LOG_FONTS.iter().filter(|f| **f == DEFAULT_LOG_FONT || installed.iter().any(|n| n == *f)).map(|f| f.to_string()).collect()
 }

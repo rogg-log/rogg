@@ -420,6 +420,10 @@ impl Workspace {
 
     pub fn export_session_to(&mut self, dst: PathBuf, cx: &mut Context<Self>) {
         let session = self.capture_session(self.export_all_tabs, cx);
+        if session.tabs.is_empty() {
+            self.toast("Nothing to save: streams and in-memory tabs are not saved", cx);
+            return;
+        }
         let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let task = cx.background_executor().spawn(async move { session.save(&dst) });
         cx.spawn(async move |this, cx| {
@@ -501,6 +505,9 @@ impl Workspace {
     }
 
     pub fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
+        if matches!(dialog, Dialog::Settings) {
+            crate::settings::cache_log_fonts(cx);
+        }
         self.dialog = Some(dialog);
         cx.notify();
     }

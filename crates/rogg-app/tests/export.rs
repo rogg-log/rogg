@@ -145,3 +145,15 @@ fn sessions_export_to_rogg_files(cx: &mut TestAppContext) {
     common::wait_until(cx, |cx| toasted(&ws, cx, "Saved session to all.rogg"));
     assert_eq!(Session::read_rogg(&all).unwrap().tabs.len(), 2);
 }
+
+#[gpui_kit::test]
+fn a_session_with_nothing_restorable_is_not_saved(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_stream("feed", || Ok(std::io::Cursor::new(b"one\ntwo\n".to_vec())), window, cx))).unwrap();
+    let dst = dir.path().join("stream.rogg");
+    ws.update(cx, |ws, cx| ws.export_session_to(dst.clone(), cx));
+    cx.run_until_parked();
+    assert!(toasted(&ws, cx, "Nothing to save: streams and in-memory tabs are not saved"));
+    assert!(!dst.exists(), "no empty .rogg is written");
+}
