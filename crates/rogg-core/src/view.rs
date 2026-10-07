@@ -3,6 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::filter::MAX_CONTEXT;
+
 /// A row checkpoint is stored every CHECKPOINT shown lines; row lookups walk at most this many lines.
 pub const CHECKPOINT: usize = 1024;
 
@@ -52,7 +54,7 @@ fn compose(anchors: &[u64], radius: u64, total: u64, excluded: &impl Fn(u64) -> 
     if total == 0 {
         return Vec::new();
     }
-    let mut out = Vec::with_capacity(anchors.len() * (1 + 2 * radius as usize).min(8));
+    let mut out = Vec::with_capacity((anchors.len() * (1 + 2 * radius as usize).min(8)).min(total as usize));
     let mut next_free = 0u64;
     for (k, &a) in anchors.iter().enumerate() {
         for j in a.saturating_sub(radius).max(next_free)..a {
@@ -91,7 +93,14 @@ fn layout(shown: &[u64]) -> (Vec<u64>, u64) {
 }
 
 impl FilteredView {
+    /// Builds the view of `matches` plus `pins` plus `context` lines around each, with gap rows.
+    ///
+    /// Preconditions: `matches` is sorted, unique, and every value is `< total_lines`. Pins at or
+    /// beyond `total_lines` are ignored. `context` is clamped to `MAX_CONTEXT` (spec §4.7).
+    /// `excluded` tells whether a context line is hidden by an exclude term; callers pass
+    /// `|n| filter.is_excluded(text.line(n))`. Matches and pins are always shown, even if excluded.
     pub fn build(matches: Arc<Vec<u64>>, pins: &BTreeSet<u64>, context: u32, total_lines: u64, excluded: impl Fn(u64) -> bool) -> Self {
+        let context = context.min(MAX_CONTEXT);
         let pins: BTreeSet<u64> = pins.iter().copied().filter(|&p| p < total_lines).collect();
         let shown = if context == 0 && pins.is_empty() {
             matches.clone()
@@ -99,8 +108,10 @@ impl FilteredView {
             let anchors = merge_anchors(&matches, &pins);
             Arc::new(compose(&anchors, context as u64, total_lines, &excluded))
         };
-        let context_lines =
-            shown.iter().filter(|n| !pins.contains(n) && matches.binary_search(n).is_err()).count() as u64;
+        // Every in-range match and pin is shown, so context lines are what remains.
+        let matches_in_range = matches.partition_point(|&m| m < total_lines) as u64;
+        let pinned_unmatched = pins.iter().filter(|p| matches.binary_search(p).is_err()).count() as u64;
+        let context_lines = shown.len() as u64 - matches_in_range - pinned_unmatched;
         let (checkpoints, row_count) = layout(&shown);
         Self { matches, pins, shown, checkpoints, row_count, context_lines }
     }
@@ -215,6 +226,14 @@ mod tests {
     fn shares_matches_when_nothing_is_added() {
         let matches = Arc::new(vec![1, 2, 9]);
         let v = FilteredView::build(matches.clone(), &BTreeSet::new(), 0, 10, |_| false);
+        assert!(Arc::ptr_eq(v.shown_lines(), &matches));
+    }
+
+    #[test]
+    fn no_context_no_pins_has_zero_context_lines_and_shares_matches() {
+        let matches = Arc::new((0..2050u64).collect::<Vec<_>>());
+        let v = FilteredView::build(matches.clone(), &BTreeSet::new(), 0, 2050, |_| false);
+        assert_eq!(v.context_lines(), 0);
         assert!(Arc::ptr_eq(v.shown_lines(), &matches));
     }
 

@@ -31,6 +31,8 @@ proptest! {
         let view = FilteredView::build(Arc::new(matches.iter().copied().collect()), &pins, n, total, |l| excluded.contains(&l));
         let expected = naive_rows(&matches, &pins, n as u64, total, &excluded);
         prop_assert_eq!(view.row_count(), expected.len() as u64);
+        let naive_context = expected.iter().filter(|r| matches!(r, ViewRow::Line { matched: false, pinned: false, .. })).count() as u64;
+        prop_assert_eq!(view.context_lines(), naive_context);
         for (r, row) in expected.iter().enumerate() {
             prop_assert_eq!(view.row(r as u64), Some(*row));
             if let ViewRow::Line { number, .. } = row {
