@@ -166,6 +166,7 @@ pub fn list(path: &Path, kind: ArchiveKind, cancel: &CancelToken, mut progress: 
                     let name = entry.path().map_err(|e| archive_error(path, e))?.to_string_lossy().into_owned();
                     out.push(ArchiveEntry { path: clean(&name).to_string(), size: entry.size() });
                 }
+                progress(read.get().min(total), total);
             }
             progress(total, total);
         }

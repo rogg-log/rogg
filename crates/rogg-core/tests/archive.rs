@@ -122,3 +122,33 @@ fn archive_kinds_from_member_names() {
     assert_eq!(kind_from_name("app.log.1.gz"), None, "a compressed log is not an archive");
     assert_eq!(kind_from_name("app.log"), None);
 }
+
+#[test]
+fn tar_listing_reports_progress_as_it_reads() {
+    // Deterministic, poorly compressible members (xorshift bytes) so the archive is much larger than any read buffer.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let mut noise = |len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect()
+    };
+    let bodies: Vec<Vec<u8>> = (0..4).map(|_| noise(1 << 20)).collect();
+    let names = ["m0.bin", "m1.bin", "m2.bin", "m3.bin"];
+    let members: Vec<(&str, &[u8])> = names.iter().copied().zip(bodies.iter().map(Vec::as_slice)).collect();
+    let dir = tempfile::tempdir().unwrap();
+    for (bundle_kind, kind, name) in [(BundleKind::TarGz, ArchiveKind::TarGz, "big.tgz"), (BundleKind::Tar, ArchiveKind::Tar, "big.tar")] {
+        let path = dir.path().join(name);
+        write_archive(&path, bundle_kind, &members).unwrap();
+        let mut calls: Vec<(u64, u64)> = Vec::new();
+        let entries = list(&path, kind, &CancelToken::new(), |d, t| calls.push((d, t))).unwrap();
+        assert_eq!(entries.len(), 4, "{name}");
+        assert!(calls.iter().any(|&(d, t)| d < t), "{name}: some call reports partial progress ({calls:?})");
+        assert!(calls.windows(2).all(|w| w[0].0 <= w[1].0), "{name}: progress never decreases ({calls:?})");
+        assert_eq!(calls.last().map(|&(d, t)| d == t), Some(true), "{name}: ends complete");
+    }
+}
