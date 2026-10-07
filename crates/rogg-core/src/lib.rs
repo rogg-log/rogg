@@ -7,6 +7,7 @@ pub mod error;
 pub mod filter;
 pub mod index;
 pub mod text;
+pub mod view;
 
 pub use cancel::CancelToken;
 pub use error::CoreError;
