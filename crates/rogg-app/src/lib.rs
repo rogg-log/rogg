@@ -11,6 +11,8 @@ pub mod history;
 pub mod menus;
 pub mod paths;
 pub mod rows;
+pub mod tab;
+pub mod tab_view;
 pub mod window;
 pub mod workspace;
 
