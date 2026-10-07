@@ -13,7 +13,10 @@ pub struct ScanResult {
 }
 
 enum TermSet {
+    /// No terms in this state.
     Empty,
+    /// Terms exist but none can match (plain terms with empty text), so the set is still "active".
+    Never,
     Plain { ac: AhoCorasick, terms: Vec<usize> },
     Regex { set: RegexSet, terms: Vec<usize> },
 }
@@ -39,6 +42,12 @@ impl TermSet {
                 .map_err(|e| CoreError::InvalidRegex { term: patterns.join(" || "), message: e.to_string() })?;
             Ok(TermSet::Regex { set, terms })
         } else {
+            // An empty plain term would match at every byte; it is skipped and never matches (hits stay 0).
+            let (terms, patterns): (Vec<usize>, Vec<&str>) =
+                terms.into_iter().zip(patterns).filter(|(_, p)| !p.is_empty()).unzip();
+            if patterns.is_empty() {
+                return Ok(TermSet::Never);
+            }
             let ac = AhoCorasick::builder()
                 .ascii_case_insensitive(!spec.case_sensitive)
                 .match_kind(MatchKind::Standard)
@@ -54,7 +63,7 @@ impl TermSet {
 
     fn is_match(&self, line: &[u8]) -> bool {
         match self {
-            TermSet::Empty => false,
+            TermSet::Empty | TermSet::Never => false,
             TermSet::Plain { ac, .. } => ac.is_match(line),
             TermSet::Regex { set, .. } => set.is_match(line),
         }
@@ -63,7 +72,7 @@ impl TermSet {
     /// Sets `hit[k]` for every line `lines.start + k` containing a term and counts per-term line hits.
     fn mark(&self, text: &LogText, lines: &Range<u64>, starts: &[u64], hit: &mut [bool], hits: &mut [u64], last: &mut [u64]) {
         match self {
-            TermSet::Empty => {}
+            TermSet::Empty | TermSet::Never => {}
             TermSet::Plain { ac, terms } => {
                 let (region, base) = text.span(lines.clone());
                 for m in ac.find_overlapping_iter(region) {
@@ -237,6 +246,27 @@ mod tests {
         let t = text(&["a", "", "xyz"]);
         let re = FilterSpec { regex: true, ..spec(&[("x*", Include)]) };
         assert_eq!(scan_all(&re, &t).matches, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn empty_plain_terms_never_match() {
+        let t = text(&["error a", "", "ok"]);
+        // Only an empty include term: active, but nothing matches (not "everything").
+        let only = spec(&[("", Include)]);
+        let r = scan_all(&only, &t);
+        assert_eq!((r.matches, r.term_hits), (Vec::<u64>::new(), vec![0]));
+        assert!(CompiledFilter::compile(&only).unwrap().is_active());
+        // Mixed with a real term: the real term alone decides, hits for the empty term stay 0.
+        let mixed = spec(&[("", Include), ("error", Include), ("", Exclude)]);
+        let r = scan_all(&mixed, &t);
+        assert_eq!((r.matches, r.term_hits), (vec![0], vec![0, 1, 0]));
+        // An empty exclude term excludes nothing.
+        let c = CompiledFilter::compile(&spec(&[("", Exclude)])).unwrap();
+        assert!(!c.is_excluded(b"anything"));
+        assert_eq!(c.scan(&t, 0..3).matches, vec![0, 1, 2]);
+        // Case-sensitive plain mode takes the same path.
+        let cs = FilterSpec { case_sensitive: true, ..spec(&[("", Include)]) };
+        assert!(scan_all(&cs, &t).matches.is_empty());
     }
 
     #[test]
