@@ -29,6 +29,19 @@ pub fn recent_path() -> PathBuf {
     app_support_dir().join("recent.json")
 }
 
+pub fn settings_path() -> PathBuf {
+    app_support_dir().join("settings.toml")
+}
+
+/// One `<name>.toml` per highlighting profile (spec §6.1).
+pub fn profiles_dir() -> PathBuf {
+    app_support_dir().join("profiles")
+}
+
+pub fn session_path() -> PathBuf {
+    app_support_dir().join("session.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +63,12 @@ mod tests {
     #[test]
     fn recent_path_is_in_app_support() {
         assert!(recent_path().ends_with("Library/Application Support/rogg/recent.json"));
+    }
+
+    #[test]
+    fn m4_state_paths_are_in_app_support() {
+        assert!(settings_path().ends_with("Application Support/rogg/settings.toml"));
+        assert!(profiles_dir().ends_with("Application Support/rogg/profiles"));
+        assert!(session_path().ends_with("Application Support/rogg/session.json"));
     }
 }

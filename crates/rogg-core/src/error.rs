@@ -12,6 +12,9 @@ pub enum CoreError {
     /// A damaged, truncated or unsupported archive or compressed file (spec §4.13: it fails only its own node).
     #[error("{}: {message}", path.display())]
     Archive { path: PathBuf, message: String },
+    /// A file the user opened or imported (`.rogg`, `.roggprofile`) is not valid for its format.
+    #[error("{}: {message}", path.display())]
+    Parse { path: PathBuf, message: String },
     #[error("invalid regex in term `{term}`: {message}")]
     InvalidRegex { term: String, message: String },
     #[error("cancelled")]

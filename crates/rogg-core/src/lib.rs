@@ -3,6 +3,7 @@
 pub mod archive;
 pub mod cache;
 pub mod cancel;
+pub mod clock;
 pub mod encoding;
 pub mod engine;
 pub mod error;
