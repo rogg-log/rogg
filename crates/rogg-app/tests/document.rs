@@ -67,7 +67,7 @@ fn cancelling_a_background_open_fails_with_a_retry(cx: &mut TestAppContext) {
 fn memory_sources_load_immediately(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
     let bytes = std::sync::Arc::new(b"a\nb".to_vec());
-    let doc = cx.new(|cx| Document::new(Source::Memory { name: "mem".into(), bytes }, DocumentInit { number_base: 100 }, cx));
+    let doc = cx.new(|cx| Document::new(Source::Memory { name: "mem".into(), bytes }, DocumentInit { number_base: 100, ..Default::default() }, cx));
     assert_eq!(lines(&doc, cx), Some(2));
     assert_eq!(doc.read_with(cx, |d, _| (d.title().to_string(), d.number_base())), ("mem".to_string(), 100));
 }

@@ -2,16 +2,21 @@
 //! `EngineConfig::sync_bytes` are handled on the UI thread; larger ones on background threads whose channels
 //! one task polls every `POLL_INTERVAL` (spec §3.3).
 
+mod filter;
 mod load;
 
 use crate::paths::AppPaths;
 use gpui_kit::{App, Context, Global, SharedString};
 use load::{OpenJob, OpenPoll};
+use rogg_core::filter::FilterSpec;
 use rogg_core::text::{LogText, OpenProgress};
 use rogg_core::{CancelToken, CoreError};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+pub use filter::FilterState;
 
 /// How often background job channels are polled: at most one UI update per frame.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -66,11 +71,15 @@ impl Source {
 pub struct DocumentInit {
     /// Display number of the first line (1 for files; the demo uses the reference's 120480).
     pub number_base: u64,
+    /// The filter to apply once the text loads.
+    pub spec: FilterSpec,
+    /// Pinned lines, 0-based.
+    pub pins: BTreeSet<u64>,
 }
 
 impl Default for DocumentInit {
     fn default() -> Self {
-        Self { number_base: 1 }
+        Self { number_base: 1, spec: FilterSpec::default(), pins: BTreeSet::new() }
     }
 }
 
@@ -84,6 +93,7 @@ pub enum LoadState {
 pub struct Document {
     pub source: Source,
     pub load: LoadState,
+    pub filter: FilterState,
     number_base: u64,
     text_revision: u64,
     open_job: Option<OpenJob>,
@@ -103,6 +113,7 @@ impl Document {
         let mut doc = Self {
             source,
             load: LoadState::Loading { fraction: 0., label: "Opening".into() },
+            filter: FilterState::new(init.spec, init.pins),
             number_base: init.number_base,
             text_revision: 0,
             open_job: None,
@@ -179,6 +190,9 @@ impl Document {
             Err(CoreError::Io { source, .. }) => LoadState::Failed { message: source.to_string().into() },
             Err(e) => LoadState::Failed { message: e.to_string().into() },
         };
+        if matches!(self.load, LoadState::Ready(_)) {
+            self.start_filter(cx);
+        }
         cx.notify();
     }
 
@@ -202,7 +216,7 @@ impl Document {
 
     /// Drains every job channel once; returns whether any job is still running.
     fn poll_jobs(&mut self, cx: &mut Context<Self>) -> bool {
-        let active = self.poll_open(cx);
+        let active = self.poll_open(cx) | self.poll_filter(cx);
         if !active {
             self.polling = false;
         }
@@ -229,6 +243,14 @@ impl Document {
                 cx.notify();
                 false
             }
+        }
+    }
+}
+
+impl Drop for Document {
+    fn drop(&mut self) {
+        if let Some(job) = self.filter.job.take() {
+            filter::retire(job);
         }
     }
 }
