@@ -35,7 +35,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
 pub const INFLATE_POLL: Duration = Duration::from_millis(100);
 
 /// Inputs at or below `sync_bytes` are opened, filtered and searched synchronously; filtered views whose work
-/// (`(matches + pins) × context`) is at most `view_sync_work` are composed synchronously (ruling R10).
+/// (`(matches + pins) × max(context, 1)`) is at most `view_sync_work`, and progressive publishes of a running scan, are
+/// composed synchronously (ruling R10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EngineConfig {
     pub sync_bytes: u64,

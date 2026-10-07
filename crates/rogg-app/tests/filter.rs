@@ -225,7 +225,7 @@ fn progressive_views_skip_context_until_the_scan_finishes(cx: &mut TestAppContex
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
     // The finished view is large, so it is composed off the UI thread and lands a little after the scan.
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 5_000_000));
-    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 5_000_000, "the finished view applies the context");
+    assert!(doc.read_with(cx, |d, _| d.filter.view_builds_off_thread >= 1), "the final view was built off the UI thread");
 }
 
 fn every_tenth(n: usize) -> String {
@@ -235,7 +235,8 @@ fn every_tenth(n: usize) -> String {
 #[gpui_kit::test]
 fn large_view_rebuilds_run_off_the_ui_thread_and_keep_the_old_view(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 0, ..Default::default() }));
+    // 100 matches x max(context, 1): the context-free view (100) is cheap, the +-2 view (200) is not.
+    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 150, ..Default::default() }));
     let doc = doc_from(cx, every_tenth(1000), DocumentInit { spec: FilterSpec::from_expression("match"), ..Default::default() });
     assert_eq!(doc.read_with(cx, |d, _| d.filter.view.shown_lines().len()), 100, "a context-free view is built at once");
     doc.update(cx, |d, cx| d.set_context(2, cx));
@@ -247,19 +248,19 @@ fn large_view_rebuilds_run_off_the_ui_thread_and_keep_the_old_view(cx: &mut Test
 #[gpui_kit::test]
 fn a_newer_view_wins_over_an_older_one(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 0, ..Default::default() }));
+    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 150, ..Default::default() }));
     let doc = doc_from(cx, every_tenth(1000), DocumentInit { spec: FilterSpec::from_expression("match"), ..Default::default() });
     doc.update(cx, |d, cx| {
-        d.set_context(1, cx);
-        d.set_context(3, cx);
+        d.set_context(2, cx);
+        d.set_context(4, cx);
     });
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() > 0));
-    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 600));
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 800));
     for _ in 0..20 {
         cx.executor().advance_clock(std::time::Duration::from_millis(20));
         cx.run_until_parked();
     }
-    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 600, "the ±1 result never replaces the ±3 one");
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 800, "the ±2 result never replaces the ±4 one");
 }
 
 #[gpui_kit::test]
@@ -275,4 +276,18 @@ fn the_filtered_search_waits_for_the_final_view_of_a_scan(cx: &mut TestAppContex
     assert_eq!(doc.read_with(cx, |d, _| d.search(Pane::Filtered).runs), before + 1, "one count, on the final view");
     let hits = doc.read_with(cx, |d, _| d.search(Pane::Filtered).result.as_ref().map(|r| r.count()));
     assert_eq!(hits, Some(100_000));
+}
+
+#[gpui_kit::test]
+fn pin_toggles_on_many_matches_rebuild_off_the_ui_thread(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 10, ..Default::default() }));
+    let doc = doc_from(cx, every_tenth(1000), DocumentInit { spec: FilterSpec::from_expression("match"), ..Default::default() });
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.shown_lines().len() == 100));
+    let before = doc.read_with(cx, |d, _| d.filter.view_builds_off_thread);
+    doc.update(cx, |d, cx| d.toggle_pin(0, cx));
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view_builds_off_thread), before + 1, "the rebuild runs on a thread even at context 0");
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.shown_lines().len()), 100, "the old view stays meanwhile");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.shown_lines().len() == 101));
+    assert!(doc.read_with(cx, |d, _| d.filter.view.shown_lines().contains(&0)), "the pinned line is shown");
 }

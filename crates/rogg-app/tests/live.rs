@@ -90,7 +90,14 @@ fn appends_during_a_running_scan_are_scanned_once(cx: &mut TestAppContext) {
         })
     });
     assert_eq!(scan_running_at_growth, Some(true), "the growth must arrive while the first scan runs");
-    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none() && d.filter.matches.len() == 1_501_001));
+    // The final view (and the statistics that follow it) is large, so it lands off the UI thread after the scan.
+    common::wait_until(cx, |cx| {
+        doc.read_with(cx, |d, _| {
+            d.filter.progress.is_none()
+                && d.filter.matches.len() == 1_501_001
+                && d.filter.stats.as_ref().is_some_and(|s| s.term_hits[0].lines == 1_501_001)
+        })
+    });
     let expected: Vec<u64> = (0..BASE).step_by(2).chain(BASE..=BASE + 1000).collect();
     assert!(matched(&doc, cx) == expected, "exact matches: the even lines, the completed line and the appended ones");
     let hits = doc.read_with(cx, |d, _| d.filter.stats.as_ref().unwrap().term_hits[0].lines);

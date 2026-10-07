@@ -425,14 +425,17 @@ impl Document {
     }
 
     /// Recomposes the filtered view and statistics from the current matches, pins and context. While a scan runs the
-    /// view is built without context (and without the exclusion check), so a progressive publish stays cheap. Views
-    /// whose work exceeds `EngineConfig::view_sync_work` are built on a background thread; the current view stays until
-    /// the new one lands, and a result that is no longer the newest request is dropped.
+    /// view is built without context (and without the exclusion check), so a progressive publish stays cheap and is
+    /// always built here (`publish_due` throttles on the measured rebuild time). Every other rebuild whose work,
+    /// `(matches + pins) × max(context, 1)`, exceeds `EngineConfig::view_sync_work` is built on a background thread
+    /// (even at context 0, where composing still walks every match); the current view stays until the new one lands,
+    /// and a result that is no longer the newest request is dropped.
     pub(super) fn rebuild_view(&mut self, cx: &mut Context<Self>) {
         let total = self.text().map_or(0, |t| t.line_count());
         let f = &self.filter;
         let context = if f.progress.is_some() { 0 } else { f.spec.context };
-        let work = (f.matches.len() as u64 + f.pins.len() as u64).saturating_mul(context as u64);
+        let publishing = f.progress.is_some();
+        let work = (f.matches.len() as u64 + f.pins.len() as u64).saturating_mul(context.max(1) as u64);
         let excluding = match (self.text(), &f.compiled) {
             (Some(text), Some(filter)) if context > 0 => Some((text.clone(), filter.clone())),
             _ => None,
@@ -447,7 +450,7 @@ impl Document {
             (view, stats)
         };
         self.filter.view_requests += 1;
-        if work <= EngineConfig::get(cx).view_sync_work {
+        if publishing || work <= EngineConfig::get(cx).view_sync_work {
             // A newer, cheap request supersedes a pending background one.
             self.filter.view_job = None;
             let (view, stats) = build();
