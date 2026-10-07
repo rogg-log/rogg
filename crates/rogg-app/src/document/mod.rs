@@ -34,15 +34,17 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
 /// A `.gz` being decompressed is checked this often for new bytes.
 pub const INFLATE_POLL: Duration = Duration::from_millis(100);
 
-/// Inputs at or below `sync_bytes` are opened, filtered and searched synchronously.
+/// Inputs at or below `sync_bytes` are opened, filtered and searched synchronously; filtered views whose work
+/// (`(matches + pins) × context`) is at most `view_sync_work` are composed synchronously (ruling R10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EngineConfig {
     pub sync_bytes: u64,
+    pub view_sync_work: u64,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        Self { sync_bytes: 4 << 20 }
+        Self { sync_bytes: 4 << 20, view_sync_work: 200_000 }
     }
 }
 
@@ -378,6 +380,7 @@ impl Document {
         self.poll_inflate(cx);
         self.poll_follow(cx);
         self.poll_filter(cx);
+        self.poll_view(cx);
         self.poll_search(cx);
         // A job started inside a poll (a reload's open, a tail scan) counts too.
         let active = self.has_jobs();
@@ -388,7 +391,7 @@ impl Document {
     }
 
     fn has_jobs(&self) -> bool {
-        self.open_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.search_running()
+        self.open_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.filter.view_job.is_some() || self.search_running()
     }
 
     fn poll_open(&mut self, cx: &mut Context<Self>) -> bool {

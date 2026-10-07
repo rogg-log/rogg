@@ -56,7 +56,7 @@ fn rows_outline_the_query(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn large_texts_search_in_the_background(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let text: String = (0..50_000).map(|i| if i % 10 == 0 { "find me\n" } else { "other\n" }).collect();
     let doc = doc(cx, text);
     doc.update(cx, |d, cx| d.set_search(Pane::Full, "find", cx));

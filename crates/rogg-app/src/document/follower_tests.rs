@@ -26,7 +26,7 @@ fn lines(doc: &Entity<Document>, cx: &mut TestAppContext) -> u64 {
 fn a_gz_whose_follower_ended_is_reloaded_complete_when_decompression_finishes(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     cx.update(|cx| crate::init_with(cx, AppPaths::under(dir.path())));
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     const LINES: u64 = 3_000_000;
     let body: String = (0..LINES).map(|i| format!("line {i}\n")).collect();
     let gz = dir.path().join("big.log.gz");
@@ -51,7 +51,7 @@ fn a_gz_whose_follower_ended_is_reloaded_complete_when_decompression_finishes(cx
 fn a_reload_drops_the_running_scan_and_its_progress(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     cx.update(|cx| crate::init_with(cx, AppPaths::under(dir.path())));
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let body: String = (0..3_000_000u64).map(|i| format!("line {i}\n")).collect();
     let path = dir.path().join("big.log");
     std::fs::write(&path, body).unwrap();

@@ -14,7 +14,7 @@ use rogg_core::text::LogText;
 use rogg_core::view::FilteredView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 /// Partial results of a background scan are republished at most this often.
@@ -28,6 +28,12 @@ const REBUILD_COST_FACTOR: u32 = 4;
 /// minimum interval and the cost-proportional pause have elapsed.
 fn publish_due(dirty: bool, since_last_publish: Option<Duration>, last_rebuild: Duration) -> bool {
     dirty && since_last_publish.is_none_or(|elapsed| elapsed >= PUBLISH_INTERVAL.max(last_rebuild * REBUILD_COST_FACTOR))
+}
+
+/// A filtered view being composed on a background thread (R10): the request number it answers, and the channel.
+pub(super) struct ViewJob {
+    request: u64,
+    rx: Receiver<(FilteredView, FilterStats)>,
 }
 
 pub struct FilterState {
@@ -68,6 +74,11 @@ pub struct FilterState {
     pub tail_scans: u64,
     /// Bumped when pins change: the full log rows depend on pins, not on the filtered view.
     pub pins_revision: u64,
+    pub(super) view_job: Option<ViewJob>,
+    /// Rebuilds requested so far; only the newest one's result is installed.
+    view_requests: u64,
+    /// Rebuilds that ran off the UI thread (tests).
+    pub view_builds_off_thread: u64,
 }
 
 fn empty_view() -> FilteredView {
@@ -104,6 +115,9 @@ impl FilterState {
             tail_base: None,
             tail_scans: 0,
             pins_revision: 0,
+            view_job: None,
+            view_requests: 0,
+            view_builds_off_thread: 0,
         }
     }
 }
@@ -211,6 +225,7 @@ impl Document {
 
     /// Drops the running scan and what it was building (a reload supersedes it: its progress must not reach the UI).
     pub(super) fn stop_filter(&mut self) {
+        self.filter.view_job = None;
         if let Some(job) = self.filter.job.take() {
             retire(job);
         }
@@ -409,25 +424,74 @@ impl Document {
         }
     }
 
-    /// Recomposes the filtered view and statistics from the current matches, pins and context. While a scan runs
-    /// the view is built without context (and without the exclusion check), so a progressive publish stays cheap;
-    /// the final view of `finish_scan` applies the real context.
+    /// Recomposes the filtered view and statistics from the current matches, pins and context. While a scan runs the
+    /// view is built without context (and without the exclusion check), so a progressive publish stays cheap. Views
+    /// whose work exceeds `EngineConfig::view_sync_work` are built on a background thread; the current view stays until
+    /// the new one lands, and a result that is no longer the newest request is dropped.
     pub(super) fn rebuild_view(&mut self, cx: &mut Context<Self>) {
         let total = self.text().map_or(0, |t| t.line_count());
         let f = &self.filter;
         let context = if f.progress.is_some() { 0 } else { f.spec.context };
-        let view = match (self.text(), &f.compiled) {
-            (Some(text), Some(filter)) if context > 0 => {
-                FilteredView::build(f.matches.clone(), &f.pins, context, total, |n| filter.is_excluded(text.line(n)))
-            }
-            _ => FilteredView::build(f.matches.clone(), &f.pins, context, total, |_| false),
+        let work = (f.matches.len() as u64 + f.pins.len() as u64).saturating_mul(context as u64);
+        let excluding = match (self.text(), &f.compiled) {
+            (Some(text), Some(filter)) if context > 0 => Some((text.clone(), filter.clone())),
+            _ => None,
         };
-        let stats = FilterStats::from_parts(&f.spec, f.matches.len() as u64, &f.term_hits, total, f.duration, &view);
+        let (matches, pins, spec, hits, duration) = (f.matches.clone(), f.pins.clone(), f.spec.clone(), f.term_hits.clone(), f.duration);
+        let build = move || {
+            let view = match &excluding {
+                Some((text, filter)) => FilteredView::build(matches.clone(), &pins, context, total, |n| filter.is_excluded(text.line(n))),
+                None => FilteredView::build(matches.clone(), &pins, context, total, |_| false),
+            };
+            let stats = FilterStats::from_parts(&spec, matches.len() as u64, &hits, total, duration, &view);
+            (view, stats)
+        };
+        self.filter.view_requests += 1;
+        if work <= EngineConfig::get(cx).view_sync_work {
+            // A newer, cheap request supersedes a pending background one.
+            self.filter.view_job = None;
+            let (view, stats) = build();
+            self.install_view(view, stats, cx);
+        } else {
+            let (tx, rx) = mpsc::channel();
+            let _detached = std::thread::Builder::new().name("rogg-view".into()).spawn(move || {
+                let _ = tx.send(build());
+            });
+            self.filter.view_job = Some(ViewJob { request: self.filter.view_requests, rx });
+            self.filter.view_builds_off_thread += 1;
+            self.ensure_polling(cx);
+        }
+    }
+
+    fn install_view(&mut self, view: FilteredView, stats: FilterStats, cx: &mut Context<Self>) {
         self.filter.view = Arc::new(view);
         self.filter.stats = Some(stats);
         self.filter.revision += 1;
-        self.refresh_search(super::Pane::Filtered, cx);
+        // While a scan publishes partial results, the filtered pane's count waits for the final view.
+        if self.filter.progress.is_none() {
+            self.refresh_search(super::Pane::Filtered, cx);
+        }
         cx.notify();
+    }
+
+    /// Installs a finished background view if it answers the newest request; returns whether one is still pending.
+    pub(super) fn poll_view(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(job) = &self.filter.view_job else { return false };
+        match job.rx.try_recv() {
+            Ok((view, stats)) => {
+                let newest = job.request == self.filter.view_requests;
+                self.filter.view_job = None;
+                if newest {
+                    self.install_view(view, stats, cx);
+                }
+                false
+            }
+            Err(TryRecvError::Empty) => true,
+            Err(TryRecvError::Disconnected) => {
+                self.filter.view_job = None;
+                false
+            }
+        }
     }
 }
 

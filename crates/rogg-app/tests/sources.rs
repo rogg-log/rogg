@@ -122,7 +122,7 @@ fn small_utf16_files_lease_their_conversion(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn streams_open_in_the_background_when_large(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let path = dir.path().join("stream.log");
     std::fs::write(&path, b"one\ntwo\nthree\n").unwrap();
     let doc = open(cx, Source::Stream { name: "stdin".into(), path });

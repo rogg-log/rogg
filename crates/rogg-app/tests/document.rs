@@ -29,7 +29,7 @@ fn small_files_open_synchronously(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn large_files_open_in_the_background(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let path = common::write_log(dir.path(), "big.log", &["x"; 1000]);
     let doc = open(cx, Source::File(path));
     assert!(matches!(doc.read_with(cx, |d, _| d.load.clone()), LoadState::Loading { .. }));
@@ -54,7 +54,7 @@ fn empty_and_missing_files(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn cancelling_a_background_open_fails_with_a_retry(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let path = common::write_log(dir.path(), "big.log", &["x"; 1000]);
     let doc = open(cx, Source::File(path));
     doc.update(cx, |d, cx| d.cancel_load(cx));

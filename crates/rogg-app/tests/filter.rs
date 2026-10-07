@@ -1,6 +1,6 @@
 mod common;
 use gpui_kit::{AppContext, Entity, TestAppContext};
-use rogg_app::document::{Document, DocumentInit, EngineConfig, Source};
+use rogg_app::document::{Document, DocumentInit, EngineConfig, Pane, Source};
 use rogg_app::history::HistoryStore;
 use rogg_core::filter::{FilterSpec, TermState};
 use std::collections::BTreeSet;
@@ -157,7 +157,7 @@ fn numbered(n: usize, every: usize, word: &str) -> (String, Vec<u64>) {
 #[gpui_kit::test]
 fn background_scan_matches_the_synchronous_result(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let (text, expected) = numbered(20_000, 7, "needle here");
     let doc = doc_from(cx, text, DocumentInit { spec: FilterSpec::from_expression("needle"), ..Default::default() });
     assert!(doc.read_with(cx, |d, _| d.filter.progress.is_some()), "large texts scan in the background");
@@ -168,7 +168,7 @@ fn background_scan_matches_the_synchronous_result(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn superseded_async_scan_never_leaks_results(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let text: String = (0..200_000).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
     let doc = doc_from(cx, text, DocumentInit::default());
     doc.update(cx, |d, cx| d.set_expression("alpha", cx)).unwrap();
@@ -184,7 +184,7 @@ fn superseded_async_scan_never_leaks_results(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn dropping_a_document_mid_scan_does_not_block(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let text: String = (0..2_000_000).map(|i| if i % 3 == 0 { "x marks\n" } else { "nothing\n" }).collect();
     let doc = doc_from(cx, text, DocumentInit::default());
     doc.update(cx, |d, cx| d.set_expression("marks", cx)).unwrap();
@@ -197,7 +197,7 @@ fn dropping_a_document_mid_scan_does_not_block(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn restarting_a_scan_discards_partial_results_of_the_previous_one(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let text: String = (0..10_000_000).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
     let doc = doc_from(cx, text, DocumentInit::default());
     doc.update(cx, |d, cx| d.set_expression("alpha", cx)).unwrap();
@@ -215,7 +215,7 @@ fn restarting_a_scan_discards_partial_results_of_the_previous_one(cx: &mut TestA
 #[gpui_kit::test]
 fn progressive_views_skip_context_until_the_scan_finishes(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let text: String = (0..10_000_000).map(|i| if i % 2 == 0 { "needle\n" } else { "filler\n" }).collect();
     let spec = FilterSpec { context: 1, ..FilterSpec::from_expression("needle") };
     let doc = doc_from(cx, text, DocumentInit { spec, ..Default::default() });
@@ -223,5 +223,56 @@ fn progressive_views_skip_context_until_the_scan_finishes(cx: &mut TestAppContex
     assert!(doc.read_with(cx, |d, _| d.filter.progress.is_some()), "the scan must still be running");
     assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 0, "no context while the scan runs");
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    // The finished view is large, so it is composed off the UI thread and lands a little after the scan.
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 5_000_000));
     assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 5_000_000, "the finished view applies the context");
+}
+
+fn every_tenth(n: usize) -> String {
+    (0..n).map(|i| if i % 10 == 5 { "match here\n" } else { "filler\n" }).collect()
+}
+
+#[gpui_kit::test]
+fn large_view_rebuilds_run_off_the_ui_thread_and_keep_the_old_view(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 0, ..Default::default() }));
+    let doc = doc_from(cx, every_tenth(1000), DocumentInit { spec: FilterSpec::from_expression("match"), ..Default::default() });
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.shown_lines().len()), 100, "a context-free view is built at once");
+    doc.update(cx, |d, cx| d.set_context(2, cx));
+    assert_eq!(doc.read_with(cx, |d, _| (d.filter.view.context_lines(), d.filter.view_builds_off_thread)), (0, 1), "the old view stays meanwhile");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 400));
+    assert_eq!(doc.read_with(cx, |d, _| (d.filter.scans, d.filter.stats.as_ref().unwrap().context_lines)), (1, 400), "no rescan; stats follow the view");
+}
+
+#[gpui_kit::test]
+fn a_newer_view_wins_over_an_older_one(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { view_sync_work: 0, ..Default::default() }));
+    let doc = doc_from(cx, every_tenth(1000), DocumentInit { spec: FilterSpec::from_expression("match"), ..Default::default() });
+    doc.update(cx, |d, cx| {
+        d.set_context(1, cx);
+        d.set_context(3, cx);
+    });
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() > 0));
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.context_lines() == 600));
+    for _ in 0..20 {
+        cx.executor().advance_clock(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+    }
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 600, "the ±1 result never replaces the ±3 one");
+}
+
+#[gpui_kit::test]
+fn the_filtered_search_waits_for_the_final_view_of_a_scan(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let text: String = (0..200_000).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
+    let doc = doc_from(cx, text, DocumentInit::default());
+    doc.update(cx, |d, cx| d.set_search(Pane::Filtered, "alpha", cx));
+    let before = doc.read_with(cx, |d, _| d.search(Pane::Filtered).runs);
+    doc.update(cx, |d, cx| d.set_expression("alpha", cx)).unwrap();
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none() && !d.search(Pane::Filtered).is_running()));
+    assert_eq!(doc.read_with(cx, |d, _| d.search(Pane::Filtered).runs), before + 1, "one count, on the final view");
+    let hits = doc.read_with(cx, |d, _| d.search(Pane::Filtered).result.as_ref().map(|r| r.count()));
+    assert_eq!(hits, Some(100_000));
 }

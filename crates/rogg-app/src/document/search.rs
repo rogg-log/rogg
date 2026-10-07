@@ -56,6 +56,10 @@ pub struct PaneSearch {
     pub compiled: Option<Arc<CompiledSearch>>,
     pub result: Option<SearchResult>,
     pub invalid: bool,
+    /// The count's worker died before answering.
+    pub failed: bool,
+    /// Counts started so far (tests).
+    pub runs: u64,
     job: Option<SearchJob>,
     /// The text `result` is complete for.
     covered: Option<Arc<LogText>>,
@@ -79,6 +83,9 @@ impl PaneSearch {
         }
         if self.invalid {
             return Some("invalid".into());
+        }
+        if self.failed {
+            return Some("failed".into());
         }
         match &self.result {
             Some(result) => {
@@ -125,11 +132,13 @@ impl Document {
         let s = &mut self.search.panes[pane.index()];
         s.job = None;
         s.result = None;
+        s.failed = false;
         s.tail_base = None;
         s.covered = None;
         s.revision += 1;
         let mut spawned = false;
         if let (Some(text), Some(search)) = (text, s.compiled.clone()) {
+            s.runs += 1;
             if text.bytes().len() as u64 <= sync_bytes {
                 s.result = search.run(&text, &scope, DEFAULT_CHUNK_LINES, &CancelToken::new()).ok();
                 if s.result.is_some() {
@@ -175,6 +184,7 @@ impl Document {
                 }
                 Err(TryRecvError::Empty) => active = true,
                 Err(TryRecvError::Disconnected) => {
+                    s.failed = true;
                     s.job = None;
                     s.job_text = None;
                     s.tail_base = None;
@@ -237,5 +247,18 @@ impl Document {
     pub fn next_hit(&self, pane: Pane, from: Option<u64>, backwards: bool) -> Option<u64> {
         let result = self.search(pane).result.as_ref()?;
         if backwards { result.prev_before(from) } else { result.next_after(from) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dead_worker_is_labelled_failed() {
+        let mut s = PaneSearch { query: "timeout".into(), ..Default::default() };
+        assert_eq!(s.label().as_deref(), Some("…"));
+        s.failed = true;
+        assert_eq!(s.label().as_deref(), Some("failed"));
     }
 }

@@ -70,7 +70,7 @@ fn appends_during_a_running_scan_are_scanned_once(cx: &mut TestAppContext) {
     // (debounce plus file-system latency), so the growth always lands while the first scan still runs.
     const BASE: u64 = 3_000_000;
     let dir = common::setup(cx);
-    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let mut body: String = (0..BASE).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
     // An unfinished last line the append completes: it must be scanned again and match on its full text.
     body.push_str("alp");
