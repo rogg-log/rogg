@@ -7,7 +7,7 @@
 - a settings dialog whose changes apply immediately;
 - session restore and `.rogg` files;
 - export of filtered lines, sessions and the filter expression;
-- "Open filtered as tab" (derived tabs, nested, with original line numbers);
+- "Open filtered as tab" (derived tabs, nested; each is an ordinary text numbered from 1);
 - the statistics popover and a richer history popover;
 - the M3 → M4 carry-over fixes chosen below.
 
@@ -16,7 +16,7 @@
   - settings (`settings.toml`) and profiles (`profiles/*.toml`, import/export `.roggprofile`), through TOML persistence with `.bak` recovery;
   - profile matching (`CompiledProfile::style`: for each effect, the first matching rule wins);
   - the session schema (`session.json` and `.rogg`, the same schema);
-  - derived sources, materialised into a cache file plus an original-number map;
+  - derived sources, materialised into a cache file;
   - a background-friendly writer for filtered-line exports.
 - **`rogg-ui`** gains:
   - bold and explicit-colour spans in the log view;
@@ -52,7 +52,7 @@ The remaining carry-over items are listed under "Deferred from M4 (post-v1)" at 
 
 **Decisions this plan makes (flagged for the plan review):**
 
-1. **Derived tabs copy their lines into a cache file**, `streams/derived-<pid>-<n>.log`. Each line keeps its original number through a number map.
+1. **Derived tabs copy their lines into a cache file**, `streams/derived-<pid>-<n>.log`, and behave like an ordinary file: lines are numbered from 1 (user decision at the plan review, 2026-10-07; spec §4.9 updated).
    - Spec §4.9 instead describes reading lines through the parent's mapping.
    - Copying lets every engine path (scan, search, export, nesting, session rebuild) work unchanged, at the cost of disk space for the shown lines.
    - The parent no longer has to stay mapped.
@@ -115,8 +115,8 @@ The remaining carry-over items are listed under "Deferred from M4 (post-v1)" at 
     - the log font is SF Mono through `.AppleSystemUIFontMonospaced`.
 - **Display numbers:**
   - A file's first line is number 1. Engine line indices are 0-based.
-  - A derived tab shows its parent's display numbers.
-  - Convert only through `Numbers` (Task 16) at the `Tab` and rows boundary.
+  - A derived tab numbers its own lines from 1, like any file (user decision; spec §4.9).
+  - Convert only at the `Tab` and rows boundary.
 - **Copy:**
   - Tab label `<name> ⟩ filtered`. Info-bar note `Snapshot · HH:MM:SS`.
   - Toasts:
@@ -160,9 +160,9 @@ These are the five failure modes most likely to bite a user that the feature tes
    - Tests:
      - Task 6: `export_failure_leaves_no_partial`.
      - Task 18: `export_errors_toast_and_closing_cancels`.
-5. **Line numbers in derived and nested derived tabs.**
-   - Expected: Go to line, pins, Return/reveal, search jumps, export number prefixes and the session use the original numbers, never row indices.
-   - Test: Task 16, `nested_derived_tabs_keep_original_numbers`.
+5. **Derived and nested derived tabs built from a large or changing parent.**
+   - Expected: the tab shows exactly the parent's filtered rows at creation, numbered from 1; later filter changes in the parent do not touch it; Go to line and pins use the tab's own numbers; closing it deletes its copy.
+   - Test: Task 16, `nested_derived_tabs_are_frozen_copies`.
 
 ---
 
@@ -199,14 +199,13 @@ crates/rogg-app/src/
   paths.rs                         MOD  settings / profiles / session
   settings.rs                      NEW  SettingsStore + live apply
   profiles.rs                      NEW  ProfileStore + RowStyler (paint resolution)
-  numbers.rs                       NEW  Numbers (display ↔ line)
-  rows.rs                          MOD  styler instead of decorate; Numbers; Mark hits
+  rows.rs                          MOD  styler instead of decorate; Mark hits
   decorate.rs                      DEL
   derived.rs                       NEW  DerivedSource, DerivedJob
   export.rs                        NEW  ExportJob
   session.rs                       NEW  capture / restore / autosave
   dialogs/{mod,settings,profiles,export,stats,fonts}.rs  NEW  dialog bodies
-  document/{mod,filter}.rs         MOD  Source::Derived, numbers, idle polling
+  document/{mod,filter}.rs         MOD  Source::Derived, idle polling
   tab.rs, tab_view.rs              MOD  profile, crumbs, statistics, open as tab, export progress
   workspace/{mod,chrome,keys}.rs   MOD  dialogs, settings apply, restore, .rogg open
   actions.rs, menus.rs, lib.rs, window.rs  MOD  new actions and keys, settings at start, window frame
@@ -1935,9 +1934,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `Cache::derived_path(&self) -> PathBuf`, which returns `streams/derived-<pid>-<n>.log`. `sweep_streams` also removes dead processes' `derived-*` files.
   - `FilteredView::is_anchor(&self, line: u64) -> bool`: true for a matched or pinned line.
   - `rogg_core::derived`:
-    - `Derived { path: PathBuf, text: LogText, numbers: Vec<u64> }`;
+    - `Derived { path: PathBuf, text: LogText }`;
     - `view_lines(text, spec, pins, cancel) -> Result<Vec<u64>, CoreError>`;
-    - `materialize(text, lines, number_of: impl Fn(u64) -> u64, cache, cancel, progress: impl FnMut(u64, u64)) -> Result<Derived, CoreError>`;
+    - `materialize(text, lines, cache, cancel, progress: impl FnMut(u64, u64)) -> Result<Derived, CoreError>`;
     - `open_full(src: &SourceRef, cache, cancel) -> Result<(LogText, Vec<CacheLease>), CoreError>`;
     - `rebuild(spec: &DerivedSpec, cache: &Arc<Cache>, cancel, progress) -> Result<Rebuilt { derived: Derived, leases: Vec<CacheLease> }, CoreError>`.
   - `rogg_core::export`:
@@ -2008,25 +2007,24 @@ fn view_lines_are_matches_pins_and_context() {
 }
 
 #[test]
-fn materialize_copies_lines_and_keeps_numbers() {
+fn materialize_copies_lines() {
     let dir = tempfile::tempdir().unwrap();
     let cache = Cache::new(dir.path().join("cache"), 1 << 30);
     let text = LogText::from_bytes(b"zero\r\none\ntwo\nthree".to_vec());
     let mut seen = Vec::new();
-    let d = materialize(&text, &[1, 3], |l| 1000 + l, &cache, &CancelToken::new(), |done, total| seen.push((done, total))).unwrap();
+    let d = materialize(&text, &[1, 3], &cache, &CancelToken::new(), |done, total| seen.push((done, total))).unwrap();
     assert_eq!(lines(&d.text), ["one", "three"]);
-    assert_eq!(d.numbers, vec![1001, 1003]);
     assert!(d.path.starts_with(cache.streams_dir()));
     assert_eq!(seen.last(), Some(&(2, 2)));
     let cancel = CancelToken::new();
     cancel.cancel();
-    assert!(matches!(materialize(&text, &[0], |l| l, &cache, &cancel, |_, _| {}), Err(rogg_core::CoreError::Cancelled)));
+    assert!(matches!(materialize(&text, &[0], &cache, &cancel, |_, _| {}), Err(rogg_core::CoreError::Cancelled)));
     let leftovers = std::fs::read_dir(cache.streams_dir()).unwrap().count();
     assert_eq!(leftovers, 1, "only the finished derived file; the cancelled one left no partial");
 }
 
 #[test]
-fn nested_rebuild_composes_original_numbers() {
+fn nested_rebuild_applies_each_level() {
     let dir = tempfile::tempdir().unwrap();
     let cache = Cache::new(dir.path().join("cache"), 1 << 30);
     let log = dir.path().join("app.log");
@@ -2035,7 +2033,6 @@ fn nested_rebuild_composes_original_numbers() {
     let nested = DerivedSpec { parent: SessionSource::Derived(Box::new(first)), filter: FilterSpec::from_expression("a"), pins: vec![], lines: None, snapshot: None };
     let r = rebuild(&nested, &cache, &CancelToken::new(), |_, _| {}).unwrap();
     assert_eq!(lines(&r.derived.text), ["x error a", "error a again"]);
-    assert_eq!(r.derived.numbers, vec![1, 5], "display numbers of the original file");
     let derived_files = std::fs::read_dir(cache.streams_dir()).unwrap().count();
     assert_eq!(derived_files, 1, "the intermediate level's file is removed once the nested one is written");
 }
@@ -2049,7 +2046,6 @@ fn explicit_lines_win_over_the_filter_and_missing_parents_fail() {
     let spec = DerivedSpec { parent: SessionSource::File { path: log.clone() }, filter: FilterSpec::from_expression("zzz"), pins: vec![], lines: Some(vec![2, 0, 9]), snapshot: Some("14:32:08".into()) };
     let r = rebuild(&spec, &cache, &CancelToken::new(), |_, _| {}).unwrap();
     assert_eq!(lines(&r.derived.text), ["a", "c"], "sorted, and lines past the end are dropped");
-    assert_eq!(r.derived.numbers, vec![1, 3]);
     let gone = DerivedSpec { parent: SessionSource::File { path: dir.path().join("gone.log") }, ..spec };
     assert!(matches!(rebuild(&gone, &cache, &CancelToken::new(), |_, _| {}), Err(rogg_core::CoreError::Io { .. })));
 }
@@ -2065,7 +2061,7 @@ fn rebuild_reads_a_whole_gz_parent() {
     enc.finish().unwrap();
     let spec = DerivedSpec { parent: SessionSource::File { path: gz }, filter: FilterSpec::from_expression("hit"), pins: vec![], lines: None, snapshot: None };
     let r = rebuild(&spec, &cache, &CancelToken::new(), |_, _| {}).unwrap();
-    assert_eq!(r.derived.numbers, vec![1, 10_001, 20_001, 30_001, 40_001]);
+    assert_eq!(lines(&r.derived.text), ["line 0 hit", "line 10000 hit", "line 20000 hit", "line 30000 hit", "line 40000 hit"]);
 }
 ```
 
@@ -2182,9 +2178,9 @@ fn stream_owner(name: &str) -> Option<i32> {
 
 ```rust
 //! Derived sources (spec §4.9): a filtered view frozen into a text of its own. The shown lines are copied into a cache
-//! file (`streams/derived-<pid>-<n>.log`) that the tab maps like any log, and `numbers` keeps each line's original
-//! display number. (Spec §4.9 reads the lines through the parent's mapping instead; copying lets scans, search, export,
-//! nesting and session rebuilds work unchanged, at the cost of disk space for the shown lines.)
+//! file (`streams/derived-<pid>-<n>.log`) that the tab maps like any log and numbers from 1, as an ordinary file
+//! (spec §4.9). Copying lets scans, search, export, nesting and session rebuilds work unchanged, at the cost of disk
+//! space for the shown lines.
 
 use crate::cache::{Cache, CacheLease};
 use crate::cancel::CancelToken;
@@ -2208,8 +2204,6 @@ pub struct Derived {
     /// The cache file holding the copied lines (delete it when the tab closes).
     pub path: PathBuf,
     pub text: LogText,
-    /// Display number of each line in the original source.
-    pub numbers: Vec<u64>,
 }
 
 pub struct Rebuilt {
@@ -2228,11 +2222,10 @@ pub fn view_lines(text: &LogText, spec: &FilterSpec, pins: &BTreeSet<u64>, cance
 }
 
 /// Copies `lines` (0-based, ascending) of `text` into a new derived cache file, then maps and indexes it.
-/// `number_of(line)` is a parent line's display number; progress reports lines copied of the total.
+/// Progress reports lines copied of the total.
 pub fn materialize(
     text: &LogText,
     lines: &[u64],
-    number_of: impl Fn(u64) -> u64,
     cache: &Cache,
     cancel: &CancelToken,
     mut progress: impl FnMut(u64, u64),
@@ -2263,7 +2256,7 @@ pub fn materialize(
             return Err(e);
         }
     };
-    Ok(Derived { path, text, numbers: lines.iter().map(|&l| number_of(l)).collect() })
+    Ok(Derived { path, text })
 }
 
 /// Opens `src` completely: a `.gz` that `open_source` returns while still decompressing is waited for and reopened
@@ -2292,18 +2285,18 @@ pub fn open_full(src: &SourceRef, cache: &Arc<Cache>, cancel: &CancelToken) -> R
 /// Rebuilds a derived tab from its definition (spec §6.4): opens the root source, applies each level's explicit lines
 /// or filter, and writes the last level; intermediate levels' files are removed once used.
 pub fn rebuild(spec: &DerivedSpec, cache: &Arc<Cache>, cancel: &CancelToken, mut progress: impl FnMut(u64, u64)) -> Result<Rebuilt, CoreError> {
-    let (parent, numbers, leases, temp) = match &spec.parent {
+    let (parent, leases, temp) = match &spec.parent {
         SessionSource::File { path } => {
             let (text, leases) = open_full(&SourceRef::File(path.clone()), cache, cancel)?;
-            (text, None, leases, None)
+            (text, leases, None)
         }
         SessionSource::Member { source } => {
             let (text, leases) = open_full(source, cache, cancel)?;
-            (text, None, leases, None)
+            (text, leases, None)
         }
         SessionSource::Derived(inner) => {
             let r = rebuild(inner, cache, cancel, |_, _| {})?;
-            (r.derived.text, Some(r.derived.numbers), r.leases, Some(r.derived.path))
+            (r.derived.text, r.leases, Some(r.derived.path))
         }
     };
     let count = parent.line_count();
@@ -2316,8 +2309,7 @@ pub fn rebuild(spec: &DerivedSpec, cache: &Arc<Cache>, cancel: &CancelToken, mut
         }
         None => view_lines(&parent, &spec.filter, &spec.pins.iter().copied().collect(), cancel)?,
     };
-    let number_of = |l: u64| numbers.as_ref().and_then(|n| n.get(l as usize).copied()).unwrap_or(l + 1);
-    let derived = materialize(&parent, &lines, number_of, cache, cancel, &mut progress);
+    let derived = materialize(&parent, &lines, cache, cancel, &mut progress);
     if let Some(path) = temp {
         let _ = std::fs::remove_file(path);
     }
@@ -6318,18 +6310,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 16: Original line numbers and "Open filtered as tab"
+### Task 16: "Open filtered as tab"
 
 **Files:**
 - Create:
-  - `crates/rogg-app/src/numbers.rs`, `crates/rogg-app/src/derived.rs`
+  - `crates/rogg-app/src/derived.rs`
   - `crates/rogg-app/tests/derived.rs`
 - Modify:
-  - `crates/rogg-app/src/document/mod.rs`, `crates/rogg-app/src/rows.rs`
+  - `crates/rogg-app/src/document/mod.rs`
   - `crates/rogg-app/src/tab.rs`, `crates/rogg-app/src/tab_view.rs`
   - `crates/rogg-app/src/workspace/{mod,chrome}.rs`
   - `crates/rogg-app/src/sidebar_model.rs`, `crates/rogg-app/src/actions.rs`, `crates/rogg-app/src/menus.rs`, `crates/rogg-app/src/lib.rs`
-  - Tests that construct `FullRows` / `FilteredRows` or call `number_base()`
 
 **Interfaces:**
 - Consumes:
@@ -6338,15 +6329,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Task 1 `clock::local_hms`.
   - Task 11 `Tab::profile`, `RowStyler`.
 - Produces:
-  - `rogg_app::numbers::Numbers::{Offset(u64), Mapped(Arc<Vec<u64>>)}` with:
-    - `display(line) -> u64`;
-    - `line_of(number) -> Option<u64>`;
-    - `nearest_line(number, count) -> Option<u64>`.
-  - `Document::numbers(&self) -> &Numbers`, which replaces `number_base()`. `DocumentInit.number_base` stays (the demo).
-  - `FullRows { text, numbers: Numbers, pins, search, styler }` and `FilteredRows { text, numbers, view, highlighter, search, styler }`.
   - `rogg_app::derived`:
     - `DerivedSource { title, crumbs, tooltip, snapshot: Option<String>, spec: Option<DerivedSpec>, origin: DerivedOrigin }`;
-    - `DerivedOrigin::{Lines { parent: Arc<LogText>, numbers: Numbers, lines: Arc<Vec<u64>> }, Rebuild}`;
+    - `DerivedOrigin::{Lines { parent: Arc<LogText>, lines: Arc<Vec<u64>> }, Rebuild}`;
     - `DerivedSource::restored(spec: DerivedSpec) -> DerivedSource`;
     - `DerivedJob`.
   - `Source::Derived(Arc<DerivedSource>)`.
@@ -6396,6 +6381,13 @@ fn numbers(tab: &Entity<Tab>, cx: &mut TestAppContext) -> Vec<u64> {
     })
 }
 
+fn texts(tab: &Entity<Tab>, cx: &mut TestAppContext) -> Vec<String> {
+    tab.read_with(cx, |t, cx| {
+        let rows = t.full.read(cx).rows().clone();
+        (0..rows.row_count()).filter_map(|i| rows.copy_text(i)).collect()
+    })
+}
+
 fn open(cx: &mut TestAppContext, lines: &[&str]) -> (tempfile::TempDir, AnyWindowHandle, Entity<Workspace>, Entity<Tab>) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", lines);
@@ -6416,9 +6408,10 @@ fn open_as_tab_freezes_the_filtered_rows(cx: &mut TestAppContext) {
     assert_ne!(child.entity_id(), parent.entity_id());
     ready(&child, cx);
     assert_eq!(child.read_with(cx, |t, cx| t.title(cx)).as_ref(), "a.log ⟩ filtered");
-    assert_eq!(numbers(&child, cx), [1, 2, 3, 5]);
+    assert_eq!(texts(&child, cx), ["a error", "b", "c error", "e error"]);
+    assert_eq!(numbers(&child, cx), [1, 2, 3, 4], "an ordinary text, numbered from 1");
     filter(&parent, "zzz", cx);
-    assert_eq!(numbers(&child, cx), [1, 2, 3, 5], "frozen at creation");
+    assert_eq!(texts(&child, cx), ["a error", "b", "c error", "e error"], "frozen at creation");
     let crumbs = child.read_with(cx, |t, cx| t.doc.read(cx).source.crumbs());
     assert_eq!(crumbs.last().map(|c| c.as_ref()), Some("filtered"));
     let parent_crumb = crumbs.len() - 2;
@@ -6428,26 +6421,28 @@ fn open_as_tab_freezes_the_filtered_rows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn nested_derived_tabs_keep_original_numbers(cx: &mut TestAppContext) {
+fn nested_derived_tabs_are_frozen_copies(cx: &mut TestAppContext) {
     let lines = ["0", "1", "x2", "3", "4", "x y5", "6", "7", "x y8", "9"];
     let (_dir, w, ws, root) = open(cx, &lines);
     filter(&root, "x", cx);
     common::press(cx, w, "shift-cmd-t");
     let a = active(&ws, cx);
     ready(&a, cx);
-    assert_eq!(numbers(&a, cx), [3, 6, 9]);
+    assert_eq!(texts(&a, cx), ["x2", "x y5", "x y8"]);
+    assert_eq!(numbers(&a, cx), [1, 2, 3]);
     filter(&a, "y", cx);
     common::press(cx, w, "shift-cmd-t");
     let b = active(&ws, cx);
     ready(&b, cx);
-    assert_eq!(numbers(&b, cx), [6, 9]);
-    assert!(b.update(cx, |t, cx| t.go_to_line(9, cx)));
-    assert_eq!(b.read_with(cx, |t, _| t.selection()), Some(9));
-    assert!(!b.update(cx, |t, cx| t.go_to_line(3, cx)), "line 3 is not in this tab");
-    b.update(cx, |t, cx| t.toggle_pin(9, cx));
-    assert!(doc(&b, cx).read_with(cx, |d, _| d.filter.pins.contains(&1)), "pins are stored as the tab's own lines");
-    let row = b.read_with(cx, |t, cx| t.full.read(cx).rows().row_for_number(6));
-    assert_eq!(row, Some(0));
+    assert_eq!(texts(&b, cx), ["x y5", "x y8"]);
+    assert_eq!(numbers(&b, cx), [1, 2]);
+    assert!(b.update(cx, |t, cx| t.go_to_line(2, cx)));
+    assert_eq!(b.read_with(cx, |t, _| t.selection()), Some(2));
+    assert!(!b.update(cx, |t, cx| t.go_to_line(3, cx)), "the tab has two lines");
+    b.update(cx, |t, cx| t.toggle_pin(2, cx));
+    assert!(doc(&b, cx).read_with(cx, |d, _| d.filter.pins.contains(&1)));
+    filter(&a, "zzz", cx);
+    assert_eq!(texts(&b, cx), ["x y5", "x y8"], "a parent's later filter does not touch its child");
     let crumbs = b.read_with(cx, |t, cx| t.doc.read(cx).source.crumbs());
     assert_eq!(&crumbs[crumbs.len() - 2..], ["filtered", "filtered"]);
     let a_crumb: &'static str = Box::leak(format!("crumb-{}", crumbs.len() - 2).into_boxed_str());
@@ -6495,122 +6490,17 @@ fn open_as_tab_refuses_an_empty_view_and_closing_deletes_the_copy(cx: &mut TestA
 }
 ```
 
-Add a unit test module to `crates/rogg-app/src/numbers.rs` (Step 2):
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn offsets_and_maps_convert_both_ways() {
-        let o = Numbers::Offset(100);
-        assert_eq!((o.display(0), o.line_of(105), o.line_of(99)), (100, Some(5), None));
-        assert_eq!(o.nearest_line(500, 10), Some(9));
-        let m = Numbers::Mapped(Arc::new(vec![3, 6, 9]));
-        assert_eq!((m.display(1), m.line_of(9), m.line_of(4)), (6, Some(2), None));
-        assert_eq!((m.nearest_line(4, 3), m.nearest_line(1, 3), m.nearest_line(99, 3)), (Some(1), Some(0), Some(2)));
-        assert_eq!(Numbers::Mapped(Arc::new(vec![])).nearest_line(1, 0), None);
-    }
-}
-```
-
 Run: `export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"; cargo test -p rogg-app --test derived`
 Expected: compile errors.
 
-- [ ] **Step 2: `Numbers` replaces the number base**
-
-Create `crates/rogg-app/src/numbers.rs`:
-
-```rust
-//! Display numbers (spec §4.4, §4.9): a file shows line `i` as `base + i`; a derived tab shows each line's number in
-//! the original source. Engine indices stay 0-based; convert only here.
-
-use std::sync::Arc;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Numbers {
-    /// Line `i` is `base + i` (files: 1; the demo: 120480).
-    Offset(u64),
-    /// Line `i` is `numbers[i]` (ascending).
-    Mapped(Arc<Vec<u64>>),
-}
-
-impl Default for Numbers {
-    fn default() -> Self {
-        Numbers::Offset(1)
-    }
-}
-
-impl Numbers {
-    pub fn display(&self, line: u64) -> u64 {
-        match self {
-            Numbers::Offset(base) => base + line,
-            Numbers::Mapped(n) => n.get(line as usize).copied().unwrap_or(0),
-        }
-    }
-
-    /// The line showing `number`, if any (the caller checks it against the line count).
-    pub fn line_of(&self, number: u64) -> Option<u64> {
-        match self {
-            Numbers::Offset(base) => number.checked_sub(*base),
-            Numbers::Mapped(n) => n.binary_search(&number).ok().map(|i| i as u64),
-        }
-    }
-
-    /// The first line numbered at or after `number`, else the last line; None when there are no lines.
-    pub fn nearest_line(&self, number: u64, count: u64) -> Option<u64> {
-        if count == 0 {
-            return None;
-        }
-        let line = match self {
-            Numbers::Offset(base) => number.saturating_sub(*base),
-            Numbers::Mapped(n) => n.partition_point(|&x| x < number) as u64,
-        };
-        Some(line.min(count - 1))
-    }
-}
-```
-
-`crates/rogg-app/src/lib.rs`: add `pub mod numbers;` and `pub mod derived;`.
-
-`crates/rogg-app/src/document/mod.rs`:
-- the field `number_base: u64` becomes `numbers: Numbers`, initialised to `Numbers::Offset(init.number_base)`;
-- `number_base()` is replaced by `pub fn numbers(&self) -> &Numbers`.
-
-`crates/rogg-app/src/rows.rs`:
-- `FullRows.base: u64` becomes `numbers: Numbers`, and the same in `FilteredRows`;
-- `FullRows`:
-  - `row`: `self.numbers.display(i)`;
-  - `row_for_number`: `self.numbers.line_of(number).filter(|&l| l < self.text.line_count()).map(|l| l as usize)`;
-  - `number_at`: `((ix as u64) < count).then(|| self.numbers.display(ix as u64))`;
-  - `nearest_row`: `self.numbers.nearest_line(number, self.text.line_count()).map(|l| l as usize)`.
-- `FilteredRows`:
-  - `row`: `self.numbers.display(number)`;
-  - `row_for_number`: `self.numbers.line_of(number).and_then(|l| self.view.row_for_line(l)).map(|r| r as usize)`;
-  - `number_at`: `self.numbers.display(number)`;
-  - `nearest_row`: `let line = match self.numbers.line_of(number) { Some(l) => l, None => self.numbers.nearest_line(number, u64::MAX).unwrap_or(0) };`, then the existing partition over `shown`.
-- `Document::full_rows` / `filtered_rows` pass `numbers: self.numbers.clone()`.
-- The unit tests construct `numbers: Numbers::Offset(100)` (or `Offset(1)`) instead of `base: 100` (or `base: 1`).
-
-`crates/rogg-app/src/tab.rs`:
-- `toggle_pin`: `if let Some(line) = self.doc.read(cx).numbers().line_of(number) { self.doc.update(cx, |d, cx| d.toggle_pin(line, cx)); }`;
-- `jump_to_hit`:
-  - `let numbers = self.doc.read(cx).numbers().clone();`
-  - `let from = self.selection.and_then(|n| numbers.line_of(n));`
-  - `self.select(pane, numbers.display(line), true, cx);`
-
-Fix any other `number_base()` caller the compiler reports. The demo passes `DocumentInit { number_base: FIRST_LINE_NUMBER, .. }` unchanged.
-
-- [ ] **Step 3: Derived sources and their job**
+- [ ] **Step 2: Derived sources and their job**
 
 Create `crates/rogg-app/src/derived.rs`:
 
 ```rust
-//! "Open filtered as tab" (spec §4.9, §5.6): a tab whose text is a frozen copy of another tab's filtered rows, with the
-//! original line numbers. Built on a background thread (`materialize`, or `rebuild` from a session).
+//! "Open filtered as tab" (spec §4.9, §5.6): a tab whose text is a frozen copy of another tab's filtered rows, numbered
+//! from 1 like an ordinary file. Built on a background thread (`materialize`, or `rebuild` from a session).
 
-use crate::numbers::Numbers;
 use rogg_core::cache::{Cache, CacheLease};
 use rogg_core::derived::{Derived, materialize, rebuild};
 use rogg_core::session::{DerivedSpec, SessionSource};
@@ -6621,8 +6511,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub enum DerivedOrigin {
-    /// From an open tab: its text, its numbers and the lines its filtered log showed.
-    Lines { parent: Arc<LogText>, numbers: Numbers, lines: Arc<Vec<u64>> },
+    /// From an open tab: its text and the lines its filtered log showed.
+    Lines { parent: Arc<LogText>, lines: Arc<Vec<u64>> },
     /// From its definition (session restore, `.rogg`).
     Rebuild,
 }
@@ -6711,7 +6601,7 @@ impl DerivedJob {
                 let _ = progress.send(Message::Progress(if total == 0 { 1. } else { done as f32 / total as f32 }));
             };
             let result = match &source.origin {
-                DerivedOrigin::Lines { parent, numbers, lines } => materialize(parent, lines, |l| numbers.display(l), &cache, &token, report).map(|d| (d, Vec::new())),
+                DerivedOrigin::Lines { parent, lines } => materialize(parent, lines, &cache, &token, report).map(|d| (d, Vec::new())),
                 DerivedOrigin::Rebuild => match &source.spec {
                     Some(spec) => rebuild(spec, &cache, &token, report).map(|r| (r.derived, r.leases)),
                     None => Err(CoreError::Parse { path: Default::default(), message: "this tab cannot be rebuilt".into() }),
@@ -6781,7 +6671,6 @@ In `start_load`, add the arm:
                         if let Some(old) = self.derived_file.replace(derived.path.clone()) {
                             let _ = std::fs::remove_file(old);
                         }
-                        self.numbers = Numbers::Mapped(Arc::new(derived.numbers));
                         // A derived text never grows: no watch, no follower.
                         self.finish_load(Ok(OpenedSource { text: derived.text, leases, inflating: None, watch: None }), cx);
                     }
@@ -6799,7 +6688,7 @@ In `start_load`, add the arm:
 
 In `impl Drop for Document`, add `if let Some(path) = self.derived_file.take() { let _ = std::fs::remove_file(path); }`.
 
-- [ ] **Step 4: Opening, breadcrumbs, snapshot, keys**
+- [ ] **Step 3: Opening, breadcrumbs, snapshot, keys**
 
 `crates/rogg-app/src/actions.rs`: add `OpenAsTab` and the keymap row `shortcut!("Open filtered as tab", "⇧ ⌘ T", "shift-cmd-t", OpenAsTab, WS),`.
 
@@ -6846,7 +6735,7 @@ Set `self_id: cx.entity_id()` in `Tab::new` (a private `self_id: EntityId` field
         }
     }
 
-    /// ⇧⌘T (spec §4.9, §5.6): the active tab's filtered rows, frozen into a new tab with their original numbers.
+    /// ⇧⌘T (spec §4.9, §5.6): the active tab's filtered rows, frozen into a new tab numbered from 1.
     pub fn open_as_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.active_tab() else { return };
         let (source, init) = {
@@ -6879,7 +6768,7 @@ Set `self_id: cx.entity_id()` in `Tab::new` (a private `self_id: EntityId` field
                 tooltip: crate::derived::expression_label(&d.filter.spec),
                 snapshot,
                 spec,
-                origin: crate::derived::DerivedOrigin::Lines { parent: text, numbers: d.numbers().clone(), lines },
+                origin: crate::derived::DerivedOrigin::Lines { parent: text, lines },
             };
             let mut init = TabInit::from_settings(&crate::settings::SettingsStore::get(cx));
             init.profile = Some(t.profile.clone());
@@ -6915,16 +6804,16 @@ The demo's labels override crumbs with the bundle breadcrumb, and `open_as_tab` 
 - `OpenFile` gains `pub derived: bool`, set in `Workspace::open_files` from `matches!(d.source, Source::Derived(_))`;
 - `group_open_files` adds a first arm `_ if f.derived => ("Filtered".into(), "Filtered tabs".into()),`.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 4: Run the tests**
 
 Run: `export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"; cargo test -p rogg-app && cargo test -p rogg-gallery && cargo clippy --workspace --all-targets -- -D warnings`
 Expected: PASS. The shortcuts list gains one row, so the app's shortcuts dialog grows (app captures only; the replica is unaffected).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add crates/rogg-app
-git commit -m "feat(app): open filtered as tab with original numbers, nested tabs, breadcrumbs and snapshots
+git commit -m "feat(app): open filtered as tab, nested tabs, breadcrumbs and snapshots
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -7061,7 +6950,7 @@ fn derived_tabs_restore_from_their_definition(cx: &mut TestAppContext) {
         let rows = t.full.read(cx).rows().clone();
         (0..rows.row_count()).filter_map(|i| rows.number_at(i)).collect()
     });
-    assert_eq!(numbers, [1, 3]);
+    assert_eq!(numbers, [1, 2], "a derived tab numbers its own lines");
 }
 
 #[gpui_kit::test]
@@ -7394,7 +7283,6 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes:
   - Task 6 `export::{export_lines, ExportOptions}`.
-  - Task 16 `Numbers`.
   - Task 17 `Workspace::capture_session`.
   - Task 9 `Toggle`, `FormRow`, `SectionLabel`.
 - Produces:
@@ -7537,7 +7425,6 @@ Create `crates/rogg-app/src/export.rs`:
 ```rust
 //! Exporting filtered lines on a background thread (spec §6.5); the document polls it and reports the result.
 
-use crate::numbers::Numbers;
 use rogg_core::CancelToken;
 use rogg_core::export::{ExportOptions, export_lines};
 use rogg_core::text::LogText;
@@ -7559,14 +7446,14 @@ pub struct ExportJob {
 }
 
 impl ExportJob {
-    pub fn spawn(text: Arc<LogText>, view: Arc<FilteredView>, numbers: Numbers, options: ExportOptions, dst: PathBuf) -> Self {
+    pub fn spawn(text: Arc<LogText>, view: Arc<FilteredView>, base: u64, options: ExportOptions, dst: PathBuf) -> Self {
         let cancel = CancelToken::new();
         let token = cancel.clone();
         let (tx, rx) = mpsc::channel();
         let path = dst.clone();
         let _detached = std::thread::Builder::new().name("rogg-export".into()).spawn(move || {
             let progress = tx.clone();
-            let result = export_lines(&text, &view, |l| numbers.display(l), options, &path, &token, |done, total| {
+            let result = export_lines(&text, &view, |l| base + l, options, &path, &token, |done, total| {
                 let _ = progress.send(Message::Progress(if total == 0 { 1. } else { done as f32 / total as f32 }));
             });
             let _ = tx.send(Message::Done(result.map_err(|e| e.to_string())));
@@ -7613,7 +7500,7 @@ Add `pub mod export;` to `lib.rs`.
         if self.filter.view.shown_lines().is_empty() {
             return Err("Nothing to export: the filtered log is empty".into());
         }
-        self.export = Some(crate::export::ExportJob::spawn(text, self.filter.view.clone(), self.numbers.clone(), options, dst));
+        self.export = Some(crate::export::ExportJob::spawn(text, self.filter.view.clone(), self.number_base, options, dst));
         cx.notify();
         self.ensure_polling(cx);
         Ok(())
@@ -8130,8 +8017,8 @@ Release build: `export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH
     closing the tab mid-export leaves no file.
 16. Save session… for this tab and for all tabs; open the `.rogg` with ⌘O: the tabs come back with filters and pins.
 17. Copy: the clipboard holds the expression.
-18. ⇧⌘T on a 1 GB file's filtered view: `Building tab N%`, then the tab; line numbers match the parent; Go to line,
-    pins and find use the original numbers; a nested tab works the same; the breadcrumb jumps back to the parents.
+18. ⇧⌘T on a 1 GB file's filtered view: `Building tab N%`, then the tab, numbered from 1 like an ordinary file; a nested
+    tab works the same; the breadcrumb jumps back to the parents.
 19. A live file: ⇧⌘T shows `Snapshot · HH:MM:SS`.
 
 ## Session

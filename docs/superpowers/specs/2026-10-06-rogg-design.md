@@ -234,13 +234,14 @@ where known).
 
 ### 4.9 Derived sources ("Open filtered as tab")
 
-- A `DerivedSource` holds `Arc<parent source>` plus a sorted `Vec<u64>` of
-  parent line numbers, frozen at creation.
-- It implements the same line-access trait as file sources. Line `i` resolves
-  to the parent's line `rows[i]`, read from the parent's memory map.
-- Each line keeps its **original line number** for display and `Go to line`.
-- Derived sources can nest (a derived source of a derived source). Each one
-  keeps its parent mapped while it is alive.
+- A derived source is the parent's filtered rows, frozen at creation and copied
+  into a cache file (`streams/derived-<pid>-<n>.log`). The tab maps that file
+  like any log.
+- It behaves like an ordinary file: its lines are numbered from 1. They do
+  **not** keep their original numbers (decided at the M4 plan review,
+  2026-10-07).
+- Derived sources can nest (a derived source of a derived source). The copy is
+  deleted when its tab closes and swept after a crash.
 
 ### 4.10 Search (per panel)
 
