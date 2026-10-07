@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 pub struct AppPaths {
     pub history: PathBuf,
     pub recent: PathBuf,
-    /// Transcoded UTF-16 files (spec §4.2).
+    /// The cache directory (spec §4.2): conversions, extracted members, decompressed files, stream captures.
     pub cache: PathBuf,
 }
 

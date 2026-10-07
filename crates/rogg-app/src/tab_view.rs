@@ -74,17 +74,13 @@ fn stat_parts(stats: &FilterStats) -> Vec<StatPart> {
 pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
     let t = tab.read(cx);
     let d = t.doc.read(cx);
-    let title = d.title();
-    let crumbs = t.labels.crumbs.clone().unwrap_or_else(|| match d.source.path().and_then(|p| p.parent()).and_then(|p| p.file_name()) {
-        Some(dir) => vec![dir.to_string_lossy().into_owned().into(), title.clone()],
-        None => vec![title.clone()],
-    });
+    let crumbs = t.labels.crumbs.clone().unwrap_or_else(|| d.source.crumbs());
     let info_bar = InfoBar::new(crumbs, t.labels.profile.clone().unwrap_or_else(|| "Default".into()))
         .on_profile(later(tab, "Highlighting profiles arrive in a later version"))
         .on_export(later(tab, "Export arrives in a later version"))
         .into_any_element();
     let note = t.labels.note.clone().or_else(|| d.text().map(|text| SharedString::from(text.status_label()))).unwrap_or_default();
-    let progress = d.filter.progress.map(|f| Progress { label: format!("Filtering {:.0}%", f * 100.).into(), fraction: f });
+    let progress = d.job_progress().map(|(label, fraction)| Progress { label, fraction });
     let status = StatusBar::new(note)
         .stats(d.filter.stats.as_ref().map(stat_parts).unwrap_or_default())
         .selection(t.announced_selection().map(|n| SharedString::from(format!("Line {n}"))))
@@ -96,7 +92,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
             TabBody::Placeholder(empty::loading(label.clone(), Some(*fraction), Rc::new(tab_act(tab, |t, _, cx| t.doc.update(cx, |d, cx| d.cancel_load(cx))))).into_any_element())
         }
         LoadState::Failed { message } => {
-            let path = d.source.path().map(|p| p.display().to_string()).unwrap_or_default();
+            let path = d.source.location();
             TabBody::Placeholder(empty::error(message.clone(), path, Rc::new(tab_act(tab, |t, _, cx| t.doc.update(cx, |d, cx| d.retry(cx))))).into_any_element())
         }
         LoadState::Ready(text) => {

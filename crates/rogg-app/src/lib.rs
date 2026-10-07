@@ -5,6 +5,7 @@ extern crate gpui_kit as gpui;
 
 pub mod actions;
 pub mod args;
+pub mod cache;
 pub mod decorate;
 pub mod demo;
 pub mod document;
@@ -49,6 +50,9 @@ pub fn init_with(cx: &mut App, paths: AppPaths) {
 
 /// App globals and key bindings only, for hosts that initialise gpui-kit and the theme themselves (the gallery).
 pub fn install_globals(cx: &mut App, paths: AppPaths) {
+    let store = rogg_core::cache::Cache::new(paths.cache.clone(), rogg_core::cache::DEFAULT_LIMIT_BYTES);
+    cache::start_maintenance(store.clone());
+    cx.set_global(cache::CacheStore(store));
     cx.set_global(document::EngineConfig::default());
     cx.set_global(history::HistoryStore::load(paths.history.clone()));
     cx.set_global(recent::RecentStore::load(paths.recent.clone()));

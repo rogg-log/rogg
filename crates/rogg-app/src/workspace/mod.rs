@@ -215,7 +215,7 @@ impl Workspace {
             .map(|(i, tab)| {
                 let t = tab.read(cx);
                 let d = t.doc.read(cx);
-                let tooltip = t.labels.tooltip.clone().or_else(|| d.source.path().map(|p| SharedString::from(p.display().to_string()))).unwrap_or_else(|| d.title());
+                let tooltip = t.labels.tooltip.clone().unwrap_or_else(|| d.source.tooltip());
                 TabItem { label: d.title(), tooltip, active: i == self.active }
             })
             .collect();

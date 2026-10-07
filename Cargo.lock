@@ -5833,6 +5833,7 @@ dependencies = [
  "anyhow",
  "gpui-kit",
  "rogg-core",
+ "rogg-genlog",
  "rogg-ui",
  "tempfile",
 ]

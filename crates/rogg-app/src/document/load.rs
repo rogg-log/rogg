@@ -1,19 +1,24 @@
-//! Opening a large file on a background thread; the document polls the channel.
+//! Opening a source on a background thread — extraction, decompression, conversion, indexing; the document polls the
+//! channel.
 
-use rogg_core::text::{LogText, OpenProgress};
+use rogg_core::cache::Cache;
+use rogg_core::source::{OpenUpdate, OpenedSource, SourceRef, open_source};
 use rogg_core::{CancelToken, CoreError};
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+/// The result of a finished open, boxed so the channel messages stay small.
+pub(crate) type OpenResult = Box<Result<OpenedSource, CoreError>>;
+
 enum Message {
-    Progress(OpenProgress),
-    Done(Result<LogText, CoreError>),
+    Progress(OpenUpdate),
+    Done(OpenResult),
 }
 
 pub(crate) enum OpenPoll {
     /// Still working; the latest progress since the last poll, if any.
-    Pending(Option<OpenProgress>),
-    Done(Result<LogText, CoreError>),
+    Pending(Option<OpenUpdate>),
+    Done(OpenResult),
     /// The thread ended without a result (it panicked or could not be spawned).
     Died,
 }
@@ -24,17 +29,17 @@ pub(crate) struct OpenJob {
 }
 
 impl OpenJob {
-    pub(crate) fn spawn(path: PathBuf, cache: PathBuf) -> Self {
+    pub(crate) fn spawn(source: SourceRef, cache: Arc<Cache>) -> Self {
         let cancel = CancelToken::new();
         let token = cancel.clone();
         let (tx, rx) = mpsc::channel();
-        // Detached: on cancel, `LogText::open` returns at its next check and the thread ends.
+        // Detached: on cancel, `open_source` returns at its next check and the thread ends.
         let _detached = std::thread::Builder::new().name("rogg-open".into()).spawn(move || {
             let progress = tx.clone();
-            let result = LogText::open(&path, &cache, &token, |p| {
-                let _ = progress.send(Message::Progress(p));
+            let result = open_source(&source, &cache, &token, |u| {
+                let _ = progress.send(Message::Progress(u));
             });
-            let _ = tx.send(Message::Done(result));
+            let _ = tx.send(Message::Done(Box::new(result)));
         });
         Self { cancel, rx }
     }

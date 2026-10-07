@@ -21,3 +21,4 @@ anyhow.workspace = true
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+rogg-genlog = { path = "../rogg-genlog" }
