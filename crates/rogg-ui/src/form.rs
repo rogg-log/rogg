@@ -4,6 +4,7 @@
 use crate::controls::pressed;
 use crate::theme::{ActiveRoggTheme, Color};
 use crate::Callback;
+use gpui_kit::component::Sizable;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, FontWeight, SharedString, TestSupportExt, Window, div, px};
@@ -118,6 +119,7 @@ impl RenderOnce for Toggle {
             .id(self.id)
             .test_support()
             .flex()
+            .flex_none()
             .items_center()
             .w(px(28.))
             .h(px(16.))
@@ -137,6 +139,7 @@ fn step_button(id: SharedString, glyph: &'static str, enabled: bool, f: Option<C
         .id(id)
         .test_support()
         .flex()
+        .flex_none()
         .items_center()
         .justify_center()
         .size(px(22.))
@@ -273,17 +276,23 @@ impl RenderOnce for TextField {
         let t = cx.rogg().clone();
         let (p, s) = (t.palette, t.text_scale());
         let family = if self.mono { t.fonts.mono.clone() } else { t.fonts.ui.clone() };
+        // 22 px tall like the dialog's buttons: the input at its extra-small size, without its own padding (as in
+        // `FindField`). Input::h is multi-line only and shadows Styled::h, so call the trait method explicitly.
+        let input = Input::new(&self.input).xsmall().appearance(false).p_0().font_family(family).text_size(s.px(12.)).line_height(px(14.)).text_color(p.text);
         div()
             .id(self.id)
             .test_support()
+            .flex()
+            .items_center()
+            .h(px(22.))
             .px(px(8.))
-            .py(px(4.))
+            .py_0()
             .bg(p.bg)
             .border_1()
             .border_color(if self.error { p.error } else { p.border })
             .rounded(px(4.))
             .when_some(self.width, |d, w| d.w(px(w)))
-            .child(Input::new(&self.input).appearance(false).p_0().font_family(family).text_size(s.px(12.)).text_color(p.text))
+            .child(Styled::h(input, px(20.)))
     }
 }
 
@@ -390,7 +399,8 @@ impl RenderOnce for EditableRuleRow {
                     .text_size(s.px(12.))
                     .when(!self.enabled, |d| d.opacity(0.5))
                     .child(div().flex_none().size(px(21.)).rounded(px(4.)).border_1().border_color(p.swatch_border).bg(self.swatch))
-                    .child(div().min_w_0().truncate().font_family(t.fonts.mono.clone()).child(self.pattern))
+                    // Only the pattern gives way to a narrow row; the summary, switch and move buttons keep their size.
+                    .child(div().flex_1().min_w_0().truncate().font_family(t.fonts.mono.clone()).child(self.pattern))
                     .child(div().ml_auto().flex_none().text_size(s.px(11.)).text_color(p.muted).child(self.summary))
                     .child(Toggle::new(SharedString::from(format!("profile-rule-{i}-toggle")), self.enabled).on_click({
                         let f = self.on_toggle.clone();

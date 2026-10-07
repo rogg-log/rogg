@@ -1,7 +1,8 @@
 mod common;
 use gpui_kit::prelude::*;
-use gpui_kit::{TestAppContext, div};
-use rogg_ui::form::{EditableRuleRow, FormRow, PaletteSlot, Stepper, Toggle};
+use gpui_kit::component::input::InputState;
+use gpui_kit::{AppContext, TestAppContext, div, px, size};
+use rogg_ui::form::{EditableRuleRow, FormRow, PaletteSlot, Stepper, TextField, Toggle};
 use rogg_ui::theme::Color;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -52,6 +53,28 @@ fn rule_rows_select_toggle_move_and_show_errors(cx: &mut TestAppContext) {
     common::click(cx, w, "profile-rule-1");
     assert_eq!(*events.borrow(), ["toggle", "move true", "select"], "controls do not also select the row; down is disabled");
     assert!(common::exists(cx, w, "profile-rule-1-error"));
+}
+
+#[gpui_kit::test]
+fn a_narrow_rule_row_keeps_its_controls_full_size(cx: &mut TestAppContext) {
+    common::setup(cx);
+    // Narrower than the row's fixed parts (swatch, gaps, switch, move buttons): only the pattern may give way.
+    let w = common::open(cx, 120., 100., |_, _| {
+        div().w(px(120.)).child(EditableRuleRow::new(0, Color::rgb(0xefaaa2), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}", "Match text · both panels")).into_any_element()
+    });
+    assert_eq!(common::bounds(cx, w, "profile-rule-0-toggle").size, size(px(28.), px(16.)));
+    assert_eq!(common::bounds(cx, w, "profile-rule-0-up").size, size(px(22.), px(22.)));
+    assert_eq!(common::bounds(cx, w, "profile-rule-0-down").size, size(px(22.), px(22.)));
+}
+
+#[gpui_kit::test]
+fn a_text_field_is_as_tall_as_a_button(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let w = common::open(cx, 300., 100., |window, cx| {
+        let input = cx.new(|cx| InputState::new(window, cx).default_value("#ffaa00"));
+        div().flex().items_start().child(TextField::new("hex", input).mono(true).width(96.)).into_any_element()
+    });
+    assert_eq!(common::bounds(cx, w, "hex").size, size(px(96.), px(22.)));
 }
 
 #[gpui_kit::test]

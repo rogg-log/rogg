@@ -343,9 +343,8 @@ impl Render for ProfileEditor {
         let styler = RowStyler::new(&profile, store.compiled(&self.profile), &theme.palette, theme.appearance);
         let selected = names.iter().position(|n| *n == profile.name).unwrap_or(0);
         let pick_names = names.clone();
-        let mut toolbar = div()
+        let toolbar = div()
             .flex()
-            .flex_wrap()
             .items_center()
             .gap(px(6.))
             .mt(px(10.))
@@ -360,23 +359,28 @@ impl Render for ProfileEditor {
             }))
             .child(ActionButton::new("profile-new", "New").on_click(ed(&this, |e, _, cx| e.new_profile(cx))))
             .child(ActionButton::new("profile-duplicate", "Duplicate").on_click(ed(&this, |e, _, cx| e.duplicate(cx))))
+            // Default must always exist: it can be neither renamed nor deleted.
             .when(profile.name != DEFAULT_PROFILE, |d| {
                 d.child(ActionButton::new("profile-rename", "Rename").on_click(ed(&this, |e, window, cx| e.start_rename(window, cx))))
-            })
-            .child(ActionButton::new("profile-delete", "Delete").on_click(ed(&this, |e, _, cx| {
-                e.delete(cx);
-            })))
-            .child(ActionButton::new("profile-import", "Import…").on_click(ed(&this, |e, window, cx| e.import(window, cx))))
-            .child(ActionButton::new("profile-export", "Export…").on_click(ed(&this, |e, window, cx| e.export(window, cx))));
-        if let Some((input, _)) = &self.rename {
-            toolbar = toolbar
-                .child(TextField::new("profile-name", input.clone()).width(160.).error(self.rename_error.is_some()))
-                .child(ActionButton::new("profile-rename-apply", "Rename").primary().on_click(ed(&this, |e, window, cx| e.apply_rename(window, cx))));
-        }
+                    .child(ActionButton::new("profile-delete", "Delete").on_click(ed(&this, |e, _, cx| {
+                        e.delete(cx);
+                    })))
+            });
         let mut frame = DialogFrame::new(format!("Highlighting · {}", profile.name))
             .description("Rules apply top to bottom; for each effect the first matching rule wins. Changes apply immediately.")
             .on_close(ed(&this, |_, _, cx| cx.emit(ProfileEditorEvent::Close)))
             .child(toolbar);
+        if let Some((input, _)) = &self.rename {
+            frame = frame.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .mt(px(6.))
+                    .child(TextField::new("profile-name", input.clone()).width(160.).error(self.rename_error.is_some()))
+                    .child(ActionButton::new("profile-rename-apply", "Rename").primary().on_click(ed(&this, |e, window, cx| e.apply_rename(window, cx)))),
+            );
+        }
         if let Some(error) = &self.rename_error {
             frame = frame.child(div().id("profile-rename-error").test_support().mt(px(4.)).text_size(theme.text_scale().px(10.)).text_color(theme.palette.error).child(error.clone()));
         }
@@ -417,7 +421,31 @@ impl Render for ProfileEditor {
         if let Some(slot) = self.selected_slot.filter(|s| *s < profile.hit_palette.len()) {
             frame = frame.child(self.slot_form(slot, &profile, &this, cx));
         }
-        frame.note("Profiles are saved in ~/Library/Application Support/rogg/profiles.")
+        // The note row of `DialogFrame::note`, with Import and Export at its end (the toolbar has no room for them).
+        frame.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .my(px(10.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(theme.text_scale().px(10.))
+                        .line_height(px(17.))
+                        .text_color(theme.palette.muted)
+                        .child("Profiles are saved in ~/Library/Application Support/rogg/profiles."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .gap(px(6.))
+                        .child(ActionButton::new("profile-import", "Import…").on_click(ed(&this, |e, window, cx| e.import(window, cx))))
+                        .child(ActionButton::new("profile-export", "Export…").on_click(ed(&this, |e, window, cx| e.export(window, cx)))),
+                ),
+        )
     }
 }
 

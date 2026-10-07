@@ -61,7 +61,8 @@ fn new_duplicate_and_delete_profiles(cx: &mut TestAppContext) {
     assert_eq!(tab_profile(&f, cx), "Default");
     assert_eq!(other.read_with(cx, |t, _| t.profile.to_string()), "Default", "every tab whose profile was deleted moves to Default");
     f.editor.update(cx, |e, cx| e.select_profile("Default", cx));
-    common::click(cx, f.w, "profile-delete");
+    assert!(!common::exists(cx, f.w, "profile-delete"), "Default has no Delete button");
+    assert!(!f.editor.update(cx, |e, cx| e.delete(cx)));
     assert!(names(cx).contains(&"Default".to_string()), "Default cannot be deleted");
 }
 
@@ -89,6 +90,27 @@ fn deleting_the_default_profile_setting_falls_back_to_default(cx: &mut TestAppCo
     cx.update_window(f.w, |_, window, cx| f.ws.update(cx, |ws, cx| ws.open_paths(vec![log], window, cx))).unwrap();
     let third = f.ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     assert_eq!(third.read_with(cx, |t, _| t.profile.to_string()), "Default", "an unknown profile name resolves to Default");
+}
+
+#[gpui_kit::test]
+fn import_and_export_sit_by_the_note_and_renaming_gets_its_own_line(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-new");
+    let toolbar = common::bounds(cx, f.w, "profile-new");
+    for id in ["profile-select", "profile-duplicate", "profile-rename", "profile-delete"] {
+        assert_eq!(common::bounds(cx, f.w, id).center().y, toolbar.center().y, "{id} is on the toolbar line");
+    }
+    let palette = common::bounds(cx, f.w, "palette-slot-0");
+    let (import, export) = (common::bounds(cx, f.w, "profile-import"), common::bounds(cx, f.w, "profile-export"));
+    assert!(import.origin.y > palette.bottom() && export.origin.y == import.origin.y, "on the bottom row: {import:?} {export:?}");
+    let dialog = common::bounds(cx, f.w, "dialog");
+    assert!(export.right() > dialog.right() - gpui_kit::px(40.), "right-aligned: {export:?} in {dialog:?}");
+    common::click(cx, f.w, "profile-rename");
+    // The centred dialog grew: measure the toolbar again.
+    let toolbar = common::bounds(cx, f.w, "profile-new");
+    let field = common::bounds(cx, f.w, "profile-name");
+    assert!(field.origin.y >= toolbar.bottom(), "the name field is under the toolbar: {field:?} {toolbar:?}");
+    assert_eq!(common::bounds(cx, f.w, "profile-rename-apply").center().y, field.center().y);
 }
 
 #[gpui_kit::test]
