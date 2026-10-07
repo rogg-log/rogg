@@ -24,6 +24,8 @@ pub enum LogViewEvent {
     TogglePin { number: u64 },
     /// Context menu "Filter on …" / "Exclude …": add the word as a filter term.
     AddTerm { text: String, exclude: bool },
+    /// The user scrolled away from the end while in tail mode (live follow pauses on this).
+    TailLeft,
 }
 
 /// Where `scroll_to_row` puts the row.
@@ -59,6 +61,7 @@ pub struct LogViewState {
     pub(crate) scroll_x: f32,
     pub(crate) max_scroll_x: f32,
     pub(crate) wrap: bool,
+    pub(crate) tail: bool,
     /// The selection head (the line moved by the keyboard and shown in the status bar).
     pub(crate) selected: Option<u64>,
     /// The other end of a range selection; None for a single line.
@@ -88,6 +91,7 @@ impl LogViewState {
             scroll_x: 0.,
             max_scroll_x: 0.,
             wrap: false,
+            tail: false,
             selected: None,
             range_anchor: None,
             force_hover_row: None,
@@ -133,6 +137,38 @@ impl LogViewState {
         }
         self.anchor = self.with_geometry(|g| g.clamp(self.anchor));
         cx.notify();
+    }
+
+    /// Like `set_rows` for rows that start with the current ones (lines were appended): keeps the scroll position, the
+    /// selection and the measured wrapped heights.
+    pub fn extend_rows(&mut self, rows: Rc<dyn LogRowSource>, cx: &mut Context<Self>) {
+        self.rows = rows;
+        self.anchor = self.with_geometry(|g| g.clamp(self.anchor));
+        cx.notify();
+    }
+
+    /// Stick-to-bottom mode (live follow, spec §4.5): every layout keeps the last row in view, so appended rows scroll
+    /// in. Scrolling away — the wheel, the scrollbar, or a jump to an earlier row — leaves it and emits `TailLeft`.
+    pub fn set_tail(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.tail = on;
+        cx.notify();
+    }
+
+    pub fn tail(&self) -> bool {
+        self.tail
+    }
+
+    /// Whether the view shows the end of its rows (true before the first layout and when everything fits).
+    pub fn at_bottom(&self) -> bool {
+        !self.initialized || self.with_geometry(|g| g.is_at_bottom(self.anchor))
+    }
+
+    /// After a user scroll: leaves tail mode when the end is no longer in view.
+    pub(crate) fn user_scrolled(&mut self, cx: &mut Context<Self>) {
+        if self.tail && !self.with_geometry(|g| g.is_at_bottom(self.anchor)) {
+            self.tail = false;
+            cx.emit(LogViewEvent::TailLeft);
+        }
     }
 
     pub fn wrap(&self) -> bool {
@@ -184,6 +220,10 @@ impl LogViewState {
 
     /// Scrolls `row` into place on the next layout (the viewport is only known during prepaint).
     pub fn scroll_to_row(&mut self, row: usize, how: ScrollTo, cx: &mut Context<Self>) {
+        if self.tail && row + 1 < self.rows.row_count() {
+            self.tail = false;
+            cx.emit(LogViewEvent::TailLeft);
+        }
         self.pending_scroll = Some((row, how));
         cx.notify();
     }
@@ -335,6 +375,7 @@ impl LogViewState {
         self.applied_scroll = self.pending_scroll.take();
         self.anchor = match self.applied_scroll {
             Some(request) => self.resolve_scroll(request),
+            None if self.tail => self.with_geometry(|g| g.bottom()),
             None => self.with_geometry(|g| g.clamp(self.anchor)),
         };
     }
@@ -350,6 +391,7 @@ impl LogViewState {
         }
         self.anchor = match self.applied_scroll {
             Some(request) => self.resolve_scroll(request),
+            None if self.tail => self.with_geometry(|g| g.bottom()),
             None => self.with_geometry(|g| g.clamp(self.anchor)),
         };
     }
@@ -380,6 +422,7 @@ impl LogViewState {
     pub(crate) fn autoscroll_select(&mut self, down: bool, cx: &mut Context<Self>) {
         let dy = if down { self.row_h } else { -self.row_h };
         self.scroll_by_px(dy, 0.);
+        self.user_scrolled(cx);
         let visible = self.visible_rows();
         let mut lines = visible.iter().map(|&(row, _)| row).filter(|&row| !self.rows.is_gap(row));
         let edge = if down { lines.next_back() } else { lines.next() };

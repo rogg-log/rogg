@@ -177,6 +177,7 @@ impl Tab {
                 let (text, exclude) = (text.clone(), *exclude);
                 self.doc.update(cx, |d, cx| d.add_term(&text, exclude, cx));
             }
+            LogViewEvent::TailLeft => {}
         }
     }
 

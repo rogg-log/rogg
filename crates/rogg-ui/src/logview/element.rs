@@ -591,6 +591,7 @@ impl Element for LogViewElement {
             let delta = e.delta.pixel_delta(row_h);
             state.update(cx, |s, cx| {
                 s.scroll_by_px(-f32::from(delta.y), -f32::from(delta.x));
+                s.user_scrolled(cx);
                 cx.notify();
             });
             cx.stop_propagation();
@@ -629,6 +630,7 @@ impl Element for LogViewElement {
                 state.update(cx, |s, cx| {
                     s.drag = Some(Drag::VThumb { grab });
                     s.drag_vthumb(f32::from(e.position.y - track_top) - grab, track_h, thumb_h);
+                    s.user_scrolled(cx);
                     cx.notify();
                 });
                 cx.stop_propagation();
@@ -686,6 +688,7 @@ impl Element for LogViewElement {
                             let thumb_h = f32::from(thumb.size.height);
                             state.update(cx, |s, cx| {
                                 s.drag_vthumb(f32::from(e.position.y - track_top) - grab, track_h, thumb_h);
+                                s.user_scrolled(cx);
                                 cx.notify();
                             });
                         }

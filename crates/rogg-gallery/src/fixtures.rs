@@ -9,7 +9,7 @@ use rogg_ui::theme::Color;
 pub use rogg_app::demo::{BUNDLE, FILES};
 
 pub fn sidebar_rows(active: &str) -> Vec<TreeRow> {
-    let mut rows = vec![TreeRow::Folder { label: BUNDLE.into(), expanded: true, depth: 0 }];
+    let mut rows = vec![TreeRow::Folder { label: BUNDLE.into(), expanded: true, depth: 0, note: None, failed: false }];
     rows.extend(FILES.iter().map(|(name, size)| TreeRow::File {
         label: (*name).into(),
         size: (*size).into(),
@@ -18,6 +18,18 @@ pub fn sidebar_rows(active: &str) -> Vec<TreeRow> {
         failed: false,
     }));
     rows
+}
+
+/// A folder root with a nested archive being listed, an unreadable archive and a compressed log (M3 states).
+pub fn sidebar_tree_rows() -> Vec<TreeRow> {
+    vec![
+        TreeRow::Folder { label: "support-2026-10-05".into(), expanded: true, depth: 0, note: None, failed: false },
+        TreeRow::Folder { label: "nodes".into(), expanded: true, depth: 1, note: None, failed: false },
+        TreeRow::File { label: "node-1.log".into(), size: "412 MB".into(), active: false, depth: 2, failed: false },
+        TreeRow::Folder { label: "bundle-node-2.tgz".into(), expanded: true, depth: 1, note: Some("listing…".into()), failed: false },
+        TreeRow::Folder { label: "broken.zip".into(), expanded: false, depth: 1, note: Some("unreadable".into()), failed: true },
+        TreeRow::File { label: "app.log.1.gz".into(), size: "38 MB".into(), active: true, depth: 1, failed: false },
+    ]
 }
 
 pub fn recent() -> Vec<RecentItem> {

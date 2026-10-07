@@ -94,7 +94,7 @@ pub fn rows_with_failures(
     let mut actions = Vec::new();
     for group in groups {
         let expanded = !collapsed.contains(&group.key);
-        rows.push(TreeRow::Folder { label: group.label.clone(), expanded, depth: 0 });
+        rows.push(TreeRow::Folder { label: group.label.clone(), expanded, depth: 0, note: None, failed: false });
         actions.push(RowAction::ToggleGroup(group.key.clone()));
         if !expanded {
             continue;

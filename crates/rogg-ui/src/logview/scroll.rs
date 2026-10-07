@@ -23,6 +23,11 @@ impl ScrollGeometry<'_> {
         ScrollAnchor { row: 0, offset: -self.pad }
     }
 
+    /// Whether `a` shows the end of the content (the last row and the bottom padding); true when everything fits.
+    pub fn is_at_bottom(&self, a: ScrollAnchor) -> bool {
+        self.row_count == 0 || !before(a, self.bottom())
+    }
+
     /// The furthest anchor: last row's bottom plus padding meets the viewport bottom.
     pub fn bottom(&self) -> ScrollAnchor {
         let mut remaining = self.viewport - self.pad;

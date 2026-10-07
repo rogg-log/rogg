@@ -9,7 +9,7 @@ fn sidebar() -> Sidebar {
     Sidebar::new()
         .count("10 files".into())
         .rows(vec![
-            TreeRow::Folder { label: "incident.zip".into(), expanded: true, depth: 0 },
+            TreeRow::Folder { label: "incident.zip".into(), expanded: true, depth: 0, note: None, failed: false },
             TreeRow::File { label: "api.log".into(), size: "972 MB".into(), active: true, depth: 1, failed: false },
             TreeRow::File { label: "worker.log".into(), size: "841 MB".into(), active: false, depth: 1, failed: false },
         ])
@@ -81,4 +81,20 @@ fn width_override_and_missing_footer(cx: &mut TestAppContext) {
     let w = common::open(cx, 600., 700., |_, _| sidebar().width(px(260.)).footer(None).into_any_element());
     assert_eq!(common::bounds(cx, w, "sidebar").size.width, px(260.));
     assert!(!common::exists(cx, w, "side-bottom"));
+}
+
+#[gpui_kit::test]
+fn folder_rows_show_a_note_and_a_failed_state(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let rows = vec![
+        TreeRow::Folder { label: "bundle".into(), expanded: true, depth: 0, note: None, failed: false },
+        TreeRow::Folder { label: "inner.tgz".into(), expanded: true, depth: 1, note: Some("listing…".into()), failed: false },
+        TreeRow::Folder { label: "broken.zip".into(), expanded: false, depth: 1, note: Some("unreadable".into()), failed: true },
+    ];
+    let w = common::open(cx, 211., 400., move |_, _| Sidebar::new().rows(rows.clone()).into_any_element());
+    assert!(!common::exists(cx, w, "tree-note-0"));
+    assert!(common::exists(cx, w, "tree-note-1") && common::exists(cx, w, "tree-note-2"));
+    let row = common::bounds(cx, w, "tree-row-2");
+    let note = common::bounds(cx, w, "tree-note-2");
+    assert!(note.right() <= row.right() && note.right() >= row.right() - px(9.) - px(1.), "the note sits at the row's right padding");
 }

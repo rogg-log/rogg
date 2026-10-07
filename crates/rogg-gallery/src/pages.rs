@@ -9,7 +9,7 @@ use rogg_ui::empty;
 use rogg_ui::filter::{ChipState, FilterBand, FilterChip};
 use rogg_ui::icons::IconName;
 use rogg_ui::logview::LogView;
-use rogg_ui::sidebar::Sidebar;
+use rogg_ui::sidebar::{Sidebar, SidebarFooter};
 use rogg_ui::theme::{ActiveRoggTheme, Palette};
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use std::rc::Rc;
@@ -168,12 +168,26 @@ fn tabs(p: &Palette) -> AnyElement {
 }
 
 fn sidebar(p: &Palette) -> AnyElement {
-    section(
-        "Bundle tree, recent, footer",
-        frame(211., 640., p, Sidebar::new().count("10 files".into()).rows(fixtures::sidebar_rows("api.log")).recent(fixtures::recent()).footer(Some(fixtures::sidebar_footer()))),
-        p,
-    )
-    .into_any_element()
+    row()
+        .child(section(
+            "Bundle tree, recent, footer",
+            frame(211., 640., p, Sidebar::new().count("10 files".into()).rows(fixtures::sidebar_rows("api.log")).recent(fixtures::recent()).footer(Some(fixtures::sidebar_footer()))),
+            p,
+        ))
+        .child(section(
+            "Folder tree: nested archive listing, unreadable archive, compressed log",
+            frame(
+                211.,
+                640.,
+                p,
+                Sidebar::new()
+                    .count("3 files".into())
+                    .rows(fixtures::sidebar_tree_rows())
+                    .footer(Some(SidebarFooter { title: "support-2026-10-05".into(), lines: vec!["3 files · 450 MB".into()] })),
+            ),
+            p,
+        ))
+        .into_any_element()
 }
 
 fn filter(view: &GalleryView, p: &Palette) -> AnyElement {
@@ -221,6 +235,15 @@ fn chrome(view: &GalleryView, p: &Palette) -> AnyElement {
                 .flex_col()
                 .gap(px(10.))
                 .child(frame(1100., 40., p, PaneHeader::new("ph-full", "Full log", "40 sample lines").find(FindField::new("ph-find-top", view.inputs.find_empty.clone())).tool(ToolButton::new("ph-wrap-top", IconName::Wrap, "Wrap"))))
+                .child(frame(1100., 40., p, PaneHeader::new("ph-live", "Full log", "1,204,331 lines").tool(ToolButton::new("ph-live-pause", IconName::Pause, "Pause")).tool(ToolButton::new("ph-live-wrap", IconName::Wrap, "Wrap"))))
+                .child(frame(
+                    1100.,
+                    40.,
+                    p,
+                    PaneHeader::new("ph-paused", "Full log", "1,205,535 lines")
+                        .tool(ToolButton::new("ph-live-paused", IconName::Pause, "Paused").pressed(true).badge(Some("+1,204".into())))
+                        .tool(ToolButton::new("ph-paused-wrap", IconName::Wrap, "Wrap")),
+                ))
                 .child(frame(
                     1100.,
                     40.,
@@ -253,6 +276,7 @@ fn empty_states(p: &Palette) -> AnyElement {
         .child(frame(600., 300., p, empty::no_matches("empty-no-matches")))
         .child(frame(600., 300., p, empty::welcome(fixtures::recent(), noop.clone(), noop.clone(), noop_ix)))
         .child(frame(600., 300., p, empty::loading("Indexing api.log · 412 MB / 1.0 GB", Some(0.41), noop.clone())))
+        .child(frame(600., 300., p, empty::loading("Extracting api.log", Some(0.42), noop.clone())))
         .child(frame(600., 300., p, empty::error("Could not read archive member", "incident-2026-10-05.zip › gateway.log", noop)))
         .into_any_element()
 }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TreeRow {
-    Folder { label: SharedString, expanded: bool, depth: usize },
+    Folder { label: SharedString, expanded: bool, depth: usize, note: Option<SharedString>, failed: bool },
     File { label: SharedString, size: SharedString, active: bool, depth: usize, failed: bool },
 }
 
@@ -121,17 +121,30 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
             }
         });
     match row {
-        TreeRow::Folder { label, expanded, depth } => base
+        TreeRow::Folder { label, expanded, depth, note, failed } => base
             .pl(px(9. + depth as f32 * 18.))
             .pr(px(9.))
             .text_size(px(11.))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(p.text)
+            .text_color(if failed { p.error } else { p.text })
             .rounded(px(4.))
             .hover(move |s| s.bg(p.hover))
             .child(div().flex_none().text_color(p.muted).child(if expanded { "⌄" } else { "›" }))
             .child(icon(IconName::Folder).size(px(13.)).text_color(p.muted))
             .child(div().min_w_0().truncate().child(label))
+            .when_some(note, |d, note| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("tree-note-{i}")))
+                        .test_support()
+                        .ml_auto()
+                        .flex_none()
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(if failed { p.error } else { p.faint })
+                        .child(note),
+                )
+            })
             .into_any_element(),
         TreeRow::File { label, size: file_size, active, depth, failed } => base
             .pl(px(27. + depth.saturating_sub(1) as f32 * 18.))

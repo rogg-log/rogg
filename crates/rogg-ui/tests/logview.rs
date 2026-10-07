@@ -55,6 +55,7 @@ fn click_selects_and_gutter_click_toggles_pin(cx: &mut TestAppContext) {
                 LogViewEvent::Selected { number, .. } => format!("select {number}"),
                 LogViewEvent::TogglePin { number } => format!("pin {number}"),
                 LogViewEvent::AddTerm { text, exclude } => format!("term {text} {exclude}"),
+                LogViewEvent::TailLeft => "tail-left".to_string(),
             })
         })
         .detach();
@@ -593,4 +594,90 @@ fn right_click_selects_and_records_the_context_target(cx: &mut TestAppContext) {
         let target = s.context_target().expect("target recorded");
         assert_eq!((target.number, target.pinned), (1005, false));
     });
+}
+
+fn tail_left_count(cx: &mut TestAppContext, state: &Entity<LogViewState>) -> Rc<RefCell<usize>> {
+    let count = Rc::new(RefCell::new(0));
+    let c = count.clone();
+    cx.update(|cx| {
+        cx.subscribe(state, move |_, ev: &LogViewEvent, _| {
+            if *ev == LogViewEvent::TailLeft {
+                *c.borrow_mut() += 1;
+            }
+        })
+        .detach();
+    });
+    count
+}
+
+fn last_visible(cx: &mut TestAppContext, state: &Entity<LogViewState>) -> usize {
+    state.read_with(cx, |s, _| s.last_rows().last().map(|g| g.row).unwrap())
+}
+
+#[gpui_kit::test]
+fn tail_mode_follows_appended_rows_until_the_user_scrolls_up(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let left = tail_left_count(cx, &state);
+    let w = open(cx, state.clone());
+    state.update(cx, |s, cx| s.set_tail(true, cx));
+    render(cx, w);
+    assert_eq!(last_visible(cx, &state), 99);
+    assert!(state.read_with(cx, |s, _| s.tail() && s.at_bottom()));
+    state.update(cx, |s, cx| s.extend_rows(rows(150, None), cx));
+    render(cx, w);
+    assert_eq!(last_visible(cx, &state), 149, "appended rows scroll into view");
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(0.), px(-200.))), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(state.read_with(cx, |s, _| s.tail()), "scrolling down at the end stays in tail mode");
+    assert_eq!(*left.borrow(), 0);
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(0.), px(100.))), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(!state.read_with(cx, |s, _| s.tail() || s.at_bottom()));
+    assert_eq!(*left.borrow(), 1);
+    state.update(cx, |s, cx| s.extend_rows(rows(200, None), cx));
+    render(cx, w);
+    assert!(last_visible(cx, &state) < 199, "once left, appended rows no longer pull the view");
+}
+
+#[gpui_kit::test]
+fn jumping_to_an_earlier_row_leaves_tail_mode(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let left = tail_left_count(cx, &state);
+    let w = open(cx, state.clone());
+    state.update(cx, |s, cx| {
+        s.set_tail(true, cx);
+        s.scroll_to_row(99, ScrollTo::Visible, cx);
+    });
+    render(cx, w);
+    assert!(state.read_with(cx, |s, _| s.tail()), "the last row keeps tail mode");
+    state.update(cx, |s, cx| s.scroll_to_row(10, ScrollTo::Center, cx));
+    render(cx, w);
+    assert!(!state.read_with(cx, |s, _| s.tail()));
+    assert_eq!(*left.borrow(), 1);
+}
+
+#[gpui_kit::test]
+fn extend_rows_keeps_the_position_and_selection(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let w = open(cx, state.clone());
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1040), cx);
+        s.scroll_to_row(40, ScrollTo::Top, cx);
+    });
+    render(cx, w);
+    let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    state.update(cx, |s, cx| s.extend_rows(rows(300, None), cx));
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| (s.last_rows()[0].row, s.selected())), (first, Some(1040)));
 }
