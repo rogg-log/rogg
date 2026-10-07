@@ -7,3 +7,11 @@ publish.workspace = true
 [[bin]]
 name = "genlog"
 path = "src/main.rs"
+
+[dependencies]
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

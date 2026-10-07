@@ -5878,6 +5878,12 @@ dependencies = [
 [[package]]
 name = "rogg-genlog"
 version = "0.1.0"
+dependencies = [
+ "flate2",
+ "tar",
+ "tempfile",
+ "zip",
+]
 
 [[package]]
 name = "rogg-ui"

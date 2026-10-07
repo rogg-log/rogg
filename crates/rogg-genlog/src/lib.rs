@@ -1,4 +1,6 @@
-//! Deterministic synthetic logs for tests and benchmarks (spec §8). No third-party dependencies.
+//! Deterministic synthetic logs for tests and benchmarks (spec §8). Archives are written with `zip`, `tar` and `flate2`.
+
+pub mod bundle;
 
 use std::io::{self, BufWriter, Write};
 use std::path::Path;

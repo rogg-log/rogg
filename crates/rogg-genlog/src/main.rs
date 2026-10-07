@@ -1,3 +1,4 @@
+use rogg_genlog::bundle::BundleKind;
 use rogg_genlog::{GenEncoding, GenOptions, generate_file, parse_size};
 use std::path::PathBuf;
 
@@ -8,13 +9,15 @@ struct Args {
     crlf: bool,
     long_line_every: Option<u64>,
     encoding: GenEncoding,
+    bundle: Option<BundleKind>,
+    files: usize,
 }
 
 fn parse_args(raw_args: Vec<String>) -> Result<Args, String> {
-    let usage = "usage: genlog --size 1G --out FILE [--seed N] [--crlf] [--utf16le] [--long-every N]";
+    let usage = "usage: genlog --size 1G --out FILE [--seed N] [--crlf] [--utf16le] [--long-every N] [--bundle zip|tar|tgz [--files N]]";
 
     // Validate all arguments are recognized
-    let known_flags = ["--size", "--out", "--seed", "--crlf", "--utf16le", "--long-every"];
+    let known_flags = ["--size", "--out", "--seed", "--crlf", "--utf16le", "--long-every", "--bundle", "--files"];
     for arg in &raw_args {
         if arg.starts_with("--") && !known_flags.contains(&arg.as_str()) {
             return Err(format!("unknown argument: {}\n{}", arg, usage));
@@ -26,7 +29,7 @@ fn parse_args(raw_args: Vec<String>) -> Result<Args, String> {
     };
 
     // Validate flags that require values have values
-    for flag in ["--size", "--out", "--seed", "--long-every"] {
+    for flag in ["--size", "--out", "--seed", "--long-every", "--bundle", "--files"] {
         if raw_args.iter().any(|a| a == flag) && value(flag).is_none() {
             return Err(format!("flag {} requires a value\n{}", flag, usage));
         }
@@ -57,11 +60,20 @@ fn parse_args(raw_args: Vec<String>) -> Result<Args, String> {
         None
     };
 
+    let bundle = match value("--bundle") {
+        Some(kind) => Some(BundleKind::parse(&kind).ok_or_else(|| format!("bad --bundle: {kind}\n{usage}"))?),
+        None => None,
+    };
+    let files = match value("--files") {
+        Some(n) => n.parse::<usize>().map_err(|_| format!("bad --files: unparseable\n{usage}"))?,
+        None => 10,
+    };
+
     // Parse flags
     let crlf = raw_args.iter().any(|a| a == "--crlf");
     let encoding = if raw_args.iter().any(|a| a == "--utf16le") { GenEncoding::Utf16Le } else { GenEncoding::Utf8 };
 
-    Ok(Args { size_bytes, out, seed, crlf, long_line_every, encoding })
+    Ok(Args { size_bytes, out, seed, crlf, long_line_every, encoding, bundle, files })
 }
 
 fn main() {
@@ -83,7 +95,11 @@ fn main() {
         encoding: parsed.encoding,
     };
 
-    match generate_file(&parsed.out, &opts) {
+    let result = match parsed.bundle {
+        Some(kind) => rogg_genlog::bundle::generate_bundle(&parsed.out, kind, parsed.files, &opts),
+        None => generate_file(&parsed.out, &opts),
+    };
+    match result {
         Ok(stats) => println!("wrote {} lines, {} bytes to {}", stats.lines, stats.bytes, parsed.out.display()),
         Err(e) => {
             eprintln!("genlog: {e}");
