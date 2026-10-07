@@ -122,3 +122,23 @@ fn the_generic_picker_reports_picks(cx: &mut TestAppContext) {
     common::click(cx, w, "picker-0");
     assert_eq!(picked.get(), 0);
 }
+
+#[gpui_kit::test]
+fn about_lists_build_data_and_credit_rows(cx: &mut TestAppContext) {
+    use rogg_ui::dialogs::{AboutView, about};
+    common::setup(cx);
+    let view = AboutView {
+        version: "rogg 0.1.0".into(),
+        tagline: "A fast log explorer for macOS".into(),
+        build: vec![("Commit".into(), "abc1234".into()), ("Built".into(), "2026-10-08".into()), ("Rust".into(), "rustc 1.99.0".into())],
+        data: vec![("Settings".into(), "/tmp/a".into()), ("Cache".into(), "/tmp/b".into())],
+        built_with: "Built with Rust, gpui and gpui-kit".into(),
+        credits: vec![("regex".into(), "MIT OR Apache-2.0".into())],
+    };
+    let revealed = Rc::new(Cell::new(None));
+    let r = revealed.clone();
+    let w = common::open(cx, 900., 900., move |_, _| about(&view, Rc::new({ let r = r.clone(); move |i, _, _| r.set(Some(i)) })).into_any_element());
+    assert!(common::exists(cx, w, "about-header") && common::exists(cx, w, "about-build-2") && common::exists(cx, w, "about-credit-0"));
+    common::click(cx, w, "about-reveal-1");
+    assert_eq!(revealed.get(), Some(1));
+}

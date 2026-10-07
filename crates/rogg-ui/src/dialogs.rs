@@ -1,4 +1,5 @@
 use crate::controls::{ActionButton, IconButton};
+use crate::form::SectionLabel;
 use crate::icons::{IconName, icon};
 use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::{Callback, IndexCallback};
@@ -357,5 +358,108 @@ impl RenderOnce for GoToLineField {
             .border_color(p.accent)
             .rounded(px(4.))
             .child(Input::new(&self.input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text))
+    }
+}
+
+/// The About dialog's content, prepared by the app.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AboutView {
+    /// `rogg 0.1.0`.
+    pub version: SharedString,
+    pub tagline: SharedString,
+    /// (label, value): commit, build date, Rust.
+    pub build: Vec<(SharedString, SharedString)>,
+    /// (label, folder path); each row has a Show in Finder button.
+    pub data: Vec<(SharedString, SharedString)>,
+    pub built_with: SharedString,
+    /// (crate, license).
+    pub credits: Vec<(SharedString, SharedString)>,
+}
+
+/// About rogg (spec A4): header, Build, Data (with Show in Finder) and Credits sections.
+pub fn about(view: &AboutView, on_reveal: IndexCallback) -> DialogFrame {
+    let mut frame = DialogFrame::new("About rogg").child(AboutHeader { version: view.version.clone(), tagline: view.tagline.clone() });
+    frame = frame.child(SectionLabel::new("Build"));
+    for (i, (k, v)) in view.build.iter().enumerate() {
+        frame = frame.child(RuleRow::text(format!("about-build-{i}"), k.clone()).trailing(v.clone()));
+    }
+    frame = frame.child(SectionLabel::new("Data"));
+    for (i, (label, path)) in view.data.iter().enumerate() {
+        frame = frame.child(DataRow { index: i, label: label.clone(), path: path.clone(), on_reveal: on_reveal.clone() });
+    }
+    frame = frame.child(SectionLabel::new("Credits")).child(AboutNote(view.built_with.clone()));
+    for (i, (name, license)) in view.credits.iter().enumerate() {
+        frame = frame.child(RuleRow::code(format!("about-credit-{i}"), name.clone()).trailing(license.clone()));
+    }
+    frame
+}
+
+#[derive(IntoElement)]
+struct AboutHeader {
+    version: SharedString,
+    tagline: SharedString,
+}
+
+impl RenderOnce for AboutHeader {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let s = cx.rogg().text_scale();
+        let p = cx.rogg().palette;
+        div()
+            .id("about-header")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .py(px(12.))
+            .child(div().text_size(s.px(15.)).font_weight(FontWeight::MEDIUM).child(self.version))
+            .child(div().text_size(s.px(12.)).text_color(p.muted).child(self.tagline))
+    }
+}
+
+#[derive(IntoElement)]
+struct AboutNote(SharedString);
+
+impl RenderOnce for AboutNote {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        div().pb(px(6.)).text_size(cx.rogg().text_scale().px(12.)).text_color(cx.rogg().palette.muted).child(self.0)
+    }
+}
+
+/// A data folder: label, path (mono, truncated) and Show in Finder.
+#[derive(IntoElement)]
+struct DataRow {
+    index: usize,
+    label: SharedString,
+    path: SharedString,
+    on_reveal: IndexCallback,
+}
+
+impl RenderOnce for DataRow {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let t = cx.rogg().clone();
+        let s = t.text_scale();
+        let p = t.palette;
+        let (i, on_reveal) = (self.index, self.on_reveal);
+        div()
+            .id(SharedString::from(format!("about-data-{i}")))
+            .test_support()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .py(px(10.))
+            .border_t_1()
+            .border_color(p.border)
+            .text_size(s.px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(3.))
+                    .child(self.label)
+                    .child(div().truncate().font_family(t.fonts.mono.clone()).text_size(s.px(11.)).text_color(p.muted).child(self.path)),
+            )
+            .child(ActionButton::new(SharedString::from(format!("about-reveal-{i}")), "Show in Finder").on_click(move |w, cx| on_reveal(i, w, cx)))
     }
 }

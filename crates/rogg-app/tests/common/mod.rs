@@ -23,7 +23,15 @@ pub fn open_workspace(cx: &mut TestAppContext, args: Args) -> (AnyWindowHandle, 
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: Point::default(), size: size(px(1440.), px(900.)) })),
             ..Default::default()
         };
-        gpui_kit::open_window(options, cx, move |window, cx| cx.new(|cx| Workspace::new(args, window, cx))).expect("open window")
+        gpui_kit::open_window(options, cx, move |window, cx| {
+            cx.new(|cx| {
+                let mut ws = Workspace::new(args, window, cx);
+                // gpui's test platform panics on reveal_path; `last_revealed` still records the folder.
+                ws.reveal_in_finder = false;
+                ws
+            })
+        })
+        .expect("open window")
     });
     cx.run_until_parked();
     handle

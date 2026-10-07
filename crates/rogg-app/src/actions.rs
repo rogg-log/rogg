@@ -33,6 +33,7 @@ gpui_kit::actions!(
         OpenAsTab,
         Export,
         OpenSettings,
+        ShowAbout,
         Dismiss,
         ThemeSystem,
         ThemeLight,

@@ -3,7 +3,7 @@
 pub mod chrome;
 pub mod keys;
 
-use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
+use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowAbout, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::Source;
 use crate::history::HistoryStore;
@@ -44,6 +44,7 @@ pub enum Dialog {
     Profiles(Entity<crate::dialogs::profiles::ProfileEditor>),
     Statistics,
     Export,
+    About,
 }
 
 pub struct Workspace {
@@ -88,6 +89,10 @@ pub struct Workspace {
     pub export_options: rogg_core::export::ExportOptions,
     /// The Export dialog's session scope: all tabs, or only the active one.
     pub export_all_tabs: bool,
+    /// The folder last shown in Finder (About › Show in Finder), remembered for tests.
+    last_revealed: Option<PathBuf>,
+    /// Whether `reveal` asks the OS to show the folder. Tests turn it off: gpui's test platform panics on it.
+    pub reveal_in_finder: bool,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -139,6 +144,8 @@ impl Workspace {
             profile_error: None,
             export_options: rogg_core::export::ExportOptions { context: true, gaps: true, numbers: false },
             export_all_tabs: false,
+            last_revealed: None,
+            reveal_in_finder: true,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
@@ -512,6 +519,26 @@ impl Workspace {
         cx.notify();
     }
 
+    /// About › Show in Finder for data folder `index`. A missing folder is created first, so Finder has one to show.
+    pub fn reveal_data_folder(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some((_, path)) = crate::about::data_folders(cx).into_iter().nth(index) {
+            let _ = std::fs::create_dir_all(&path);
+            self.reveal(path, cx);
+        }
+    }
+
+    /// Shows `path` in Finder, and remembers it for tests.
+    pub fn reveal(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.reveal_in_finder {
+            cx.reveal_path(&path);
+        }
+        self.last_revealed = Some(path);
+    }
+
+    pub fn last_revealed(&self) -> Option<&Path> {
+        self.last_revealed.as_deref()
+    }
+
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
         self.open_dialog(Dialog::Settings, cx);
     }
@@ -688,6 +715,9 @@ impl Workspace {
                 dialogs::statistics(&rows).description("Counts for the active tab's filter; they update as it runs.").on_close(close).into_any_element()
             }
             Dialog::Export => crate::dialogs::export::render(self, this, cx).on_close(close).into_any_element(),
+            Dialog::About => dialogs::about(&crate::about::view(cx), Rc::new(act_ix(this, |ws, i, _, cx| ws.reveal_data_folder(i, cx))))
+                .on_close(close)
+                .into_any_element(),
         }
     }
 
@@ -731,6 +761,7 @@ impl Workspace {
             .on_action(cx.listener(|ws, _: &Dismiss, window, cx| ws.dismiss(window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
             .on_action(cx.listener(|ws, _: &OpenSettings, _, cx| ws.open_settings(cx)))
+            .on_action(cx.listener(|ws, _: &ShowAbout, _, cx| ws.open_dialog(Dialog::About, cx)))
             .on_action(cx.listener(|ws, _: &OpenFile, window, cx| ws.prompt_open(false, window, cx)))
             .on_action(cx.listener(|ws, _: &OpenFolder, window, cx| ws.prompt_open(true, window, cx)))
             .on_action(cx.listener(|ws, action: &OpenRecent, window, cx| ws.open_recent(action.index, window, cx)))

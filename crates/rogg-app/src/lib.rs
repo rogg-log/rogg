@@ -3,6 +3,7 @@
 // The Action derive emits `gpui::` paths; gpui-kit documents aliasing itself as `gpui` for that.
 extern crate gpui_kit as gpui;
 
+pub mod about;
 pub mod actions;
 pub mod args;
 pub mod cache;

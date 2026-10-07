@@ -13,6 +13,8 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
         .collect();
     vec![
         Menu::new("rogg").items([
+            MenuItem::action("About rogg", ShowAbout),
+            MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::action("Hide rogg", Hide),
@@ -62,7 +64,8 @@ mod tests {
         let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
         assert_eq!(names, ["rogg", "File", "Edit", "View", "Window"]);
         let app = &menus[0];
-        assert_eq!(app.items.len(), 7, "Settings…, separator, Hide rogg, Hide Others, Show All, separator, Quit rogg");
+        assert_eq!(app.items.len(), 9, "About rogg, separator, Settings…, separator, Hide rogg, Hide Others, Show All, separator, Quit rogg");
+        assert!(matches!(&app.items[0], MenuItem::Action { name, .. } if name.as_ref() == "About rogg"));
         let file = &menus[1];
         let recent = file.items.iter().find_map(|i| match i {
             MenuItem::Submenu(m) if m.name.as_ref() == "Open Recent" => Some(m),
