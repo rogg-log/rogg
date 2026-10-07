@@ -4,7 +4,7 @@
 use crate::archive::{ArchiveEntry, ArchiveKind, Content, kind_from_name};
 use crate::folder::FolderScan;
 use crate::source::SourceRef;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub type NodeId = usize;
@@ -115,33 +115,47 @@ impl SourceTree {
         self.nodes[id].listing = listing;
     }
 
-    /// The child folder `name` of `parent`, created when missing.
-    fn folder_child(&mut self, parent: NodeId, name: &str) -> NodeId {
-        let existing = self.nodes[parent].children.iter().copied().find(|&c| self.nodes[c].kind == NodeKind::Folder && self.nodes[c].name == name);
-        existing.unwrap_or_else(|| {
-            self.push(Node { name: name.to_string(), kind: NodeKind::Folder, size: None, source: None, parent: Some(parent), children: Vec::new(), listing: Listing::Listed })
-        })
+    /// The child folder `name` of `parent`, created when missing. `index` remembers the folders found or created
+    /// during one insert call, so wide listings do not rescan a parent's children for every entry.
+    fn folder_child(&mut self, index: &mut FolderIndex, parent: NodeId, name: &str) -> NodeId {
+        if index.seeded.insert(parent) {
+            for &c in &self.nodes[parent].children {
+                if self.nodes[c].kind == NodeKind::Folder {
+                    index.folders.entry((parent, self.nodes[c].name.clone())).or_insert(c);
+                }
+            }
+        }
+        if let Some(&id) = index.folders.get(&(parent, name.to_string())) {
+            return id;
+        }
+        let id = self.push(Node { name: name.to_string(), kind: NodeKind::Folder, size: None, source: None, parent: Some(parent), children: Vec::new(), listing: Listing::Listed });
+        index.seeded.insert(id);
+        index.folders.insert((parent, name.to_string()), id);
+        id
     }
 
-    /// Sorts `id`'s subtree: folders first, then by name (case-insensitive).
+    /// Sorts `id`'s subtree: folders first, then by name (case-insensitive). Iterative: member paths can nest
+    /// arbitrarily deep.
     fn sort(&mut self, id: NodeId) {
-        let mut children = std::mem::take(&mut self.nodes[id].children);
-        children.sort_by_key(|&c| (self.nodes[c].kind != NodeKind::Folder, self.nodes[c].name.to_lowercase()));
-        for &c in &children {
-            self.sort(c);
+        let mut stack = vec![id];
+        while let Some(id) = stack.pop() {
+            let mut children = std::mem::take(&mut self.nodes[id].children);
+            children.sort_by_cached_key(|&c| (self.nodes[c].kind != NodeKind::Folder, self.nodes[c].name.to_lowercase()));
+            stack.extend(children.iter().copied().filter(|&c| !self.nodes[c].children.is_empty()));
+            self.nodes[id].children = children;
         }
-        self.nodes[id].children = children;
     }
 
     /// Fills a folder root from its scan: subfolders, files (plain and `.gz`) and archives (`Pending`).
     pub fn insert_folder(&mut self, root: NodeId, scan: &FolderScan) {
         let Some(SourceRef::File(base)) = self.nodes[root].source.clone() else { return };
+        let mut index = FolderIndex::default();
         for file in &scan.files {
             let parts: Vec<String> = file.rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
             let Some((leaf, dirs)) = parts.split_last() else { continue };
             let mut parent = root;
             for dir in dirs {
-                parent = self.folder_child(parent, dir);
+                parent = self.folder_child(&mut index, parent, dir);
             }
             let (kind, listing) = match file.content {
                 Content::Archive(kind) => (NodeKind::Archive(kind), Listing::Pending),
@@ -157,12 +171,13 @@ impl SourceTree {
     /// Fills an archive from its listing: folders from the member paths, members, and nested archives (`Pending`).
     pub fn insert_listing(&mut self, archive: NodeId, entries: &[ArchiveEntry]) {
         let Some(archive_source) = self.nodes[archive].source.clone() else { return };
+        let mut index = FolderIndex::default();
         for entry in entries {
             let parts: Vec<&str> = entry.path.split('/').filter(|p| !p.is_empty()).collect();
             let Some((leaf, dirs)) = parts.split_last() else { continue };
             let mut parent = archive;
             for dir in dirs {
-                parent = self.folder_child(parent, dir);
+                parent = self.folder_child(&mut index, parent, dir);
             }
             let (kind, listing) = match kind_from_name(leaf) {
                 Some(kind) => (NodeKind::Archive(kind), Listing::Pending),
@@ -194,10 +209,17 @@ impl SourceTree {
     }
 
     /// The file or member to open first under `id`: its first direct file, else the first one found in its folders and
-    /// archives (in display order).
+    /// archives (in display order). Iterative: member paths can nest arbitrarily deep.
     pub fn first_openable(&self, id: NodeId) -> Option<NodeId> {
-        let children = &self.nodes[id].children;
-        children.iter().copied().find(|&c| self.is_openable(c)).or_else(|| children.iter().find_map(|&c| self.first_openable(c)))
+        let mut stack = vec![id];
+        while let Some(node) = stack.pop() {
+            let children = &self.nodes[node].children;
+            if let Some(&found) = children.iter().find(|&&c| self.is_openable(c)) {
+                return Some(found);
+            }
+            stack.extend(children.iter().rev().copied());
+        }
+        None
     }
 
     pub fn root_of(&self, mut id: NodeId) -> NodeId {
@@ -209,9 +231,26 @@ impl SourceTree {
 
     /// Openable files under `id` and their total size (spec §5.3 footer `10 members · 8.4 GB expanded`).
     pub fn summary(&self, id: NodeId) -> TreeSummary {
-        self.nodes[id].children.iter().fold(TreeSummary::default(), |acc, &c| {
-            let sub = if self.is_openable(c) { TreeSummary { files: 1, bytes: self.nodes[c].size.unwrap_or(0) } } else { self.summary(c) };
-            TreeSummary { files: acc.files + sub.files, bytes: acc.bytes + sub.bytes }
-        })
+        let mut total = TreeSummary::default();
+        let mut stack = vec![id];
+        while let Some(node) = stack.pop() {
+            for &c in &self.nodes[node].children {
+                if self.is_openable(c) {
+                    total.files += 1;
+                    total.bytes += self.nodes[c].size.unwrap_or(0);
+                } else {
+                    stack.push(c);
+                }
+            }
+        }
+        total
     }
+}
+
+/// Folders found or created during one `insert_folder`/`insert_listing` call, keyed by parent and name.
+#[derive(Default)]
+struct FolderIndex {
+    folders: HashMap<(NodeId, String), NodeId>,
+    /// Parents whose existing folder children are already in `folders`.
+    seeded: HashSet<NodeId>,
 }

@@ -1,6 +1,6 @@
 use rogg_core::CancelToken;
 use rogg_core::archive::{ArchiveEntry, ArchiveKind, Content};
-use rogg_core::folder::{DEFAULT_SCAN_DEPTH, scan_folder, scan_folder_with};
+use rogg_core::folder::{DEFAULT_SCAN_DEPTH, MAX_SCAN_ENTRIES, scan_folder, scan_folder_with};
 use rogg_core::source::SourceRef;
 use rogg_core::tree::{Listing, NodeKind, SourceTree, TreeSummary};
 use rogg_genlog::bundle::{BundleKind, write_archive, write_gz};
@@ -118,11 +118,51 @@ fn scan_is_bounded_and_does_not_follow_symlinked_folders() {
     let scan = scan_folder(&root, DEFAULT_SCAN_DEPTH, &CancelToken::new()).unwrap();
     let got: Vec<String> = scan.files.iter().map(|f| f.rel.display().to_string()).collect();
     assert_eq!(got, ["alias.log", "level1.log", "sub/level2.log", "sub/sub/level3.log", "sub/sub/sub/level4.log"], "depth 4, no loop");
-    let few = scan_folder_with(&root, DEFAULT_SCAN_DEPTH, 2, &CancelToken::new()).unwrap();
+    let few = scan_folder_with(&root, DEFAULT_SCAN_DEPTH, 2, MAX_SCAN_ENTRIES, &CancelToken::new()).unwrap();
     assert_eq!(few.files.len(), 2);
     assert!(few.truncated);
     let cancel = CancelToken::new();
     cancel.cancel();
     assert!(scan_folder(&root, DEFAULT_SCAN_DEPTH, &cancel).is_err());
     assert!(scan_folder(&dir.path().join("missing"), DEFAULT_SCAN_DEPTH, &CancelToken::new()).is_err());
+}
+
+#[test]
+fn many_unlisted_entries_stop_the_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    for n in 0..50 {
+        std::fs::write(root.join(format!("blob{n:02}.bin")), [0u8, 1, 2, 3]).unwrap();
+    }
+    let scan = scan_folder_with(&root, DEFAULT_SCAN_DEPTH, 10_000, 20, &CancelToken::new()).unwrap();
+    assert!(scan.files.is_empty());
+    assert!(scan.truncated, "binaries count towards the entry limit");
+    let all = scan_folder_with(&root, DEFAULT_SCAN_DEPTH, 10_000, 50, &CancelToken::new()).unwrap();
+    assert!(!all.truncated, "exactly the limit is not truncated");
+}
+
+#[test]
+fn a_member_path_of_ten_thousand_components_does_not_overflow() {
+    let mut tree = SourceTree::new();
+    let zip = tree.add_root(Path::new("/b/deep.zip"), NodeKind::Archive(ArchiveKind::Zip), Some(1));
+    let path = "d/".repeat(9_999) + "x.log";
+    tree.insert_listing(zip, &[entry(&path, 7)]);
+    let rows = tree.visible(|_| true);
+    assert_eq!(rows.len(), 10_001);
+    assert_eq!(rows.last().map(|&(_, depth)| depth), Some(10_000));
+    let x = tree.first_openable(zip).unwrap();
+    assert_eq!(tree.node(x).name, "x.log");
+    assert_eq!(tree.summary(zip), TreeSummary { files: 1, bytes: 7 });
+    assert_eq!(tree.root_of(x), zip);
+}
+
+#[test]
+fn many_sibling_folders_are_shared_by_their_files() {
+    let mut tree = SourceTree::new();
+    let zip = tree.add_root(Path::new("/b/wide.zip"), NodeKind::Archive(ArchiveKind::Zip), Some(1));
+    let entries: Vec<ArchiveEntry> = (0..2_000).flat_map(|n| [entry(&format!("dir{n:04}/a.log"), 1), entry(&format!("dir{n:04}/b.log"), 1)]).collect();
+    tree.insert_listing(zip, &entries);
+    assert_eq!(tree.node(zip).children.len(), 2_000, "one folder per directory, shared by its files");
+    assert_eq!(tree.summary(zip).files, 4_000);
 }
