@@ -29,29 +29,43 @@ pub fn appearance_for(choice: ThemeChoice, window: WindowAppearance) -> Appearan
     }
 }
 
+/// A window action's listener that does nothing while a dialog is open (the dialog is modal: only `Dismiss`,
+/// `Quit` and the dialog's own input stay live; Open / Open Folder / Open Recent open native panels or tabs and are
+/// registered without this guard).
+pub(super) fn unless_dialog<A: gpui_kit::Action>(
+    cx: &mut Context<Workspace>,
+    f: impl Fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>) + 'static,
+) -> impl Fn(&A, &mut Window, &mut App) + 'static {
+    cx.listener(move |ws, action: &A, window, cx| {
+        if ws.dialog.is_none() {
+            f(ws, action, window, cx);
+        }
+    })
+}
+
 /// Registers the keyboard actions on the workspace root.
 pub(super) fn bind(root: Stateful<Div>, cx: &mut Context<Workspace>) -> Stateful<Div> {
-    root.on_action(cx.listener(|ws, _: &Find, window, cx| ws.with_tab(cx, |t, cx| t.focus_find(window, cx))))
-        .on_action(cx.listener(|ws, _: &EditFilters, window, cx| ws.with_tab(cx, |t, cx| t.start_edit(window, cx))))
-        .on_action(cx.listener(|ws, _: &ToggleRegex, _, cx| ws.with_doc(cx, |d, cx| d.toggle_regex(cx))))
-        .on_action(cx.listener(|ws, _: &ToggleCase, _, cx| ws.with_doc(cx, |d, cx| d.toggle_case(cx))))
-        .on_action(cx.listener(|ws, _: &TogglePin, _, cx| ws.with_tab(cx, |t, cx| t.pin_selected(cx))))
-        .on_action(cx.listener(|ws, _: &RevealInFullLog, _, cx| ws.with_tab(cx, |t, cx| t.reveal_selected(cx))))
-        .on_action(cx.listener(|ws, _: &ToggleFollow, _, cx| ws.with_tab(cx, |t, cx| t.toggle_follow(cx))))
-        .on_action(cx.listener(|ws, _: &ToggleWrap, _, cx| {
+    root.on_action(unless_dialog(cx, |ws, _: &Find, window, cx| ws.with_tab(cx, |t, cx| t.focus_find(window, cx))))
+        .on_action(unless_dialog(cx, |ws, _: &EditFilters, window, cx| ws.with_tab(cx, |t, cx| t.start_edit(window, cx))))
+        .on_action(unless_dialog(cx, |ws, _: &ToggleRegex, _, cx| ws.with_doc(cx, |d, cx| d.toggle_regex(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &ToggleCase, _, cx| ws.with_doc(cx, |d, cx| d.toggle_case(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &TogglePin, _, cx| ws.with_tab(cx, |t, cx| t.pin_selected(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &RevealInFullLog, _, cx| ws.with_tab(cx, |t, cx| t.reveal_selected(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &ToggleFollow, _, cx| ws.with_tab(cx, |t, cx| t.toggle_follow(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &ToggleWrap, _, cx| {
             ws.with_tab(cx, |t, cx| {
                 let pane = t.last_pane;
                 t.toggle_wrap(pane, cx);
             })
         }))
-        .on_action(cx.listener(|ws, _: &FocusNext, window, cx| ws.cycle_focus(true, window, cx)))
-        .on_action(cx.listener(|ws, _: &FocusPrev, window, cx| ws.cycle_focus(false, window, cx)))
-        .on_action(cx.listener(|ws, _: &GoToLine, window, cx| ws.open_go_to_line(window, cx)))
-        .on_action(cx.listener(|ws, _: &ThemeSystem, window, cx| ws.set_theme(ThemeChoice::System, window, cx)))
-        .on_action(cx.listener(|ws, _: &ThemeLight, window, cx| ws.set_theme(ThemeChoice::Light, window, cx)))
-        .on_action(cx.listener(|ws, _: &ThemeDark, window, cx| ws.set_theme(ThemeChoice::Dark, window, cx)))
-        .on_action(cx.listener(|ws, _: &DensityCompact, window, cx| ws.set_density(Density::Compact, window, cx)))
-        .on_action(cx.listener(|ws, _: &DensityComfortable, window, cx| ws.set_density(Density::Comfortable, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &FocusNext, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(true, window, cx))))
+        .on_action(unless_dialog(cx, |ws, _: &FocusPrev, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(false, window, cx))))
+        .on_action(unless_dialog(cx, |ws, _: &GoToLine, window, cx| ws.open_go_to_line(window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeSystem, window, cx| ws.set_theme(ThemeChoice::System, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeLight, window, cx| ws.set_theme(ThemeChoice::Light, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeDark, window, cx| ws.set_theme(ThemeChoice::Dark, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &DensityCompact, window, cx| ws.set_density(Density::Compact, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &DensityComfortable, window, cx| ws.set_density(Density::Comfortable, window, cx)))
         .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
         .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
 }
@@ -67,13 +81,6 @@ impl Workspace {
         if let Some(tab) = self.active_tab() {
             let doc = tab.read(cx).doc.clone();
             doc.update(cx, f);
-        }
-    }
-
-    /// Tab / ⇧Tab; ignored behind a modal dialog.
-    fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_none() {
-            self.with_tab(cx, |t, cx| t.cycle_focus(forward, window, cx));
         }
     }
 

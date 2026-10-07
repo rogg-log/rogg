@@ -221,3 +221,23 @@ fn tab_does_not_move_focus_behind_a_dialog(cx: &mut TestAppContext) {
     common::press(cx, w, "escape");
     assert!(!common::exists(cx, w, "dialog"));
 }
+
+#[gpui_kit::test]
+fn window_shortcuts_are_ignored_behind_a_dialog(cx: &mut TestAppContext) {
+    let (_dir, w, ws, tab) = open_one(cx);
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    common::press(cx, w, "cmd-g");
+    assert!(common::exists(cx, w, "dialog"));
+    for keys in ["cmd-l", "cmd-w", "cmd-1", "ctrl-tab", "cmd-f", "alt-cmd-r", "alt-cmd-c", "cmd-b", "shift-cmd-f", "cmd-\\", "cmd-g"] {
+        common::press(cx, w, keys);
+        assert!(common::exists(cx, w, "dialog"), "{keys} left the dialog open");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1, "{keys} kept the tab");
+        assert!(tab.read_with(cx, |t, _| t.editing.is_none()), "{keys} did not start editing");
+    }
+    assert!(ws.read_with(cx, |ws, _| ws.sidebar_visible), "the sidebar did not toggle");
+    assert!(doc.read_with(cx, |d, _| !d.filter.spec.regex && !d.filter.spec.case_sensitive), "flags unchanged");
+    common::press(cx, w, "escape");
+    assert!(!common::exists(cx, w, "dialog"), "escape still closes it");
+    common::press(cx, w, "cmd-l");
+    assert!(tab.read_with(cx, |t, _| t.editing.is_some()), "shortcuts work again once the dialog is gone");
+}

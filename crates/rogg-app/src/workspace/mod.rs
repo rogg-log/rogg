@@ -298,18 +298,18 @@ impl Workspace {
             .key_context(actions::WORKSPACE_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|ws, _: &Dismiss, window, cx| ws.dismiss(window, cx)))
-            .on_action(cx.listener(|ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
             .on_action(cx.listener(|ws, _: &OpenFile, window, cx| ws.prompt_open(false, window, cx)))
             .on_action(cx.listener(|ws, _: &OpenFolder, window, cx| ws.prompt_open(true, window, cx)))
             .on_action(cx.listener(|ws, action: &OpenRecent, window, cx| ws.open_recent(action.index, window, cx)))
-            .on_action(cx.listener(|ws, _: &CloseTab, window, cx| {
+            .on_action(keys::unless_dialog(cx, |ws, _: &CloseTab, window, cx| {
                 let index = ws.active;
                 ws.close_tab(index, window, cx);
             }))
-            .on_action(cx.listener(|ws, _: &NextTab, window, cx| ws.cycle_tab(true, window, cx)))
-            .on_action(cx.listener(|ws, _: &PrevTab, window, cx| ws.cycle_tab(false, window, cx)))
-            .on_action(cx.listener(|ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
-            .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &NextTab, window, cx| ws.cycle_tab(true, window, cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &PrevTab, window, cx| ws.cycle_tab(false, window, cx)))
+            .on_action(keys::unless_dialog(cx, |ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
             .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
             .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| ws.drag_band(e.event.position.y, cx)))
             .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| ws.drag_sidebar(e.event.position.x, cx))),
