@@ -53,29 +53,10 @@ fn map_file(path: &Path) -> Result<Data, CoreError> {
     SafeMap::map(&file).map(Data::Mapped).map_err(CoreError::io(path))
 }
 
-fn fnv1a(parts: &[&[u8]]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for part in parts {
-        for &b in *part {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        h ^= 0xff;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
-}
-
-fn transcoded_path(cache_dir: &Path, path: &Path, meta: &std::fs::Metadata) -> PathBuf {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let key = fnv1a(&[canonical.as_os_str().as_encoded_bytes(), &meta.len().to_le_bytes(), &mtime.to_le_bytes()]);
-    cache_dir.join(format!("{key:016x}.utf8"))
+/// Where the UTF-8 conversion of the UTF-16 file at `path` lives in the cache (spec §4.2 key).
+fn transcoded_path(cache_dir: &Path, path: &Path) -> Result<PathBuf, CoreError> {
+    let key = crate::cache::origin_key(path, &[], "utf8").map_err(CoreError::io(path))?;
+    Ok(cache_dir.join(format!("{key:016x}.utf8")))
 }
 
 impl LogText {
@@ -87,7 +68,6 @@ impl LogText {
         mut on_progress: impl FnMut(OpenProgress),
     ) -> Result<LogText, CoreError> {
         let mut file = File::open(path).map_err(CoreError::io(path))?;
-        let meta = file.metadata().map_err(CoreError::io(path))?;
         let mut head = [0u8; 4];
         let mut head_len = 0;
         while head_len < head.len() {
@@ -99,7 +79,7 @@ impl LogText {
         }
         let encoding = Encoding::detect(&head[..head_len]);
         let (data, start) = if encoding.is_utf16() {
-            let dst = transcoded_path(cache_dir, path, &meta);
+            let dst = transcoded_path(cache_dir, path)?;
             if !dst.exists() {
                 std::fs::create_dir_all(cache_dir).map_err(CoreError::io(cache_dir))?;
                 transcode_to_utf8(path, &dst, encoding, cancel, |done, total| {

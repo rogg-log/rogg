@@ -4,8 +4,7 @@ use crate::cancel::CancelToken;
 use crate::error::CoreError;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Encoding {
@@ -105,17 +104,8 @@ pub fn status_label(encoding: Encoding, endings: LineEndings) -> String {
     format!("{} · {}", encoding.label(), endings.label())
 }
 
-/// A partial-file path unique to this writer (`<dst>.<pid>.<n>.partial`), so concurrent transcodes of
-/// the same file never share or delete each other's partial output.
-fn unique_partial_path(dst: &Path) -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let mut name = dst.as_os_str().to_owned();
-    name.push(format!(".{}.{}.partial", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed)));
-    PathBuf::from(name)
-}
-
 /// Streams a UTF-16 file (BOM included) into UTF-8 at `dst`. Output goes to a writer-unique
-/// `<dst>.<pid>.<n>.partial` and is renamed on success, so cancellation or a crash never leaves a truncated
+/// `<dst>.<pid>.<n>.partial` (`cache::partial_path`) and is renamed on success, so cancellation or a crash never leaves a truncated
 /// `dst` (spec §4.2 atomic writes). Concurrent calls for the same `dst` are safe: each renames its own
 /// complete output over `dst`.
 pub fn transcode_to_utf8(
@@ -126,7 +116,7 @@ pub fn transcode_to_utf8(
     mut on_progress: impl FnMut(u64, u64),
 ) -> Result<(), CoreError> {
     let mut decoder = encoding.decoder().expect("transcode_to_utf8 requires a UTF-16 encoding");
-    let partial = unique_partial_path(dst);
+    let partial = crate::cache::partial_path(dst);
     let result = (|| -> Result<(), CoreError> {
         if cancel.is_cancelled() {
             return Err(CoreError::Cancelled);
