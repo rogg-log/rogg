@@ -20,8 +20,9 @@ use gpui_kit::{
 use rogg_ui::dialogs::{self, ModalLayer};
 use rogg_ui::empty;
 use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, SidebarDrag, SingleParts};
-use keys::ThemeChoice;
-use rogg_ui::theme::{ActiveRoggTheme, Density, size};
+use crate::settings::SettingsStore;
+use rogg_core::settings::ThemeSetting;
+use rogg_ui::theme::size;
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
 use std::collections::{HashMap, HashSet};
@@ -59,8 +60,8 @@ pub struct Workspace {
     pub(crate) streams: Vec<(SharedString, rogg_core::stream::StreamCapture)>,
     streams_polling: bool,
     stdin_opened: bool,
-    pub(crate) theme: ThemeChoice,
-    pub(crate) density: Density,
+    /// A theme pinned by the host (the gallery), not saved in the settings.
+    pub(crate) theme_override: Option<ThemeSetting>,
     goto_subscription: Option<Subscription>,
     /// A dialog just closed: its input's focus handle outlives it until the frame is replaced, so check again after.
     refocus_after_dialog: bool,
@@ -105,13 +106,12 @@ impl Workspace {
             streams: Vec::new(),
             streams_polling: false,
             stdin_opened: false,
-            theme: ThemeChoice::System,
-            density: cx.rogg().density,
+            theme_override: None,
             goto_subscription: None,
             refocus_after_dialog: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
-                if ws.theme == ThemeChoice::System {
-                    ws.apply_theme(window, cx);
+                if ws.theme_override.unwrap_or(SettingsStore::get(cx).appearance.theme) == ThemeSetting::System {
+                    ws.apply_appearance(window, cx);
                 }
             }),
         };
@@ -120,6 +120,9 @@ impl Workspace {
         }
         if cx.try_global::<RecentStore>().is_some_and(|r| r.recovered) {
             ws.toast("Recent files were unreadable and have been reset; the old file was kept as recent.json.bak", cx);
+        }
+        if cx.try_global::<SettingsStore>().is_some_and(|s| s.recovered) {
+            ws.toast("Settings were unreadable and have been reset; the old file was kept as settings.toml.bak", cx);
         }
         ws.open_paths(args.paths, window, cx);
         if args.demo {

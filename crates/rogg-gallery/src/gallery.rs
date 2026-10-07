@@ -2,7 +2,7 @@ use crate::{fixtures, pages};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{AppContext, Context, Entity, FontWeight, SharedString, Window, div, px, relative};
-use rogg_app::workspace::keys::ThemeChoice;
+use rogg_core::settings::ThemeSetting;
 use rogg_ui::controls::{FindField, Segmented, TextButton};
 use rogg_ui::logview::{LogViewState, VecRows};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme, size};
@@ -121,8 +121,8 @@ impl GalleryView {
             let mut ws = rogg_app::workspace::Workspace::new(rogg_app::args::Args { demo: true, paths: vec![] }, window, cx);
             ws.set_traffic_lights(true, cx);
             // The host (gallery toolbar or --theme) owns the theme: pin the workspace to it instead of the system appearance.
-            let choice = if cx.rogg().appearance == Appearance::Dark { ThemeChoice::Dark } else { ThemeChoice::Light };
-            ws.set_theme(choice, window, cx);
+            let choice = if cx.rogg().appearance == Appearance::Dark { ThemeSetting::Dark } else { ThemeSetting::Light };
+            ws.pin_theme(choice, window, cx);
             ws
         })
     }

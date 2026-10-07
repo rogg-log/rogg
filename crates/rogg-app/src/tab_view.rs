@@ -29,6 +29,16 @@ pub struct TabParts {
 
 const CONTEXT_OPTIONS: [&str; 4] = ["None", "±1 line", "±2 lines", "±3 lines"];
 
+/// The context select's options: the reference presets, plus the tab's own radius when settings chose more than ±3.
+pub(crate) fn context_options(context: u32) -> (Vec<SharedString>, usize) {
+    let mut options: Vec<SharedString> = CONTEXT_OPTIONS.iter().map(|o| SharedString::from(*o)).collect();
+    if (context as usize) < CONTEXT_OPTIONS.len() {
+        return (options, context as usize);
+    }
+    options.push(format!("±{context} lines").into());
+    (options, CONTEXT_OPTIONS.len())
+}
+
 fn tab_act(tab: &Entity<Tab>, f: impl Fn(&mut Tab, &mut Window, &mut Context<Tab>) + 'static) -> impl Fn(&mut Window, &mut App) + 'static {
     let tab = tab.clone();
     move |window, cx| tab.update(cx, |t, cx| f(t, window, cx))
@@ -123,12 +133,13 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                 )
                 .into_any_element();
             let spec = &d.filter.spec;
+            let (context_items, context_selected) = context_options(spec.context);
             let band = FilterBand::new(spec.terms.iter().map(|term| (SharedString::from(term.text.clone()), chip_state(term.state))).collect())
                 .regex(spec.regex)
                 .case_sensitive(spec.case_sensitive)
                 .editing(t.editing.clone())
                 .error(d.filter.error.clone())
-                .context(CONTEXT_OPTIONS.iter().map(|o| SharedString::from(*o)).collect(), (spec.context as usize).min(CONTEXT_OPTIONS.len() - 1))
+                .context(context_items, context_selected)
                 .summary(spec.summary().into())
                 .focused(t.focus[1].is_focused(window))
                 .on_cycle(tab_act_ix(tab, |t, i, _, cx| t.doc.update(cx, |d, cx| d.cycle_term(i, cx))))
@@ -137,7 +148,11 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                 .on_toggle_regex(tab_act(tab, |t, _, cx| t.doc.update(cx, |d, cx| d.toggle_regex(cx))))
                 .on_toggle_case(tab_act(tab, |t, _, cx| t.doc.update(cx, |d, cx| d.toggle_case(cx))))
                 .on_history(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowHistory)))
-                .on_context(tab_act_ix(tab, |t, i, _, cx| t.doc.update(cx, |d, cx| d.set_context(i as u32, cx))));
+                .on_context(tab_act_ix(tab, |t, i, _, cx| {
+                    if i < CONTEXT_OPTIONS.len() {
+                        t.doc.update(cx, |d, cx| d.set_context(i as u32, cx))
+                    }
+                }));
             // Ruling R6: a single-line Input propagates `enter`, so the filter-line context is off while editing,
             // else Enter in the editor would also dispatch `EditFilters`.
             let band = div().track_focus(&t.focus[1]).when(t.editing.is_none(), |d| d.key_context(FILTER_CONTEXT)).child(band).into_any_element();
@@ -151,4 +166,17 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
         }
     };
     TabParts { info_bar, body, status }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::context_options;
+
+    #[test]
+    fn context_options_grow_for_settings_beyond_three() {
+        assert_eq!(context_options(2), (vec!["None".into(), "±1 line".into(), "±2 lines".into(), "±3 lines".into()], 2));
+        let (options, selected) = context_options(7);
+        assert_eq!((options.len(), selected), (5, 4));
+        assert_eq!(options[4].as_ref(), "±7 lines");
+    }
 }

@@ -15,6 +15,7 @@ pub mod menus;
 pub mod paths;
 pub mod recent;
 pub mod rows;
+pub mod settings;
 pub mod sidebar_model;
 pub mod sources;
 pub mod tab;
@@ -24,7 +25,6 @@ pub mod workspace;
 
 use gpui_kit::{App, QuitMode};
 use paths::AppPaths;
-use rogg_ui::theme::{Density, RoggTheme};
 
 /// Runs the app until its last window closes.
 pub fn run(args: args::Args) {
@@ -42,8 +42,9 @@ pub fn run(args: args::Args) {
 /// Full initialisation: gpui-kit, the default theme, app globals and key bindings, menus.
 pub fn init_with(cx: &mut App, paths: AppPaths) {
     gpui_kit::init(cx);
-    let appearance = workspace::keys::appearance_for(workspace::keys::ThemeChoice::System, cx.window_appearance());
-    RoggTheme::new(appearance, Density::Compact).install(cx);
+    let settings = settings::SettingsStore::load(paths.settings.clone());
+    settings::theme_for(settings.settings(), cx.window_appearance()).install(cx);
+    cx.set_global(settings);
     install_globals(cx, paths);
     let recent = cx.global::<recent::RecentStore>().entries().to_vec();
     cx.set_menus(menus::app_menus(&recent));
@@ -51,7 +52,10 @@ pub fn init_with(cx: &mut App, paths: AppPaths) {
 
 /// App globals and key bindings only, for hosts that initialise gpui-kit and the theme themselves (the gallery).
 pub fn install_globals(cx: &mut App, paths: AppPaths) {
-    let store = rogg_core::cache::Cache::new(paths.cache.clone(), rogg_core::cache::DEFAULT_LIMIT_BYTES);
+    if !cx.has_global::<settings::SettingsStore>() {
+        cx.set_global(settings::SettingsStore::load(paths.settings.clone()));
+    }
+    let store = rogg_core::cache::Cache::new(paths.cache.clone(), settings::SettingsStore::get(cx).cache_limit_bytes());
     cache::start_maintenance(store.clone());
     cx.set_global(cache::CacheStore(store));
     cx.set_global(document::EngineConfig::default());

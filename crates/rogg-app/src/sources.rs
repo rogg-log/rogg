@@ -3,7 +3,7 @@
 
 use rogg_core::archive::ArchiveEntry;
 use rogg_core::cache::Cache;
-use rogg_core::folder::{DEFAULT_SCAN_DEPTH, FolderScan, scan_folder};
+use rogg_core::folder::{FolderScan, scan_folder};
 use rogg_core::source::{SourceRef, list_archive};
 use rogg_core::tree::{NodeId, SourceTree};
 use rogg_core::{CancelToken, CoreError};
@@ -27,8 +27,8 @@ pub struct TreeJob {
 }
 
 impl TreeJob {
-    pub fn scan(node: NodeId, dir: PathBuf) -> TreeJob {
-        Self::spawn(node, move |token| TreeResult::Scanned(scan_folder(&dir, DEFAULT_SCAN_DEPTH, token)))
+    pub fn scan(node: NodeId, dir: PathBuf, depth: usize) -> TreeJob {
+        Self::spawn(node, move |token| TreeResult::Scanned(scan_folder(&dir, depth, token)))
     }
 
     /// Lists an archive (extracting it into the cache first when it is a member of another archive).

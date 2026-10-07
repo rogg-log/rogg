@@ -19,13 +19,36 @@ pub struct TabLabels {
     pub tooltip: Option<SharedString>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TabInit {
     pub doc: DocumentInit,
     /// Display number to select in both panes once the text loads (not reported in the status bar until the user
     /// selects, as in the reference).
     pub selection: Option<u64>,
     pub labels: TabLabels,
+    /// Wrap of the full and the filtered log.
+    pub wrap: [bool; 2],
+    /// Follow selection (spec §5.6).
+    pub follow: bool,
+    /// Split ratio; None keeps the default.
+    pub split: Option<f32>,
+    /// Display number to scroll to the top of each pane once the text loads (session restore).
+    pub top: [Option<u64>; 2],
+}
+
+impl Default for TabInit {
+    fn default() -> Self {
+        Self { doc: DocumentInit::default(), selection: None, labels: TabLabels::default(), wrap: [false, false], follow: true, split: None, top: [None, None] }
+    }
+}
+
+impl TabInit {
+    /// A tab for a file the user opened: filter flags, context, wrap and follow from the settings (spec §6.2).
+    pub fn from_settings(settings: &rogg_core::settings::Settings) -> Self {
+        let b = &settings.behavior;
+        let spec = rogg_core::filter::FilterSpec { terms: Vec::new(), regex: b.regex, case_sensitive: b.case_sensitive, context: b.context };
+        Self { doc: DocumentInit { spec, ..DocumentInit::default() }, wrap: [b.wrap, b.wrap], follow: b.follow_selection, ..Self::default() }
+    }
 }
 
 pub enum TabEvent {
@@ -76,6 +99,8 @@ pub struct Tab {
     /// False while `selection` is only the initial one (demo, `--line`): the footer stays empty until the user selects.
     selection_announced: bool,
     pending_selection: Option<u64>,
+    /// Rows to scroll to the top of each pane once the text loads.
+    pending_top: [Option<u64>; 2],
     applied: Applied,
     edit_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -105,20 +130,27 @@ impl Tab {
             focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             find,
             editing: None,
-            follow: true,
+            follow: init.follow,
             live: LiveFollow::default(),
             live_started: false,
             end_in_view: None,
-            split: MainWindowParts::DEFAULT_SPLIT,
+            split: init.split.unwrap_or(MainWindowParts::DEFAULT_SPLIT),
             labels: init.labels,
             last_pane: Pane::Full,
             selection: None,
             selection_announced: false,
             pending_selection: init.selection,
+            pending_top: init.top,
             applied: Applied::default(),
             edit_subscription: None,
             _subscriptions: subscriptions,
         };
+        if init.wrap[0] {
+            tab.full.update(cx, |s, cx| s.set_wrap(true, cx));
+        }
+        if init.wrap[1] {
+            tab.filtered.update(cx, |s, cx| s.set_wrap(true, cx));
+        }
         if matches!(tab.doc.read(cx).source, Source::Stream { .. }) {
             tab.live_started = true;
             tab.set_following(true, cx);
@@ -236,6 +268,14 @@ impl Tab {
                 && self.filtered.read(cx).rows().row_for_number(number).is_some()
             {
                 self.filtered.update(cx, |s, cx| s.set_selected(Some(number), cx));
+            }
+        }
+        if loaded {
+            for (pane, top) in [Pane::Full, Pane::Filtered].into_iter().zip(std::mem::take(&mut self.pending_top)) {
+                let state = self.state(pane).clone();
+                if let Some(row) = top.and_then(|n| state.read(cx).rows().nearest_row(n)) {
+                    state.update(cx, |s, cx| s.scroll_to_row(row, ScrollTo::Top, cx));
+                }
             }
         }
         if loaded && let Some(number) = self.pending_selection.take() {

@@ -124,6 +124,7 @@ pub fn init(name: &str) -> TabInit {
             full_count: Some("40 sample lines".into()),
             tooltip: Some(format!("{name} · {BUNDLE}").into()),
         },
+        ..TabInit::default()
     }
 }
 

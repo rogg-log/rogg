@@ -120,7 +120,7 @@ impl Workspace {
                 let source = Source::Stream { name: name.to_string().into(), path: capture.path().to_path_buf() };
                 self.streams.push((name.to_string().into(), capture));
                 self.ensure_stream_polling(window, cx);
-                Some(self.open_source(source, TabInit::default(), window, cx))
+                Some(self.open_source(source, TabInit::from_settings(&crate::settings::SettingsStore::get(cx)), window, cx))
             }
             Err(e) => {
                 self.toast(format!("Could not read {name}: {e}"), cx);
@@ -177,7 +177,7 @@ impl Workspace {
         match existing {
             Some(index) => self.activate(index, window, cx),
             None => {
-                self.open_source(Source::File(path), TabInit::default(), window, cx);
+                self.open_source(Source::File(path), TabInit::from_settings(&crate::settings::SettingsStore::get(cx)), window, cx);
             }
         }
     }
@@ -194,7 +194,7 @@ impl Workspace {
         self.sources.tree.set_listing(root, Listing::Listing);
         self.sources.expanded.insert(root);
         self.sources.open_first.insert(root);
-        self.sources.jobs.push(TreeJob::scan(root, dir));
+        self.sources.jobs.push(TreeJob::scan(root, dir, crate::settings::SettingsStore::get(cx).behavior.scan_depth as usize));
         self.ensure_tree_polling(window, cx);
         cx.notify();
     }
@@ -320,7 +320,7 @@ impl Workspace {
             SourceRef::File(path) => Source::File(path),
             member => Source::Member(member),
         };
-        self.open_source(document, TabInit::default(), window, cx);
+        self.open_source(document, TabInit::from_settings(&crate::settings::SettingsStore::get(cx)), window, cx);
     }
 
     /// Folder and archive rows expand and collapse; an archive is listed the first time it opens, and again when its

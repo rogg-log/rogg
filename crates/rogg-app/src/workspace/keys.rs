@@ -6,28 +6,9 @@ use crate::document::Document;
 use crate::tab::Tab;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Context, Div, Stateful, Window, WindowAppearance};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme};
-
-/// View → Theme. System follows the macOS appearance live (spec §6.2).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ThemeChoice {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-pub fn appearance_for(choice: ThemeChoice, window: WindowAppearance) -> Appearance {
-    match choice {
-        ThemeChoice::Dark => Appearance::Dark,
-        ThemeChoice::Light => Appearance::Light,
-        ThemeChoice::System => match window {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Appearance::Dark,
-            _ => Appearance::Light,
-        },
-    }
-}
+use crate::settings::SettingsStore;
+use gpui_kit::{App, Context, Div, Stateful, Window};
+use rogg_core::settings::{DensitySetting, Settings, ThemeSetting};
 
 /// A window action's listener that does nothing while a dialog is open (the dialog is modal: only `Dismiss`,
 /// `Quit` and the dialog's own input stay live; Open / Open Folder / Open Recent open native panels or tabs and are
@@ -62,11 +43,11 @@ pub(super) fn bind(root: Stateful<Div>, cx: &mut Context<Workspace>) -> Stateful
         .on_action(unless_dialog(cx, |ws, _: &FocusNext, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(true, window, cx))))
         .on_action(unless_dialog(cx, |ws, _: &FocusPrev, window, cx| ws.with_tab(cx, |t, cx| t.cycle_focus(false, window, cx))))
         .on_action(unless_dialog(cx, |ws, _: &GoToLine, window, cx| ws.open_go_to_line(window, cx)))
-        .on_action(unless_dialog(cx, |ws, _: &ThemeSystem, window, cx| ws.set_theme(ThemeChoice::System, window, cx)))
-        .on_action(unless_dialog(cx, |ws, _: &ThemeLight, window, cx| ws.set_theme(ThemeChoice::Light, window, cx)))
-        .on_action(unless_dialog(cx, |ws, _: &ThemeDark, window, cx| ws.set_theme(ThemeChoice::Dark, window, cx)))
-        .on_action(unless_dialog(cx, |ws, _: &DensityCompact, window, cx| ws.set_density(Density::Compact, window, cx)))
-        .on_action(unless_dialog(cx, |ws, _: &DensityComfortable, window, cx| ws.set_density(Density::Comfortable, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeSystem, window, cx| ws.set_theme(ThemeSetting::System, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeLight, window, cx| ws.set_theme(ThemeSetting::Light, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &ThemeDark, window, cx| ws.set_theme(ThemeSetting::Dark, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &DensityCompact, window, cx| ws.set_density(DensitySetting::Compact, window, cx)))
+        .on_action(unless_dialog(cx, |ws, _: &DensityComfortable, window, cx| ws.set_density(DensitySetting::Comfortable, window, cx)))
         .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
         .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
 }
@@ -116,22 +97,37 @@ impl Workspace {
         }
     }
 
-    pub fn set_theme(&mut self, choice: ThemeChoice, window: &mut Window, cx: &mut Context<Self>) {
-        self.theme = choice;
-        self.apply_theme(window, cx);
+    pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_override = None;
+        self.change_settings(|s| s.appearance.theme = theme, window, cx);
     }
 
-    pub fn set_density(&mut self, density: Density, window: &mut Window, cx: &mut Context<Self>) {
-        self.density = density;
-        self.apply_theme(window, cx);
+    pub fn set_density(&mut self, density: DensitySetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_settings(|s| s.appearance.density = density, window, cx);
     }
 
-    /// Installs the theme for the current choice and density (only if it changes).
-    pub(crate) fn apply_theme(&self, window: &Window, cx: &mut App) {
-        let appearance = appearance_for(self.theme, window.appearance());
-        let current = cx.rogg();
-        if current.appearance != appearance || current.density != self.density {
-            RoggTheme::new(appearance, self.density).install(cx);
+    /// Pins light or dark without saving it (the gallery owns its theme).
+    pub fn pin_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_override = Some(theme);
+        self.apply_appearance(window, cx);
+    }
+
+    /// Changes the settings and applies what changed at once (spec §6.2).
+    pub fn change_settings(&mut self, f: impl FnOnce(&mut Settings), window: &mut Window, cx: &mut Context<Self>) {
+        let (before, after) = SettingsStore::update(cx, f);
+        if before.appearance != after.appearance {
+            self.apply_appearance(window, cx);
         }
+        if before.behavior.cache_limit_gb != after.behavior.cache_limit_gb {
+            crate::settings::apply_cache_limit(cx);
+        }
+        cx.notify();
+    }
+
+    /// Installs the theme for the settings (or the pinned theme) under the window's appearance.
+    pub fn apply_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = self.theme_override.unwrap_or(SettingsStore::get(cx).appearance.theme);
+        crate::settings::apply_theme(theme, window.appearance(), cx);
+        cx.notify();
     }
 }
