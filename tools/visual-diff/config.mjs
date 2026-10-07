@@ -19,11 +19,11 @@ export const VARIANTS = [
   { theme: 'light', density: 'comfortable' },
 ];
 
-// Reference <dialog> id → gallery --dialog slug, and the pages that have it (profile and settings are M4 in the app).
+// Reference <dialog> id → gallery --dialog slug, and the pages that have it (real dialogs on the app page since M4).
 export const DIALOGS = [
   { html: 'tabs-dialog', gallery: 'all-tabs', pages: ['replica', 'app'] },
-  { html: 'profile-dialog', gallery: 'profile', pages: ['replica'] },
-  { html: 'settings-dialog', gallery: 'appearance', pages: ['replica'] },
+  { html: 'profile-dialog', gallery: 'profile', pages: ['replica', 'app'] },
+  { html: 'settings-dialog', gallery: 'appearance', pages: ['replica', 'app'] },
   { html: 'shortcuts-dialog', gallery: 'shortcuts', pages: ['replica', 'app'] },
   { html: 'history-dialog', gallery: 'history', pages: ['replica', 'app'] },
 ].filter((d) => d.pages.includes(PAGE));

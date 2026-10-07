@@ -28,9 +28,6 @@ impl CaptureOptions {
             Some(d) => Some(ReplicaDialog::from_slug(&d).ok_or_else(|| format!("unknown dialog `{d}`"))?),
             None => None,
         };
-        if page == Page::App && matches!(dialog, Some(ReplicaDialog::Profile | ReplicaDialog::Appearance)) {
-            return Err(format!("dialog `{}` is not available on the app page", dialog.unwrap().slug()));
-        }
         let appearance = match value("--theme").as_deref() {
             None | Some("dark") => Appearance::Dark,
             Some("light") => Appearance::Light,

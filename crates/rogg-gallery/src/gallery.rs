@@ -148,15 +148,13 @@ impl GalleryView {
         use rogg_app::workspace::Dialog;
         let this = Self::new(page, false, window, cx);
         match (page, dialog, this.app.clone()) {
-            (Page::App, Some(d), Some(app)) => {
-                let dialog = match d {
-                    ReplicaDialog::AllTabs => Dialog::AllTabs,
-                    ReplicaDialog::Shortcuts => Dialog::Shortcuts,
-                    ReplicaDialog::History => Dialog::History,
-                    ReplicaDialog::Profile | ReplicaDialog::Appearance => unreachable!("rejected by CaptureOptions::parse"),
-                };
-                app.update(cx, |ws, cx| ws.open_dialog(dialog, cx));
-            }
+            (Page::App, Some(d), Some(app)) => app.update(cx, |ws, cx| match d {
+                ReplicaDialog::Profile => ws.open_profile_editor(window, cx),
+                ReplicaDialog::Appearance => ws.open_settings(cx),
+                ReplicaDialog::AllTabs => ws.open_dialog(Dialog::AllTabs, cx),
+                ReplicaDialog::Shortcuts => ws.open_dialog(Dialog::Shortcuts, cx),
+                ReplicaDialog::History => ws.open_dialog(Dialog::History, cx),
+            }),
             (_, Some(d), _) => this.replica.update(cx, |r, cx| r.open_dialog(d, cx)),
             _ => {}
         }
