@@ -138,7 +138,7 @@ pub fn parse_size(text: &str) -> Option<u64> {
         'G' => (&t[..t.len() - 1], 30),
         _ => (t, 0),
     };
-    digits.parse::<u64>().ok().map(|n| n << shift)
+    digits.parse::<u64>().ok().and_then(|n| n.checked_mul(1u64 << shift))
 }
 
 #[cfg(test)]
@@ -198,5 +198,10 @@ mod tests {
         assert_eq!(parse_size("2GB"), Some(2 << 30));
         assert_eq!(parse_size("1024"), Some(1024));
         assert_eq!(parse_size("lots"), None);
+        // Overflow cases
+        assert_eq!(parse_size("17179869184G"), None); // 2^34 << 30 = 2^64, overflows
+        assert_eq!(parse_size("16E"), None); // Invalid unit should return None
+        assert_eq!(parse_size("18446744073709551615"), Some(18446744073709551615)); // u64::MAX
+        assert_eq!(parse_size("18446744073709551616"), None); // u64::MAX + 1 overflows parsing
     }
 }
