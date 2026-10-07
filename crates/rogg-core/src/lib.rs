@@ -18,6 +18,7 @@ pub mod paths;
 pub mod persist;
 pub mod recent;
 pub mod search;
+pub mod settings;
 pub mod source;
 pub mod stats;
 pub mod stream;
