@@ -178,13 +178,27 @@ impl LogText {
         if len == have {
             return Ok(Refresh::Unchanged);
         }
-        let map = SafeMap::map(file).map_err(CoreError::io(&path))?;
-        let start = self.start.min(map.bytes().len());
-        let bytes = &map.bytes()[start..];
-        let mut index = build_index_into(self.index.clone(), bytes, DEFAULT_CHUNK_BYTES, cancel, |_, _| {})?;
-        index.shrink_to_fit();
+        // The file may have changed since the size check above: an emptied file cannot be mapped, and the map covers
+        // the file's length at this moment, so `grow_into` checks the map itself.
+        let map = match SafeMap::map(file) {
+            Ok(map) => map,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => return Ok(Refresh::Truncated),
+            Err(e) => return Err(CoreError::io(&path)(e)),
+        };
+        self.grow_into(map, cancel)
+    }
+
+    /// The part of `refresh` that trusts only `map` (a fresh mapping of the file): it must still hold everything this
+    /// text maps and start with the same bytes, otherwise the file was truncated after it was measured.
+    fn grow_into(&self, map: SafeMap, cancel: &CancelToken) -> Result<Refresh, CoreError> {
+        let all = map.bytes();
+        if all.len() < self.data.bytes().len() || !all.starts_with(&self.head) {
+            return Ok(Refresh::Truncated);
+        }
+        let bytes = &all[self.start.min(all.len())..];
+        let index = build_index_into(self.index.clone(), bytes, DEFAULT_CHUNK_BYTES, cancel, |_, _| {})?;
         let endings = if self.endings == LineEndings::None { LineEndings::detect(&bytes[..bytes.len().min(ENDINGS_SAMPLE_BYTES)]) } else { self.endings };
-        let head = map.bytes()[..map.bytes().len().min(HEAD_SAMPLE)].to_vec();
+        let head = all[..all.len().min(HEAD_SAMPLE)].to_vec();
         Ok(Refresh::Grew(LogText {
             data: Data::Mapped(map),
             start: self.start,
@@ -261,5 +275,37 @@ impl LogText {
     /// Bytes mapped, a UTF-8 BOM included (compare with the backing file's size to see whether it grew).
     pub fn mapped_len(&self) -> u64 {
         self.data.bytes().len() as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open(path: &Path) -> LogText {
+        LogText::open(path, &path.with_extension("cache"), &CancelToken::new(), |_| {}).unwrap()
+    }
+
+    /// The file shrank between `refresh`'s size check and its mapping: the new map is shorter than what was mapped
+    /// before, so the snapshot must not be built (its index would point past the map).
+    #[test]
+    fn a_map_shorter_than_before_is_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.log");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        let text = open(&path);
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(8).unwrap();
+        let shorter = SafeMap::map(&File::open(&path).unwrap()).unwrap();
+        assert!(matches!(text.grow_into(shorter, &CancelToken::new()).unwrap(), Refresh::Truncated));
+    }
+
+    #[test]
+    fn an_emptied_file_is_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("z.log");
+        std::fs::write(&path, "one\n").unwrap();
+        let text = open(&path);
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+        assert!(matches!(text.refresh(&CancelToken::new()).unwrap(), Refresh::Truncated));
     }
 }
