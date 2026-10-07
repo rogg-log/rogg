@@ -41,6 +41,7 @@ pub enum Dialog {
     Settings,
     FontPicker,
     Profiles(Entity<crate::dialogs::profiles::ProfileEditor>),
+    Statistics,
 }
 
 pub struct Workspace {
@@ -207,6 +208,7 @@ impl Workspace {
             TabEvent::Toast(message) => self.toast(message.clone(), cx),
             TabEvent::ShowHistory => self.open_dialog(Dialog::History, cx),
             TabEvent::ShowProfiles => self.open_profile_editor(window, cx),
+            TabEvent::ShowStatistics => self.open_dialog(Dialog::Statistics, cx),
         }
     }
 
@@ -342,7 +344,7 @@ impl Workspace {
             Dialog::History => {
                 let entries: Vec<(SharedString, SharedString)> = cx
                     .try_global::<HistoryStore>()
-                    .map(|h| h.entries().iter().map(|e| (SharedString::from(e.expression()), SharedString::from(e.to_spec().summary()))).collect())
+                    .map(|h| h.entries().iter().map(|e| (SharedString::from(e.expression()), SharedString::from(e.summary()))).collect())
                     .unwrap_or_default();
                 dialogs::history_picker(&entries, Rc::new(act_ix(this, |ws, i, _, cx| ws.restore_history(i, cx))))
                     .description("Restore an expression together with its term states and matching options.")
@@ -353,6 +355,16 @@ impl Workspace {
             Dialog::Settings => crate::dialogs::settings::render(this, cx).on_close(close).into_any_element(),
             Dialog::FontPicker => crate::dialogs::fonts::render(this, cx).on_close(act(this, |ws, _, cx| ws.open_settings(cx))).into_any_element(),
             Dialog::Profiles(editor) => editor.clone().into_any_element(),
+            Dialog::Statistics => {
+                let rows = self
+                    .active_tab()
+                    .map(|t| {
+                        let d = t.read(cx).doc.read(cx);
+                        crate::dialogs::stats::rows(d.filter.stats.as_ref(), d.filter.progress)
+                    })
+                    .unwrap_or_else(|| crate::dialogs::stats::rows(None, None));
+                dialogs::statistics(&rows).description("Counts for the active tab's filter; they update as it runs.").on_close(close).into_any_element()
+            }
         }
     }
 

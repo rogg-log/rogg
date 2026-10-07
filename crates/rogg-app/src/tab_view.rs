@@ -95,6 +95,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
         .stats(d.filter.stats.as_ref().map(stat_parts).unwrap_or_default())
         .selection(t.announced_selection().map(|n| SharedString::from(format!("Line {n}"))))
         .progress(progress)
+        .on_stats(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowStatistics)))
         .into_any_element();
 
     let body = match &d.load {

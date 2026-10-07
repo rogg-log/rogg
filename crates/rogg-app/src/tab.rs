@@ -62,6 +62,8 @@ pub enum TabEvent {
     ShowHistory,
     /// The info bar's Profile button: open the highlighting profile editor.
     ShowProfiles,
+    /// The footer's statistics area: open the statistics popover.
+    ShowStatistics,
 }
 
 /// Spec §4.5 reload toast.

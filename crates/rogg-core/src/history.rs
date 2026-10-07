@@ -33,6 +33,21 @@ impl HistoryEntry {
     pub fn expression(&self) -> String {
         join_expression(&self.terms)
     }
+
+    /// `2 include · 1 exclude · 1 off · regex · case · ±2` — states, then the flags and context that are set.
+    pub fn summary(&self) -> String {
+        let mut parts = vec![self.to_spec().summary()];
+        if self.regex {
+            parts.push("regex".into());
+        }
+        if self.case_sensitive {
+            parts.push("case".into());
+        }
+        if self.context > 0 {
+            parts.push(format!("±{}", self.context.min(MAX_CONTEXT)));
+        }
+        parts.join(" · ")
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +125,18 @@ mod tests {
 
     fn entry(expr: &str) -> HistoryEntry {
         HistoryEntry::from_spec(&FilterSpec::from_expression(expr))
+    }
+
+    #[test]
+    fn summaries_show_states_flags_and_context() {
+        let spec = FilterSpec {
+            terms: vec![Term::include("a"), Term::include("b"), Term::new("c", TermState::Exclude), Term::new("d", TermState::Off)],
+            regex: true,
+            case_sensitive: true,
+            context: 2,
+        };
+        assert_eq!(HistoryEntry::from_spec(&spec).summary(), "2 include · 1 exclude · 1 off · regex · case · ±2");
+        assert_eq!(entry("a").summary(), "1 include · 0 exclude · 0 off");
     }
 
     #[test]

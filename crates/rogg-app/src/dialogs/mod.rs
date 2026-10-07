@@ -3,3 +3,4 @@
 pub mod fonts;
 pub mod profiles;
 pub mod settings;
+pub mod stats;
