@@ -3,7 +3,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{TestAppContext, div, px};
 use rogg_ui::chrome::{InfoBar, PaneHeader, Progress, StatPart, StatusBar};
 use rogg_ui::theme::{Appearance, Density};
-use std::cell::Cell;
+use rogg_ui::toast::ToastStack;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 fn chrome() -> gpui_kit::AnyElement {
@@ -85,4 +86,24 @@ fn snapshot_note_is_optional(cx: &mut TestAppContext) {
     let without = common::open(cx, 1200., 100., |_, _| InfoBar::new(vec!["a".into()], "P".into()).into_any_element());
     assert!(common::exists(cx, with, "snapshot"));
     assert!(!common::exists(cx, without, "snapshot"));
+}
+
+#[gpui_kit::test]
+fn toasts_stack_bottom_right_and_dismiss(cx: &mut gpui_kit::TestAppContext) {
+    common::setup(cx);
+    let dismissed = Rc::new(RefCell::new(Vec::new()));
+    let d = dismissed.clone();
+    let w = common::open(cx, 1000., 700., move |_, _| {
+        let d = d.clone();
+        gpui_kit::div()
+            .relative()
+            .size_full()
+            .child(ToastStack::new(vec![(7, "History reset".into()), (8, "Second".into())]).on_dismiss(move |id, _, _| d.borrow_mut().push(id)))
+            .into_any_element()
+    });
+    let toast = common::bounds(cx, w, "toast-7");
+    assert!(toast.right() <= px(1000. - 14.) + px(0.5));
+    assert!(toast.bottom() <= px(700. - 29. - 12.) + px(0.5));
+    common::click(cx, w, "toast-close-7");
+    assert_eq!(*dismissed.borrow(), vec![7]);
 }

@@ -291,6 +291,22 @@ pub fn history(entries: &[SharedString]) -> DialogFrame {
     entries.iter().enumerate().fold(DialogFrame::new("Filter history"), |d, (i, e)| d.child(RuleRow::code(format!("history-{i}"), e.clone())))
 }
 
+/// Filter history whose rows restore an entry when clicked. Each entry is `(expression, states summary)`,
+/// e.g. `("error || timeout", "1 include · 1 exclude · 0 off")` (spec §5.8: expression and states).
+pub fn history_picker(entries: &[(SharedString, SharedString)], on_pick: IndexCallback) -> DialogFrame {
+    entries.iter().enumerate().fold(DialogFrame::new("Filter history"), |d, (i, (expression, states))| {
+        let on_pick = on_pick.clone();
+        d.child(
+            div()
+                .id(SharedString::from(format!("history-pick-{i}")))
+                .test_support()
+                .cursor_pointer()
+                .on_click(move |_, w, cx| on_pick(i, w, cx))
+                .child(RuleRow::code(format!("history-{i}"), expression.clone()).trailing(states.clone())),
+        )
+    })
+}
+
 pub fn statistics(rows: &[(SharedString, SharedString)]) -> DialogFrame {
     rows.iter().enumerate().fold(DialogFrame::new("Filtered log statistics"), |d, (i, (k, v))| d.child(RuleRow::text(format!("stat-{i}"), k.clone()).trailing(v.clone())))
 }

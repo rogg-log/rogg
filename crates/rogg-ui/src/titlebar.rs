@@ -3,7 +3,8 @@ use crate::icons::{IconName, icon};
 use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, FontWeight, MouseButton, Pixels, SharedString, TestSupportExt, Window, div, px};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::{App, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +21,7 @@ pub struct TitleBar {
     sidebar_width: Pixels,
     traffic_lights: bool,
     force_hover_tab: Option<usize>,
+    tab_scroll: Option<ScrollHandle>,
     on_select_tab: Option<IndexCallback>,
     on_close_tab: Option<IndexCallback>,
     on_toggle_sidebar: Option<Callback>,
@@ -35,6 +37,7 @@ impl TitleBar {
             sidebar_width: px(size::SIDEBAR_W),
             traffic_lights: false,
             force_hover_tab: None,
+            tab_scroll: None,
             on_select_tab: None,
             on_close_tab: None,
             on_toggle_sidebar: None,
@@ -56,6 +59,12 @@ impl TitleBar {
 
     pub fn force_hover_tab(mut self, index: Option<usize>) -> Self {
         self.force_hover_tab = index;
+        self
+    }
+
+    /// Track the tab strip's scroll so the app can reveal the active tab (`ScrollHandle::scroll_to_item`).
+    pub fn tab_scroll(mut self, handle: ScrollHandle) -> Self {
+        self.tab_scroll = Some(handle);
         self
     }
 
@@ -97,10 +106,19 @@ fn button(b: IconButton, cb: Option<Callback>) -> IconButton {
     }
 }
 
+/// A press drags the window; a double-click zooms it like a native title bar.
+fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, _: &mut App) {
+    if e.click_count >= 2 {
+        window.titlebar_double_click();
+    } else {
+        window.start_window_move();
+    }
+}
+
 impl RenderOnce for TitleBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
-        let traffic = div().w(px(53.)).flex_none().flex().items_center().gap(px(7.)).when(self.traffic_lights, |d| {
+        let traffic = div().id("traffic").on_mouse_down(MouseButton::Left, drag_window).w(px(53.)).flex_none().flex().items_center().gap(px(7.)).when(self.traffic_lights, |d| {
             d.children(p.traffic.map(|c| div().size(px(10.)).rounded_full().bg(c)))
         });
         let leading = div()
@@ -114,7 +132,7 @@ impl RenderOnce for TitleBar {
             .px(px(13.))
             .child(traffic)
             .child(button(IconButton::icon("toggle-sidebar", IconName::Side), self.on_toggle_sidebar))
-            .child(div().text_size(px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).child("rogg"));
+            .child(div().id("brand").text_size(px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).on_mouse_down(MouseButton::Left, drag_window).child("rogg"));
 
         let tab_strip = div()
             .id("tabs")
@@ -126,6 +144,7 @@ impl RenderOnce for TitleBar {
             .h(px(30.))
             .gap(px(3.))
             .overflow_x_scroll()
+            .when_some(self.tab_scroll, |d, h| d.track_scroll(&h))
             .children(self.tabs.into_iter().enumerate().map(|(i, tab)| {
                 TabShell {
                     index: i,
@@ -155,7 +174,7 @@ impl RenderOnce for TitleBar {
                         .flex_1()
                         .min_w(px(28.))
                         .h_full()
-                        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
+                        .on_mouse_down(MouseButton::Left, drag_window),
                 ),
             )
             .child(
@@ -234,6 +253,10 @@ impl RenderOnce for TabShell {
                     .text_size(px(11.))
                     .text_color(if active { p.text } else { p.muted })
                     .cursor_pointer()
+                    .when(!self.item.tooltip.is_empty(), |d| {
+                        let tip = self.item.tooltip.clone();
+                        d.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    })
                     .child(icon(IconName::File).size(px(12.)).text_color(if active { p.accent } else { p.faint }))
                     .child(div().min_w_0().truncate().child(self.item.label))
                     .on_click(move |_, window, cx| {

@@ -1,10 +1,11 @@
 use crate::controls::{CompactSelect, FlagButton, IconButton, TextButton};
+use crate::layout::BandDrag;
 use crate::icons::{IconName, icon};
 use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Entity, SharedString, TestSupportExt, Window, div, px};
+use gpui_kit::{AnyElement, App, CursorStyle, EmptyView, Entity, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -125,6 +126,7 @@ pub struct FilterBand {
     case_sensitive: bool,
     editing: Option<Entity<InputState>>,
     error: Option<SharedString>,
+    focused: bool,
     context_options: Vec<SharedString>,
     context_selected: usize,
     summary: SharedString,
@@ -146,6 +148,7 @@ impl FilterBand {
             case_sensitive: false,
             editing: None,
             error: None,
+            focused: false,
             context_options: vec!["None".into(), "±1 line".into(), "±2 lines".into(), "±3 lines".into()],
             context_selected: 0,
             summary: SharedString::default(),
@@ -177,6 +180,12 @@ impl FilterBand {
 
     pub fn error(mut self, error: Option<SharedString>) -> Self {
         self.error = error;
+        self
+    }
+
+    /// Draw the 2 px accent focus ring (the filter line is a Tab stop, spec §5.9).
+    pub fn focused(mut self, on: bool) -> Self {
+        self.focused = on;
         self
     }
 
@@ -360,14 +369,19 @@ impl RenderOnce for FilterBand {
             .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(1.)).bg(p.band_border))
             .child(div().absolute().bottom(px(-1.)).left_0().right_0().h(px(1.)).bg(p.band_border))
             .child(
-                div()
-                    .absolute()
-                    .top(px(-2.))
-                    .left_0()
-                    .right_0()
-                    .flex()
-                    .justify_center()
-                    .child(div().w(px(30.)).h(px(3.)).rounded(px(5.)).bg(p.band_handle)),
+                div().absolute().top(px(-4.)).left_0().right_0().flex().justify_center().child(
+                    div()
+                        .id("band-handle")
+                        .test_support()
+                        .flex()
+                        .justify_center()
+                        .w(px(60.))
+                        .h(px(9.))
+                        .pt(px(2.))
+                        .cursor(CursorStyle::ResizeRow)
+                        .on_drag(BandDrag, |_, _, _, cx| cx.new(|_| EmptyView))
+                        .child(div().w(px(30.)).h(px(3.)).rounded(px(5.)).bg(p.band_handle)),
+                ),
             )
             .child(
                 div()
@@ -391,5 +405,8 @@ impl RenderOnce for FilterBand {
                 )
             })
             .child(bottom)
+            .when(self.focused, |d| {
+                d.child(div().absolute().top(px(2.)).bottom(px(2.)).left(px(2.)).right(px(2.)).rounded(px(5.)).border_2().border_color(p.accent))
+            })
     }
 }

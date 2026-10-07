@@ -94,3 +94,18 @@ fn loading_bar_fill_is_clamped_and_ignores_non_finite_fractions(cx: &mut TestApp
         assert_eq!(common::bounds(cx, w, "loading-fill").size.width, px(expected), "fraction {fraction:?}");
     }
 }
+
+#[gpui_kit::test]
+fn history_picker_rows_are_clickable(cx: &mut gpui_kit::TestAppContext) {
+    common::setup(cx);
+    let picked = Rc::new(Cell::new(None));
+    let p = picked.clone();
+    let w = common::open(cx, 1000., 700., move |_, _| {
+        let p = p.clone();
+        let on_pick: rogg_ui::IndexCallback = Rc::new(move |i: usize, _: &mut gpui_kit::Window, _: &mut gpui_kit::App| p.set(Some(i)));
+        rogg_ui::dialogs::history_picker(&[("a || b".into(), "2 include · 0 exclude · 0 off".into()), ("c".into(), "1 include · 0 exclude · 0 off".into())], on_pick)
+            .into_any_element()
+    });
+    common::click(cx, w, "history-pick-1");
+    assert_eq!(picked.get(), Some(1));
+}
