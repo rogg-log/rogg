@@ -42,3 +42,13 @@ demo:
 visual-app:
     cd tools/visual-diff && ROGG_VISUAL_PAGE=app npm run all
     open target/visual-app/report.html
+
+# Appends a log line every 100 ms to FILE (live follow by hand; Ctrl-C to stop).
+live out="target/genlog/live.log":
+    mkdir -p target/genlog
+    touch {{out}}
+    while true; do echo "$(date '+%Y-%m-%d %H:%M:%S.000')  INFO   ticker       tick $RANDOM" >> {{out}}; sleep 0.1; done
+
+# Pipes FILE into rogg (stdin capture).
+pipe file="target/genlog/sample.log":
+    cat {{file}} | cargo run --release -p rogg-app
