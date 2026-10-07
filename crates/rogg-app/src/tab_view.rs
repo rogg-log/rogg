@@ -87,7 +87,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
     let progress = d.filter.progress.map(|f| Progress { label: format!("Filtering {:.0}%", f * 100.).into(), fraction: f });
     let status = StatusBar::new(note)
         .stats(d.filter.stats.as_ref().map(stat_parts).unwrap_or_default())
-        .selection(t.selection().map(|n| SharedString::from(format!("Line {n}"))))
+        .selection(t.announced_selection().map(|n| SharedString::from(format!("Line {n}"))))
         .progress(progress)
         .into_any_element();
 

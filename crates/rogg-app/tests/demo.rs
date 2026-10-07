@@ -23,7 +23,8 @@ fn demo_reproduces_the_reference_state(cx: &mut TestAppContext) {
     tab.read_with(cx, |t, cx| {
         assert_eq!(t.state(Pane::Full).read(cx).selected(), Some(selected));
         assert_eq!(t.state(Pane::Filtered).read(cx).selected(), Some(selected));
-        assert_eq!(t.selection(), None, "the footer shows no selection until the user selects");
+        assert_eq!(t.selection(), Some(selected), "the initial selection is the tab's selection (⌘B, Return, find act on it)");
+        assert_eq!(t.announced_selection(), None, "the footer shows no `Line N` until the user selects");
     });
     assert!(common::exists(cx, w, "tree-row-10"), "bundle folder + 10 members");
     assert!(common::exists(cx, w, "recent-1"));

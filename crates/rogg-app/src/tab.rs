@@ -55,6 +55,8 @@ pub struct Tab {
     /// The pane ⌘F, ⌘G and Wrap act on.
     pub last_pane: Pane,
     selection: Option<u64>,
+    /// False while `selection` is only the initial one (demo, `--line`): the footer stays empty until the user selects.
+    selection_announced: bool,
     pending_selection: Option<u64>,
     applied: Applied,
     edit_subscription: Option<Subscription>,
@@ -89,6 +91,7 @@ impl Tab {
             labels: init.labels,
             last_pane: Pane::Full,
             selection: None,
+            selection_announced: false,
             pending_selection: init.selection,
             applied: Applied::default(),
             edit_subscription: None,
@@ -109,9 +112,15 @@ impl Tab {
         }
     }
 
-    /// The display number the user last selected in either pane (shown as `Line N`).
+    /// The selected display number: what ⌘B, Return and find-Enter act on. May be an initial selection the user has
+    /// not touched yet.
     pub fn selection(&self) -> Option<u64> {
         self.selection
+    }
+
+    /// The display number the user last selected in either pane (shown as `Line N`); none for an initial selection.
+    pub fn announced_selection(&self) -> Option<u64> {
+        self.selection.filter(|_| self.selection_announced)
     }
 
     /// Rebuilds the row sources whose document data changed.
@@ -140,6 +149,8 @@ impl Tab {
             let in_filtered = self.filtered.read(cx).rows().row_for_number(number).is_some();
             self.full.update(cx, |s, cx| s.set_selected(Some(number), cx));
             self.filtered.update(cx, |s, cx| s.set_selected(in_filtered.then_some(number), cx));
+            self.selection = Some(number);
+            self.selection_announced = false;
         }
         cx.notify();
     }
@@ -173,6 +184,7 @@ impl Tab {
     /// selects the filtered row when it is shown (scrolling only if needed) and clears it otherwise.
     fn sync_selection(&mut self, from: Pane, number: u64, cx: &mut Context<Self>) {
         self.selection = Some(number);
+        self.selection_announced = true;
         match from {
             Pane::Filtered if self.follow => {
                 let row = self.full.read(cx).rows().row_for_number(number);
