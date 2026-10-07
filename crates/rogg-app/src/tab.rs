@@ -60,6 +60,8 @@ impl TabInit {
 pub enum TabEvent {
     Toast(SharedString),
     ShowHistory,
+    /// The info bar's Profile button: open the highlighting profile editor.
+    ShowProfiles,
 }
 
 /// Spec §4.5 reload toast.

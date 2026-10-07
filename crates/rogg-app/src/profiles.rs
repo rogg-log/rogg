@@ -1,7 +1,7 @@
 //! Highlighting profiles (spec §6.1) as an app global, and their colours resolved for the active theme.
 
 use gpui_kit::{App, Global};
-use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, Profile, TINT_ALPHA, derive_light, unique_name};
+use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, HitEntry, Profile, TINT_ALPHA, derive_light, names_collide, unique_name};
 use rogg_core::style::{CompiledProfile, RuleError};
 use rogg_ui::logview::{RowTint, Span, SpanStyle};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, ChipColor, Color, HitColor, Palette};
@@ -68,10 +68,16 @@ impl ProfileStore {
         &self.find(name).errors
     }
 
-    /// Replaces the profile `old_name` with `profile` (a rename moves its file), recompiles and saves it.
-    pub fn put(&mut self, old_name: &str, profile: Profile) {
+    /// Replaces the profile `old_name` with `profile` (a rename moves its file), recompiles and saves it. An empty
+    /// filter-match palette is refilled with the four default slots (`RowStyler::hit` needs at least one).
+    pub fn put(&mut self, old_name: &str, mut profile: Profile) {
+        if profile.hit_palette.is_empty() {
+            profile.hit_palette = (0..4).map(HitEntry::slot).collect();
+        }
         let saved = profile::save(&self.dir, &profile);
-        if old_name != profile.name && saved.is_ok() {
+        // A rename whose names share a file on the case-insensitive disk ("Ops" → "ops") was saved over the old file:
+        // deleting the old name would delete the profile.
+        if !names_collide(old_name, &profile.name) && saved.is_ok() {
             let _ = profile::delete(&self.dir, old_name);
         }
         self.last_error = saved.err().map(|e| e.to_string());
@@ -294,6 +300,27 @@ mod tests {
         let profile = Profile { name: "x".into(), rules: vec![], hit_palette: vec![custom] };
         let paint = ProfilePaint::resolve(&profile, &p, Appearance::Dark);
         assert_eq!(paint.chips[0], ChipColor { border: Color(0x000000ff), bg: Color(0x00000066), term: Color(0xffffffff) });
+    }
+
+    #[test]
+    fn put_refills_an_empty_palette() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProfileStore::load(dir.path().to_path_buf());
+        store.put("Bare", Profile { name: "Bare".into(), rules: vec![], hit_palette: vec![] });
+        assert_eq!(store.get("Bare").hit_palette, (0..4).map(HitEntry::slot).collect::<Vec<_>>());
+        let styler = RowStyler::from_profile(store.get("Bare"), &Palette::dark(), Appearance::Dark);
+        assert_eq!(styler.hit(5), SpanStyle::Mark { fg: Palette::dark().hits[1].fg, bg: Palette::dark().hits[1].bg });
+    }
+
+    #[test]
+    fn a_rename_that_only_changes_case_keeps_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProfileStore::load(dir.path().to_path_buf());
+        let name = store.add(Profile { name: "Ops".into(), rules: vec![], hit_palette: vec![] });
+        store.edit(&name, |p| p.name = "ops".into());
+        assert_eq!(store.names().iter().filter(|n| n.eq_ignore_ascii_case("ops")).count(), 1);
+        let reloaded = ProfileStore::load(dir.path().to_path_buf());
+        assert!(reloaded.contains("ops"), "{:?}", reloaded.names());
     }
 
     #[test]

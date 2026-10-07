@@ -40,6 +40,7 @@ pub enum Dialog {
     GoToLine(Entity<InputState>),
     Settings,
     FontPicker,
+    Profiles(Entity<crate::dialogs::profiles::ProfileEditor>),
 }
 
 pub struct Workspace {
@@ -65,6 +66,8 @@ pub struct Workspace {
     /// A theme and density pinned by the host (the gallery), not saved in the settings.
     pub(crate) theme_override: Option<(ThemeSetting, DensitySetting)>,
     goto_subscription: Option<Subscription>,
+    /// The open dialog entity's events (the profile editor); dropped when the dialog closes.
+    dialog_subscription: Option<Subscription>,
     /// A dialog just closed: its input's focus handle outlives it until the frame is replaced, so check again after.
     refocus_after_dialog: bool,
     _appearance_subscription: Subscription,
@@ -110,6 +113,7 @@ impl Workspace {
             stdin_opened: false,
             theme_override: None,
             goto_subscription: None,
+            dialog_subscription: None,
             refocus_after_dialog: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
@@ -198,10 +202,11 @@ impl Workspace {
         cx.notify();
     }
 
-    fn on_tab_event(&mut self, event: &TabEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_tab_event(&mut self, event: &TabEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             TabEvent::Toast(message) => self.toast(message.clone(), cx),
             TabEvent::ShowHistory => self.open_dialog(Dialog::History, cx),
+            TabEvent::ShowProfiles => self.open_profile_editor(window, cx),
         }
     }
 
@@ -227,9 +232,57 @@ impl Workspace {
         self.open_settings(cx);
     }
 
+    /// The profile editor for the active tab's profile (spec §6.1).
+    pub fn open_profile_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::dialogs::profiles::{ProfileEditor, ProfileEditorEvent};
+        let tab = self.active_tab();
+        let profile = tab.as_ref().map(|t| t.read(cx).profile.to_string()).unwrap_or_else(|| SettingsStore::get(cx).behavior.default_profile);
+        let editor = cx.new(|_| ProfileEditor::new(tab.map(|t| t.downgrade()), profile));
+        self.dialog_subscription = Some(cx.subscribe_in(&editor, window, |ws, _, ev: &ProfileEditorEvent, _window, cx| match ev {
+            ProfileEditorEvent::Close => ws.close_dialog(cx),
+            ProfileEditorEvent::Changed => ws.profiles_changed(cx),
+            ProfileEditorEvent::Renamed { from, to } => ws.profile_renamed(from, to, cx),
+            ProfileEditorEvent::Toast(message) => ws.toast(message.clone(), cx),
+        }));
+        self.open_dialog(Dialog::Profiles(editor), cx);
+    }
+
+    pub fn profile_editor(&self) -> Option<Entity<crate::dialogs::profiles::ProfileEditor>> {
+        match &self.dialog {
+            Some(Dialog::Profiles(editor)) => Some(editor.clone()),
+            _ => None,
+        }
+    }
+
+    /// After any profile change: tabs whose profile was deleted move to Default, every tab restyles.
+    fn profiles_changed(&mut self, cx: &mut Context<Self>) {
+        for tab in self.tabs.clone() {
+            let gone = cx.try_global::<crate::profiles::ProfileStore>().is_some_and(|s| !s.contains(&tab.read(cx).profile));
+            if gone {
+                tab.update(cx, |t, cx| t.set_profile(rogg_core::profile::DEFAULT_PROFILE.into(), cx));
+            }
+        }
+        self.restyle_tabs(cx);
+    }
+
+    /// A renamed profile: tabs showing it and the default-profile setting follow the new name.
+    fn profile_renamed(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
+        for tab in self.tabs.clone() {
+            if tab.read(cx).profile.as_ref() == from {
+                let to = SharedString::from(to.to_string());
+                tab.update(cx, |t, cx| t.set_profile(to, cx));
+            }
+        }
+        if SettingsStore::get(cx).behavior.default_profile == from {
+            let to = to.to_string();
+            SettingsStore::update(cx, |s| s.behavior.default_profile = to);
+        }
+    }
+
     pub fn close_dialog(&mut self, cx: &mut Context<Self>) {
         self.dialog = None;
         self.goto_subscription = None;
+        self.dialog_subscription = None;
         self.refocus_after_dialog = true;
         cx.notify();
     }
@@ -299,6 +352,7 @@ impl Workspace {
             Dialog::GoToLine(input) => dialogs::go_to_line(input.clone()).description("Selects the line in the full log.").on_close(close).into_any_element(),
             Dialog::Settings => crate::dialogs::settings::render(this, cx).on_close(close).into_any_element(),
             Dialog::FontPicker => crate::dialogs::fonts::render(this, cx).on_close(act(this, |ws, _, cx| ws.open_settings(cx))).into_any_element(),
+            Dialog::Profiles(editor) => editor.clone().into_any_element(),
         }
     }
 

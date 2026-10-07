@@ -86,7 +86,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
     let d = t.doc.read(cx);
     let crumbs = t.labels.crumbs.clone().unwrap_or_else(|| d.source.crumbs());
     let info_bar = InfoBar::new(crumbs, t.labels.profile.clone().unwrap_or_else(|| t.profile.clone()))
-        .on_profile(later(tab, "Highlighting profiles arrive in a later version"))
+        .on_profile(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowProfiles)))
         .on_export(later(tab, "Export arrives in a later version"))
         .into_any_element();
     let note = t.labels.note.clone().or_else(|| d.text().map(|text| SharedString::from(text.status_label()))).unwrap_or_default();
