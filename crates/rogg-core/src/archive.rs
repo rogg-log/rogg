@@ -200,7 +200,8 @@ fn copy(from: &mut impl Read, out: &mut impl Write, total: u64, cancel: &CancelT
     }
 }
 
-/// Copies archive member `member` to `out`; `progress(written, member size)`. A missing member, an unsupported
+/// Copies archive member `member` to `out`; `progress(written, member size)`. While a tar is read up to the member
+/// it reports `progress(archive bytes read, archive size)` instead. A missing member, an unsupported
 /// compression method or a damaged member is an `Archive` error naming the member.
 pub fn extract(
     path: &Path,
@@ -227,7 +228,8 @@ pub fn extract(
             copy(&mut entry, out, size, cancel, &mut progress).map_err(failed)
         }
         ArchiveKind::Tar | ArchiveKind::TarGz => {
-            let (reader, _) = tar_reader(path, kind, Rc::new(Cell::new(0)))?;
+            let read = Rc::new(Cell::new(0));
+            let (reader, total) = tar_reader(path, kind, read.clone())?;
             let mut archive = tar::Archive::new(reader);
             for entry in archive.entries().map_err(|e| archive_error(path, e))? {
                 if cancel.is_cancelled() {
@@ -239,6 +241,9 @@ pub fn extract(
                     let size = entry.size();
                     return copy(&mut entry, out, size, cancel, &mut progress).map_err(failed);
                 }
+                // Skipping to the member: progress is the compressed bytes read so far, until the member's own bytes
+                // take over.
+                progress(read.get().min(total), total);
             }
             Err(archive_error(path, format!("no member `{member}`")))
         }

@@ -65,6 +65,39 @@ fn extracts_members_and_reports_missing_ones() {
 }
 
 #[test]
+fn skipping_to_a_tar_member_reports_archive_progress_first() {
+    let dir = tempfile::tempdir().unwrap();
+    // Incompressible members: the archive is read in many steps before the last member is reached.
+    let mut state = 0x2545_F491_4F6C_DD1Du64;
+    let mut noise = |len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect()
+    };
+    let members = [("a.log", noise(300_000)), ("b.log", noise(300_000)), ("c.log", noise(300_000)), ("last.log", noise(100_000))];
+    let refs: Vec<(&str, &[u8])> = members.iter().map(|(n, b)| (*n, b.as_slice())).collect();
+    for (bundle_kind, kind, name) in [(BundleKind::Tar, ArchiveKind::Tar, "n.tar"), (BundleKind::TarGz, ArchiveKind::TarGz, "n.tgz")] {
+        let path = dir.path().join(name);
+        write_archive(&path, bundle_kind, &refs).unwrap();
+        let archive_size = std::fs::metadata(&path).unwrap().len();
+        let mut calls = Vec::new();
+        let mut out = Vec::new();
+        extract(&path, kind, "last.log", &mut out, &CancelToken::new(), |done, total| calls.push((done, total))).unwrap();
+        assert_eq!(out, members[3].1, "{name}");
+        // Progress against the archive size comes first; the member's own bytes (total = its size) follow.
+        let skipping: Vec<u64> = calls.iter().take_while(|&&(_, total)| total == archive_size).map(|&(done, _)| done).collect();
+        assert!(skipping.len() > 1, "{name}: archive progress while skipping ({calls:?})");
+        assert!(skipping.windows(2).all(|w| w[0] <= w[1]) && skipping[0] < archive_size, "{name}: {skipping:?}");
+        assert!(calls[skipping.len()..].iter().all(|&(_, total)| total == 100_000), "{name}: then the member's bytes");
+    }
+}
+
+#[test]
 fn a_damaged_member_fails_alone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("d.zip");
