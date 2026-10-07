@@ -1,13 +1,13 @@
 //! Opened log text: UTF-8 bytes plus the line index (spec §4.1 plain files, §4.3, §4.4).
 //!
-//! Files are memory-mapped. The mapping assumes the file is not truncated while open; live follow and
-//! truncation handling (spec §4.5, milestone M3) will re-map on change.
+//! Files are memory-mapped through `mapping::SafeMap`, so a file truncated while open reads zeros past its new end
+//! instead of crashing; live follow (`LogText::refresh`, spec §4.5) notices the shrink and reloads.
 
 use crate::cancel::CancelToken;
 use crate::encoding::{ENDINGS_SAMPLE_BYTES, Encoding, LineEndings, status_label, transcode_to_utf8};
 use crate::error::CoreError;
 use crate::index::{DEFAULT_CHUNK_BYTES, IndexProgress, LineIndex, build_index};
-use memmap2::Mmap;
+use crate::mapping::SafeMap;
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
@@ -15,14 +15,14 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 enum Data {
-    Mapped(Mmap),
+    Mapped(SafeMap),
     Owned(Vec<u8>),
 }
 
 impl Data {
     fn bytes(&self) -> &[u8] {
         match self {
-            Data::Mapped(m) => m,
+            Data::Mapped(m) => m.bytes(),
             Data::Owned(v) => v,
         }
     }
@@ -35,9 +35,6 @@ pub enum OpenProgress {
 }
 
 /// A log's UTF-8 text and line index. Line content excludes `\n` and one trailing `\r`.
-///
-/// Opened files are memory-mapped and the mapping assumes the file is not truncated while mapped; truncating
-/// it externally is undefined behavior until live follow (M3) re-maps on change.
 pub struct LogText {
     data: Data,
     start: usize,
@@ -53,10 +50,7 @@ fn map_file(path: &Path) -> Result<Data, CoreError> {
     if len == 0 {
         return Ok(Data::Owned(Vec::new()));
     }
-    // SAFETY: the file is opened read-only; rogg does not write to it. External truncation while mapped is
-    // handled by re-mapping in M3 (live follow), see module docs.
-    let map = unsafe { Mmap::map(&file) }.map_err(CoreError::io(path))?;
-    Ok(Data::Mapped(map))
+    SafeMap::map(&file).map(Data::Mapped).map_err(CoreError::io(path))
 }
 
 fn fnv1a(parts: &[&[u8]]) -> u64 {

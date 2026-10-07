@@ -8,6 +8,7 @@ pub mod filter;
 pub mod highlight;
 pub mod history;
 pub mod index;
+pub mod mapping;
 pub mod paths;
 pub mod persist;
 pub mod recent;
