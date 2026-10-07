@@ -25,20 +25,17 @@ pub const FOLDER_FILE_LIMIT: usize = 50;
 /// The regular, non-hidden files directly in `dir` that look like text (no NUL byte in the first 8 KB, unless the
 /// file starts with a UTF-16 BOM), sorted by name, at most `FOLDER_FILE_LIMIT`.
 pub fn folder_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
+    let mut candidates = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         if entry.file_name().to_string_lossy().starts_with('.') || !entry.file_type()?.is_file() {
             continue;
         }
-        let path = entry.path();
-        if looks_like_text(&path) {
-            files.push(path);
-        }
+        candidates.push(entry.path());
     }
-    files.sort();
-    files.truncate(FOLDER_FILE_LIMIT);
-    Ok(files)
+    candidates.sort();
+    // Probe lazily, in name order, so a big folder reads at most what it takes to find the first 50 text files.
+    Ok(candidates.into_iter().filter(|p| looks_like_text(p)).take(FOLDER_FILE_LIMIT).collect())
 }
 
 fn looks_like_text(path: &Path) -> bool {
@@ -55,9 +52,17 @@ fn looks_like_text(path: &Path) -> bool {
     Encoding::detect(&head[..len]).is_utf16() || !head[..len].contains(&0)
 }
 
-pub(crate) fn recent_items(cx: &App) -> Vec<RecentItem> {
+/// The Recent list as the sidebar and welcome view show it. Reads only the store's cached missing flags, so a
+/// render never touches the filesystem.
+pub fn recent_items(cx: &App) -> Vec<RecentItem> {
     cx.try_global::<RecentStore>()
-        .map(|s| s.entries().iter().map(|e| RecentItem { label: e.label().into(), is_folder: e.is_folder, missing: e.is_missing() }).collect())
+        .map(|s| {
+            s.entries()
+                .iter()
+                .enumerate()
+                .map(|(i, e)| RecentItem { label: e.label().into(), is_folder: e.is_folder, missing: s.is_missing(i) })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -312,5 +317,16 @@ mod tests {
         std::fs::create_dir(dir.path().join("nested")).unwrap();
         let names: Vec<String> = folder_files(dir.path()).unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
         assert_eq!(names, ["a.log", "b.log"]);
+    }
+
+    #[test]
+    fn folder_files_keeps_the_first_fifty_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..(FOLDER_FILE_LIMIT + 10) {
+            std::fs::write(dir.path().join(format!("f{i:03}.log")), "text").unwrap();
+        }
+        let names: Vec<String> = folder_files(dir.path()).unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let expected: Vec<String> = (0..FOLDER_FILE_LIMIT).map(|i| format!("f{i:03}.log")).collect();
+        assert_eq!(names, expected);
     }
 }

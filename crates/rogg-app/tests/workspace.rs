@@ -68,6 +68,21 @@ fn recent_files_are_recorded_persisted_and_pruned(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn rendering_recent_never_stats_the_filesystem(cx: &mut TestAppContext) {
+    let (dir, w, _ws) = open_two(cx);
+    std::fs::remove_file(dir.path().join("a.log")).unwrap();
+    common::render(cx, w);
+    let missing: Vec<bool> = cx.update(|cx| rogg_app::workspace::chrome::recent_items(cx).iter().map(|r| r.missing).collect());
+    assert_eq!(missing, [false, false], "the render path reads the cache, so a file deleted since is not noticed yet");
+    common::click(cx, w, "recent-1");
+    cx.update(|cx| {
+        let store = cx.global::<RecentStore>();
+        assert_eq!(store.entries().len(), 1, "the click-time stat catches it and removes the entry");
+        assert!(store.entries()[0].path.ends_with("b.log"));
+    });
+}
+
+#[gpui_kit::test]
 fn folders_open_their_text_files(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let logs = dir.path().join("logs");
