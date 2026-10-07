@@ -5,10 +5,12 @@ extern crate gpui_kit as gpui;
 
 pub mod actions;
 pub mod args;
+pub mod decorate;
 pub mod document;
 pub mod history;
 pub mod menus;
 pub mod paths;
+pub mod rows;
 pub mod window;
 pub mod workspace;
 
