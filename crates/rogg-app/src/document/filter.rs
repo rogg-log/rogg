@@ -19,6 +19,16 @@ use std::time::{Duration, Instant};
 /// Partial results of a background scan are republished at most this often.
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// A publish rebuilds the view on the UI thread, so the next one waits at least this many times as long as the
+/// last rebuild took: publishing never takes more than a fifth of the UI thread, however large the matches grow.
+const REBUILD_COST_FACTOR: u32 = 4;
+
+/// Whether partial results should be republished now: matches arrived since the last publish and both the
+/// minimum interval and the cost-proportional pause have elapsed.
+fn publish_due(dirty: bool, since_last_publish: Option<Duration>, last_rebuild: Duration) -> bool {
+    dirty && since_last_publish.is_none_or(|elapsed| elapsed >= PUBLISH_INTERVAL.max(last_rebuild * REBUILD_COST_FACTOR))
+}
+
 pub struct FilterState {
     /// The applied filter: what the chips, flags and context select show.
     pub spec: FilterSpec,
@@ -29,6 +39,10 @@ pub struct FilterState {
     pub(super) job: Option<FilterJob>,
     partial: Vec<u64>,
     last_publish: Option<Instant>,
+    /// Matches arrived since the last publish.
+    dirty: bool,
+    /// How long the last progressive rebuild took.
+    last_rebuild: Duration,
     /// Matches of the latest scan (partial while `progress` is Some).
     pub matches: Arc<Vec<u64>>,
     term_hits: Vec<u64>,
@@ -63,6 +77,8 @@ impl FilterState {
             job: None,
             partial: Vec::new(),
             last_publish: None,
+            dirty: false,
+            last_rebuild: Duration::ZERO,
             matches: Arc::new(Vec::new()),
             term_hits: Vec::new(),
             duration: Duration::ZERO,
@@ -90,6 +106,9 @@ impl Document {
         let old = &self.filter.spec;
         let rescan = self.filter.compiled.is_none() || spec.terms != old.terms || spec.regex != old.regex || spec.case_sensitive != old.case_sensitive;
         if !rescan {
+            if spec.context != old.context && spec.is_active() && cx.has_global::<HistoryStore>() {
+                cx.update_global::<HistoryStore, _>(|history, _| history.record_context(&spec));
+            }
             self.filter.spec = spec;
             self.filter.error = None;
             self.rebuild_view(cx);
@@ -178,6 +197,8 @@ impl Document {
         }
         self.filter.partial.clear();
         self.filter.last_publish = None;
+        self.filter.dirty = false;
+        self.filter.last_rebuild = Duration::ZERO;
         self.filter.term_hits.clear();
         self.filter.duration = Duration::ZERO;
         self.filter.progress = None;
@@ -215,11 +236,11 @@ impl Document {
         let Some(job) = self.filter.job.as_ref() else { return false };
         let mut finished = None;
         let mut died = false;
-        let mut grew = false;
+        let progress_before = self.filter.progress;
         loop {
             match job.events().try_recv() {
                 Ok(FilterEvent::Chunk { matches, .. }) => {
-                    grew |= !matches.is_empty();
+                    self.filter.dirty |= !matches.is_empty();
                     self.filter.partial.extend(matches);
                 }
                 Ok(FilterEvent::Progress { lines_done, total_lines }) => {
@@ -255,11 +276,14 @@ impl Document {
             self.rebuild_view(cx);
             return false;
         }
-        if grew && self.filter.last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_INTERVAL) {
-            self.filter.last_publish = Some(Instant::now());
+        if publish_due(self.filter.dirty, self.filter.last_publish.map(|t| t.elapsed()), self.filter.last_rebuild) {
+            let started = Instant::now();
             self.filter.matches = Arc::new(self.filter.partial.clone());
             self.rebuild_view(cx);
-        } else {
+            self.filter.last_rebuild = started.elapsed();
+            self.filter.last_publish = Some(Instant::now());
+            self.filter.dirty = false;
+        } else if self.filter.progress != progress_before {
             cx.notify();
         }
         true
@@ -271,23 +295,45 @@ impl Document {
         self.filter.duration = duration;
         self.filter.progress = None;
         self.filter.last_publish = None;
+        self.filter.dirty = false;
         self.rebuild_view(cx);
     }
 
-    /// Recomposes the filtered view and statistics from the current matches, pins and context.
+    /// Recomposes the filtered view and statistics from the current matches, pins and context. While a scan runs
+    /// the view is built without context (and without the exclusion check), so a progressive publish stays cheap;
+    /// the final view of `finish_scan` applies the real context.
     pub(super) fn rebuild_view(&mut self, cx: &mut Context<Self>) {
         let total = self.text().map_or(0, |t| t.line_count());
         let f = &self.filter;
+        let context = if f.progress.is_some() { 0 } else { f.spec.context };
         let view = match (self.text(), &f.compiled) {
-            (Some(text), Some(filter)) if f.spec.context > 0 => {
-                FilteredView::build(f.matches.clone(), &f.pins, f.spec.context, total, |n| filter.is_excluded(text.line(n)))
+            (Some(text), Some(filter)) if context > 0 => {
+                FilteredView::build(f.matches.clone(), &f.pins, context, total, |n| filter.is_excluded(text.line(n)))
             }
-            _ => FilteredView::build(f.matches.clone(), &f.pins, f.spec.context, total, |_| false),
+            _ => FilteredView::build(f.matches.clone(), &f.pins, context, total, |_| false),
         };
         let stats = FilterStats::from_parts(&f.spec, f.matches.len() as u64, &f.term_hits, total, f.duration, &view);
         self.filter.view = Arc::new(view);
         self.filter.stats = Some(stats);
         self.filter.revision += 1;
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: fn(u64) -> Duration = Duration::from_millis;
+
+    #[test]
+    fn publishing_waits_for_new_matches_the_interval_and_four_times_the_last_rebuild() {
+        assert!(publish_due(true, None, MS(500)), "the first publish is immediate");
+        assert!(!publish_due(false, Some(MS(10_000)), Duration::ZERO), "nothing new, nothing to publish");
+        assert!(!publish_due(true, Some(MS(99)), Duration::ZERO));
+        assert!(publish_due(true, Some(MS(100)), Duration::ZERO));
+        // A 60 ms rebuild pushes the next publish to 240 ms, so slow publishes never run back to back.
+        assert!(!publish_due(true, Some(MS(239)), MS(60)));
+        assert!(publish_due(true, Some(MS(240)), MS(60)));
     }
 }

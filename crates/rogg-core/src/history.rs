@@ -70,6 +70,24 @@ impl History {
         self.entries.truncate(HISTORY_LIMIT);
     }
 
+    /// Like `record`, but when the newest entry has the same terms (texts and states), regex flag and case flag
+    /// it is replaced in place: a context-only change updates the entry instead of adding one (spec §4.12).
+    pub fn record_or_update_newest(&mut self, entry: HistoryEntry) {
+        if entry.terms.is_empty() {
+            return;
+        }
+        match self.entries.first_mut() {
+            Some(newest) if newest.terms == entry.terms && newest.regex == entry.regex && newest.case_sensitive == entry.case_sensitive => {
+                *newest = entry;
+                // The updated entry may now equal an older one.
+                let newest = self.entries.remove(0);
+                self.entries.retain(|e| e != &newest);
+                self.entries.insert(0, newest);
+            }
+            _ => self.record(entry),
+        }
+    }
+
     pub fn load(path: &Path) -> Result<LoadOutcome, CoreError> {
         let (file, recovered) = load_json::<HistoryFile>(path)?;
         let mut history = History { entries: file.entries };
@@ -108,6 +126,26 @@ mod tests {
         assert_eq!(h.entries()[0].expression(), "t149");
         h.record(HistoryEntry::from_spec(&FilterSpec::default()));
         assert_eq!(h.entries()[0].expression(), "t149", "empty filters are not recorded");
+    }
+
+    #[test]
+    fn record_or_update_newest_replaces_a_context_only_change() {
+        let with_context = |expr: &str, context: u32| HistoryEntry::from_spec(&FilterSpec { context, ..FilterSpec::from_expression(expr) });
+        let mut h = History::default();
+        h.record(with_context("a", 0));
+        h.record(with_context("b", 0));
+        h.record_or_update_newest(with_context("b", 2));
+        assert_eq!(h.entries().len(), 2);
+        assert_eq!((h.entries()[0].expression(), h.entries()[0].context), ("b".to_string(), 2));
+        h.record_or_update_newest(with_context("a", 1));
+        assert_eq!(h.entries().len(), 3, "a different filter is a new entry");
+        assert_eq!(h.entries()[0].expression(), "a");
+        h.record_or_update_newest(HistoryEntry::from_spec(&FilterSpec::default()));
+        assert_eq!(h.entries().len(), 3, "empty filters are not recorded");
+        let mut regex = with_context("a", 1);
+        regex.regex = true;
+        h.record_or_update_newest(regex);
+        assert_eq!(h.entries().len(), 4, "a flag change is a new entry");
     }
 
     #[test]

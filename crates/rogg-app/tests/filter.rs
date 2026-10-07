@@ -109,8 +109,9 @@ fn applied_filters_are_recorded_in_history(cx: &mut TestAppContext) {
     doc.update(cx, |d, cx| d.set_context(2, cx));
     cx.update(|cx| {
         let store = cx.global::<HistoryStore>();
-        assert_eq!(store.entries().len(), 1, "a context-only change is not a new entry");
+        assert_eq!(store.entries().len(), 1, "a context-only change updates the entry instead of adding one");
         assert_eq!(store.entries()[0].expression(), "error || timeout");
+        assert_eq!(store.entries()[0].context, 2);
     });
     assert!(dir.path().join("history.json").exists());
 }
@@ -164,6 +165,8 @@ fn superseded_async_scan_never_leaks_results(cx: &mut TestAppContext) {
     assert!(found.iter().all(|l| l % 2 == 1), "only the newest scan's matches appear");
 }
 
+/// A smoke test: a cancelled worker winds down quickly anyway, so this cannot catch a synchronous drop. The
+/// no-blocking guarantee rests on `retire` (cancel, then join on a short-lived thread) in `Drop for Document`.
 #[gpui_kit::test]
 fn dropping_a_document_mid_scan_does_not_block(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
@@ -193,4 +196,18 @@ fn restarting_a_scan_discards_partial_results_of_the_previous_one(cx: &mut TestA
     let found = matches(&doc, cx);
     assert_eq!(found.len(), 5_000_000);
     assert!(found.iter().all(|l| l % 2 == 1), "only the newest scan's matches appear");
+}
+
+#[gpui_kit::test]
+fn progressive_views_skip_context_until_the_scan_finishes(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    let text: String = (0..10_000_000).map(|i| if i % 2 == 0 { "needle\n" } else { "filler\n" }).collect();
+    let spec = FilterSpec { context: 1, ..FilterSpec::from_expression("needle") };
+    let doc = doc_from(cx, text, DocumentInit { spec, ..Default::default() });
+    common::wait_until(cx, |cx| !matches(&doc, cx).is_empty());
+    assert!(doc.read_with(cx, |d, _| d.filter.progress.is_some()), "the scan must still be running");
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 0, "no context while the scan runs");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.view.context_lines()), 5_000_000, "the finished view applies the context");
 }

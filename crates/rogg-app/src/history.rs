@@ -32,4 +32,10 @@ impl HistoryStore {
         self.history.record(HistoryEntry::from_spec(spec));
         self.last_error = self.history.save(&self.path).err().map(|e| e.to_string());
     }
+
+    /// A context-only change updates the newest entry when it is the same filter (spec §4.12).
+    pub fn record_context(&mut self, spec: &FilterSpec) {
+        self.history.record_or_update_newest(HistoryEntry::from_spec(spec));
+        self.last_error = self.history.save(&self.path).err().map(|e| e.to_string());
+    }
 }
