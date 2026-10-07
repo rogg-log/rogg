@@ -65,6 +65,9 @@ pub struct Tab {
     pub follow: bool,
     pub live: LiveFollow,
     live_started: bool,
+    /// Whether the full log's end was in view just before its rows first grew (read before `extend_rows`, which
+    /// moves the end away); consumed by the first `Grew`.
+    end_in_view: Option<bool>,
     pub split: f32,
     pub labels: TabLabels,
     /// The pane ⌘F, ⌘G and Wrap act on.
@@ -105,6 +108,7 @@ impl Tab {
             follow: true,
             live: LiveFollow::default(),
             live_started: false,
+            end_in_view: None,
             split: MainWindowParts::DEFAULT_SPLIT,
             labels: init.labels,
             last_pane: Pane::Full,
@@ -125,15 +129,24 @@ impl Tab {
 
     fn on_doc_event(&mut self, ev: &DocumentEvent, cx: &mut Context<Self>) {
         match ev {
-            DocumentEvent::Reloaded => cx.emit(TabEvent::Toast(RELOADED_TOAST.into())),
+            DocumentEvent::Reloaded => {
+                // A reloaded file is not live until it grows again; a stream keeps following.
+                self.live = LiveFollow::default();
+                self.end_in_view = None;
+                let stream = matches!(self.doc.read(cx).source, Source::Stream { .. });
+                self.live_started = stream;
+                self.set_following(stream, cx);
+                cx.emit(TabEvent::Toast(RELOADED_TOAST.into()));
+            }
             DocumentEvent::Grew { lines } => {
+                let end_in_view = self.end_in_view.take();
                 if !self.doc.read(cx).is_live() {
                     return;
                 }
                 if !self.live_started {
                     // A file that starts growing follows when its end was in view (`tail -f`); else it waits, counting.
                     self.live_started = true;
-                    let following = self.full.read(cx).at_bottom();
+                    let following = end_in_view.unwrap_or_else(|| self.full.read(cx).at_bottom());
                     self.set_following(following, cx);
                     if !following {
                         self.live.new_lines = *lines;
@@ -209,6 +222,9 @@ impl Tab {
         let only_grew = !loaded && now.pins == before.pins && now.search[0] == before.search[0];
         self.applied = now;
         if let Some(rows) = full_rows {
+            if only_grew && !self.live_started && self.end_in_view.is_none() {
+                self.end_in_view = Some(self.full.read(cx).at_bottom());
+            }
             self.full.update(cx, |s, cx| if only_grew { s.extend_rows(rows, cx) } else { s.set_rows(rows, cx) });
         }
         if let Some(rows) = filtered_rows {

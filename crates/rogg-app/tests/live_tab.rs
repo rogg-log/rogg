@@ -1,5 +1,6 @@
 mod common;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, ScrollDelta, TestAppContext, point, px};
+use rogg_ui::logview::ScrollTo;
 use rogg_app::args::Args;
 use rogg_app::document::Source;
 use rogg_app::tab::{RELOADED_TOAST, Tab, TabInit};
@@ -41,7 +42,9 @@ fn streams_follow_new_lines_until_paused(cx: &mut TestAppContext) {
     assert!(!tab.read_with(cx, |t, _| t.live.following));
     append(&path, "a\nb\nc\nd\ne\n");
     common::wait_until(cx, |cx| lines(&tab, cx) == 206);
-    assert_eq!(tab.read_with(cx, |t, _| t.live.new_lines), 5);
+    assert_eq!(tab.read_with(cx, |t, _| (t.live.following, t.live.new_lines)), (false, 5));
+    common::render(cx, w);
+    assert!(common::exists(cx, w, "tool-live"), "the paused control stays in the header");
     common::render(cx, w);
     assert!(full.read_with(cx, |s, _| s.last_rows().last().unwrap().row) < 205, "paused: the view stays");
     common::click(cx, w, "tool-live");
@@ -91,4 +94,43 @@ fn a_truncated_file_reloads_with_a_toast(cx: &mut TestAppContext) {
     let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
     std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.as_ref() == RELOADED_TOAST)));
+}
+
+#[gpui_kit::test]
+fn a_file_scrolled_to_its_end_follows_when_it_grows(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let text: Vec<String> = (0..1000).map(|i| format!("l{i}")).collect();
+    let mut refs: Vec<&str> = text.iter().map(String::as_str).collect();
+    refs.push("");
+    let path = common::write_log(dir.path(), "long.log", &refs);
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    common::render(cx, w);
+    let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
+    let full = tab.read_with(cx, |t, _| t.full.clone());
+    full.update(cx, |s, cx| s.scroll_to_row(999, ScrollTo::Visible, cx));
+    common::render(cx, w);
+    assert!(full.read_with(cx, |s, _| s.at_bottom()), "the end is in view before the file grows");
+    append(&path, "more\nand more\n");
+    common::wait_until(cx, |cx| lines(&tab, cx) == 1002);
+    assert_eq!(tab.read_with(cx, |t, _| (t.live.following, t.live.new_lines)), (true, 0), "the end was in view: follow");
+    common::render(cx, w);
+    assert_eq!(full.read_with(cx, |s, _| s.last_rows().last().unwrap().row), 1001, "the newest line is in view");
+}
+
+#[gpui_kit::test]
+fn a_reloaded_file_is_not_live_until_it_grows_again(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let path = common::write_log(dir.path(), "t.log", &["a", "b", ""]);
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    common::render(cx, w);
+    let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
+    append(&path, "c\n");
+    common::wait_until(cx, |cx| lines(&tab, cx) == 3);
+    assert!(tab.read_with(cx, |t, _| t.live.following));
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+    common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.as_ref() == RELOADED_TOAST)));
+    assert_eq!(tab.read_with(cx, |t, _| t.live), Default::default());
+    assert!(!tab.read_with(cx, |t, cx| t.full.read(cx).tail()), "tail mode is off");
+    common::render(cx, w);
+    assert!(!common::exists(cx, w, "tool-live"), "not live until it grows again");
 }
