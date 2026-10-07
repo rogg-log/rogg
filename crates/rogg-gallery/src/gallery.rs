@@ -80,6 +80,7 @@ pub struct Inputs {
     pub find_query: Entity<InputState>,
     pub expression: Entity<InputState>,
     pub goto: Entity<InputState>,
+    pub form_text: Entity<InputState>,
 }
 
 pub struct GalleryView {
@@ -99,6 +100,7 @@ impl GalleryView {
             find_query: cx.new(|cx| InputState::new(window, cx).placeholder("Find in results").default_value("timeout")),
             expression: cx.new(|cx| InputState::new(window, cx).default_value("error || timeout || healthcheck || retry")),
             goto: cx.new(|cx| InputState::new(window, cx).placeholder("Line number, e.g. 120492")),
+            form_text: cx.new(|cx| InputState::new(window, cx).default_value("#e0c283")),
         };
         let rows = Rc::new(VecRows::new(fixtures::log_rows()));
         let log_compact = cx.new(|_| LogViewState::new(rows.clone()));

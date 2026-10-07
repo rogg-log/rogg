@@ -15,6 +15,7 @@ pub fn version() -> &'static str {
 }
 
 pub mod controls;
+pub mod form;
 
 use gpui_kit::{App, Window};
 use std::rc::Rc;

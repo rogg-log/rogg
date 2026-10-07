@@ -7,6 +7,7 @@ use rogg_ui::controls::{ActionButton, CompactSelect, FindField, FlagButton, Icon
 use rogg_ui::dialogs;
 use rogg_ui::empty;
 use rogg_ui::filter::{ChipState, FilterBand, FilterChip};
+use rogg_ui::form::{EditableRuleRow, FormRow, PaletteSlot, SectionLabel, Stepper, Swatch, TextField, Toggle};
 use rogg_ui::icons::IconName;
 use rogg_ui::logview::LogView;
 use rogg_ui::sidebar::{Sidebar, SidebarFooter};
@@ -143,6 +144,13 @@ fn controls(view: &GalleryView, p: &Palette) -> AnyElement {
         .child(FindField::new("find-query", view.inputs.find_query.clone()).count(Some("3 hits".into())))
         .child(Segmented::new("segmented", vec!["Compact".into(), "Comfortable".into()], 0))
         .child(CompactSelect::new("select", vec!["None".into(), "±1 line".into(), "±2 lines".into(), "±3 lines".into()], 0));
+    let swatch_colors = [p.error, p.amber, p.muted, p.faint, p.accent, p.hits[0].fg, p.hits[1].fg, p.hits[2].fg, p.hits[3].fg];
+    let form = row()
+        .child(Toggle::new("specimen-toggle-on", true))
+        .child(Toggle::new("specimen-toggle-off", false))
+        .child(Stepper::new("specimen-stepper", "12 px"))
+        .children(swatch_colors.into_iter().enumerate().map(|(i, c)| Swatch::new(SharedString::from(format!("specimen-swatch-{i}")), c).selected(i == 0)))
+        .child(TextField::new("specimen-text-field", view.inputs.form_text.clone()).mono(true).width(110.));
     div()
         .child(section("All icons (15px)", icons, p))
         .child(section("Icon buttons: normal, hover, title bar", buttons, p))
@@ -150,6 +158,7 @@ fn controls(view: &GalleryView, p: &Palette) -> AnyElement {
         .child(section("Tool buttons", tools, p))
         .child(section("Text and action buttons", text_buttons, p))
         .child(section("Fields", fields, p))
+        .child(section("Form controls: toggles, stepper, swatches, text field", form, p))
         .into_any_element()
 }
 
@@ -294,6 +303,37 @@ fn dialogs_page(view: &GalleryView, p: &Palette) -> AnyElement {
         .child(dialogs::statistics(&[("Matches".into(), "6 / 40 lines".into()), ("Pinned".into(), "1 (1 added)".into()), ("error".into(), "6 hits".into()), ("timeout".into(), "7 hits".into()), ("Scan time".into(), "0.4 ms".into())]))
         .child(dialogs::export(&[("Include context lines".into(), true), ("Include gap markers".into(), false), ("Prefix line numbers".into(), true)], noop_ix, Rc::new(|_, _| {})))
         .child(dialogs::go_to_line(view.inputs.goto.clone()))
+        .child(
+            rogg_ui::dialogs::DialogFrame::new("Highlighting · Services")
+                .child(
+                    div()
+                        .child(EditableRuleRow::new(0, p.error, "ERROR", "Line text + row tint · both panels").selected(true).can_move(false, true))
+                        .child(EditableRuleRow::new(1, p.amber, "WARN", "Line text · both panels"))
+                        .child(
+                            EditableRuleRow::new(2, p.accent, "(unclosed", "Line text")
+                                .enabled(false)
+                                .can_move(true, false)
+                                .error(Some("invalid regex: unclosed group".into())),
+                        ),
+                )
+                .child(SectionLabel::new("Filter-match palette"))
+                .child(
+                    row().children(p.hits.iter().enumerate().map(|(i, h)| PaletteSlot::new(i, h.fg, h.bg).selected(i == 0))),
+                ),
+        )
+        .child(
+            rogg_ui::dialogs::DialogFrame::new("Settings").child(SectionLabel::new("Appearance")).child(
+                div()
+                    .child(FormRow::new("settings-theme", "Theme").control(Segmented::new("settings-theme-seg", vec!["System".into(), "Dark".into(), "Light".into()], 0)))
+                    .child(FormRow::new("settings-ui-size", "UI font size").control(Stepper::new("settings-ui-size-stepper", "13 px")))
+                    .child(FormRow::new("settings-wrap", "Wrap lines").control(Toggle::new("settings-wrap-toggle", false)))
+                    .child(
+                        FormRow::new("settings-cache", "Cache limit")
+                            .hint("Extracted archive members and conversions")
+                            .control(Stepper::new("settings-cache-stepper", "2 GB")),
+                    ),
+            ),
+        )
         .child(div().w(px(500.)).text_size(px(11.)).text_color(p.faint).child("Every dialog renders here as a static specimen. The mockup replica shows them as modals over the window."))
         .into_any_element()
 }

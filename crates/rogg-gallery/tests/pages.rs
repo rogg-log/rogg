@@ -108,3 +108,33 @@ fn closing_tabs_follows_reference_active_tab_rules(cx: &mut TestAppContext) {
     });
     assert_eq!(state(cx), (vec!["a"], "a"), "closing the only tab is a no-op");
 }
+
+#[gpui_kit::test]
+fn form_specimens_render_on_the_component_pages(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
+    });
+    let ids = |page: Page| match page {
+        Page::Controls => ["specimen-toggle-on", "specimen-stepper", "specimen-text-field"].as_slice(),
+        _ => ["profile-rule-0", "palette-slot-0"].as_slice(),
+    };
+    for page in [Page::Controls, Page::Dialogs] {
+        let handle = cx.update(|cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds { origin: Point::default(), size: size(px(1440.), px(900.)) })),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, move |window, cx| cx.new(|cx| GalleryView::new(page, true, window, cx))).unwrap().0
+        });
+        cx.update_window(handle, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.render_frame(cx);
+            for &id in ids(page) {
+                assert!(window.try_find(id).is_some(), "{page:?} renders {id}");
+            }
+        })
+        .unwrap();
+    }
+}
