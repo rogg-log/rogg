@@ -10,13 +10,13 @@ pub const MAX_SPANS_PER_TERM: usize = 4096;
 
 enum Finder {
     Plain(AhoCorasick),
-    Regex(regex::Regex),
+    Regex(regex::bytes::Regex),
 }
 
 impl Finder {
     fn build(text: &str, regex: bool, case_sensitive: bool) -> Result<Self, CoreError> {
         if regex {
-            regex::RegexBuilder::new(text)
+            regex::bytes::RegexBuilder::new(text)
                 .case_insensitive(!case_sensitive)
                 .build()
                 .map(Finder::Regex)
@@ -34,9 +34,22 @@ impl Finder {
     fn ranges<'a>(&'a self, display: &'a str) -> Box<dyn Iterator<Item = Range<usize>> + 'a> {
         match self {
             Finder::Plain(ac) => Box::new(ac.find_iter(display).map(|m| m.range())),
-            Finder::Regex(re) => Box::new(re.find_iter(display).map(|m| m.range())),
+            Finder::Regex(re) => Box::new(re.find_iter(display.as_bytes()).map(|m| m.range())),
         }
     }
+}
+
+/// Widens `range` to the nearest char boundaries (byte regexes such as `(?-u)\xA9` can match mid-char).
+fn snap_to_char_boundaries(display: &str, range: Range<usize>) -> Range<usize> {
+    let mut start = range.start;
+    while !display.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = range.end.min(display.len());
+    while !display.is_char_boundary(end) {
+        end += 1;
+    }
+    start..end
 }
 
 pub struct Highlighter {
@@ -70,6 +83,7 @@ impl Highlighter {
         let mut owner = vec![u32::MAX; display.len()];
         for (term, finder) in &self.finders {
             for range in finder.ranges(display).filter(|r| !r.is_empty()).take(MAX_SPANS_PER_TERM) {
+                let range = snap_to_char_boundaries(display, range);
                 for slot in &mut owner[range] {
                     if *slot == u32::MAX {
                         *slot = *term as u32;
@@ -130,6 +144,8 @@ mod tests {
         for (r, _) in &spans {
             assert!(display.is_char_boundary(r.start) && display.is_char_boundary(r.end), "{r:?} in {display:?}");
         }
+        // Display is U+FFFD U+FFFD "timeout " "é" " t" U+FFFD "imeout": the ranges are exact byte offsets.
+        assert_eq!(spans, vec![(6..13, 0), (14..16, 1)]);
     }
 
     #[test]
@@ -145,5 +161,13 @@ mod tests {
         let line = "a ".repeat(10_000);
         let covered: usize = h.spans(&line, 4).iter().map(|(r, _)| r.len()).sum();
         assert_eq!(covered, MAX_SPANS_PER_TERM);
+    }
+
+    #[test]
+    fn byte_regexes_compile_and_snap_to_char_boundaries() {
+        assert!(Highlighter::new(&spec(&[(r"(?-u)\xFF", TermState::Include)], true)).is_ok());
+        let h = Highlighter::new(&spec(&[(r"(?-u)\xA9", TermState::Include)], true)).unwrap();
+        assert_eq!(h.spans("é", 4), vec![(0..2, 0)]);
+        assert_eq!(h.spans("aéb", 4), vec![(1..3, 0)]);
     }
 }

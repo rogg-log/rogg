@@ -211,4 +211,23 @@ mod tests {
         let q = SearchQuery { text: "time".into(), ..Default::default() }.compile().unwrap();
         assert_eq!(q.spans("Time to timeout"), vec![0..4, 8..12]);
     }
+
+    #[test]
+    fn byte_regex_compiles_for_search() {
+        let q = SearchQuery { text: r"(?-u)\xA9".into(), regex: true, ..Default::default() }.compile().unwrap();
+        assert_eq!(q.spans("é"), vec![0..2]);
+        assert!(SearchQuery { text: r"(?-u)\xFF".into(), regex: true, ..Default::default() }.compile().is_ok());
+    }
+
+    #[test]
+    fn wraparound_edges() {
+        let one = SearchResult { lines: vec![5] };
+        assert_eq!(one.next_after(None), Some(5));
+        assert_eq!(one.prev_before(None), Some(5));
+        assert_eq!(one.next_after(Some(5)), Some(5));
+        assert_eq!(one.prev_before(Some(5)), Some(5));
+        let none = SearchResult::default();
+        assert_eq!(none.next_after(None), None);
+        assert_eq!(none.prev_before(None), None);
+    }
 }
