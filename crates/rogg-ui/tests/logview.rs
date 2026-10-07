@@ -681,3 +681,31 @@ fn extend_rows_keeps_the_position_and_selection(cx: &mut TestAppContext) {
     render(cx, w);
     assert_eq!(state.read_with(cx, |s, _| (s.last_rows()[0].row, s.selected())), (first, Some(1040)));
 }
+
+#[gpui_kit::test]
+fn a_wheel_event_right_after_extend_rows_keeps_tail_mode(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{InputEvent, ScrollWheelEvent};
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let left = tail_left_count(cx, &state);
+    let w = open(cx, state.clone());
+    state.update(cx, |s, cx| s.set_tail(true, cx));
+    render(cx, w);
+    // Parks the pointer over the log (this wheel at the end changes nothing).
+    cx.update_window(w, |_, window, cx| window.scroll("log-test", ScrollDelta::Pixels(point(px(0.), px(-10.))), cx)).unwrap();
+    assert!(state.read_with(cx, |s, _| s.tail()));
+    let at = common::bounds(cx, w, "log-test").center();
+    // The wheel arrives before the next layout, as with a poll that appended rows between two frames (no redraw
+    // happens inside one `update_window`).
+    cx.update_window(w, |_, window, cx| {
+        state.update(cx, |s, cx| s.extend_rows(rows(300, None), cx));
+        let wheel = ScrollWheelEvent { position: at, delta: ScrollDelta::Pixels(point(px(0.), px(-50.))), ..Default::default() };
+        window.dispatch_event(wheel.to_platform_input(), cx);
+    })
+    .unwrap();
+    assert_eq!(*left.borrow(), 0, "no false TailLeft from a stale anchor");
+    assert!(state.read_with(cx, |s, _| s.tail()));
+    render(cx, w);
+    assert_eq!(last_visible(cx, &state), 299);
+}

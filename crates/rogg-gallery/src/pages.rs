@@ -181,9 +181,9 @@ fn sidebar(p: &Palette) -> AnyElement {
                 640.,
                 p,
                 Sidebar::new()
-                    .count("3 files".into())
+                    .count("2 files".into())
                     .rows(fixtures::sidebar_tree_rows())
-                    .footer(Some(SidebarFooter { title: "support-2026-10-05".into(), lines: vec!["3 files · 450 MB".into()] })),
+                    .footer(Some(SidebarFooter { title: "support-2026-10-05".into(), lines: vec!["2 files · 450 MB".into()] })),
             ),
             p,
         ))

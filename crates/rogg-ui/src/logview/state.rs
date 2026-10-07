@@ -140,10 +140,11 @@ impl LogViewState {
     }
 
     /// Like `set_rows` for rows that start with the current ones (lines were appended): keeps the scroll position, the
-    /// selection and the measured wrapped heights.
+    /// selection and the measured wrapped heights. In tail mode the anchor moves to the new end at once, so a wheel
+    /// event arriving before the next layout is not judged against the stale end.
     pub fn extend_rows(&mut self, rows: Rc<dyn LogRowSource>, cx: &mut Context<Self>) {
         self.rows = rows;
-        self.anchor = self.with_geometry(|g| g.clamp(self.anchor));
+        self.anchor = if self.tail { self.with_geometry(|g| g.bottom()) } else { self.with_geometry(|g| g.clamp(self.anchor)) };
         cx.notify();
     }
 
