@@ -1,7 +1,9 @@
 mod common;
 use gpui_kit::{AppContext, Entity, SharedString, TestAppContext};
+use rogg_app::args::Args;
 use rogg_app::cache::CacheStore;
 use rogg_app::document::{Document, DocumentInit, EngineConfig, LoadState, Source};
+use rogg_app::tab::TabInit;
 use rogg_core::source::SourceRef;
 use rogg_genlog::bundle::{BundleKind, damage_zip_member, write_archive, write_gz, write_stored_zip};
 use std::path::Path;
@@ -62,6 +64,27 @@ fn open_members_are_leased_until_their_tab_closes(cx: &mut TestAppContext) {
     cx.update(|_| {});
     cx.run_until_parked();
     assert_eq!(cache.evict_to(0).removed, 1, "closing the tab releases it");
+    assert_eq!(files_with_ext(cache.dir(), "member"), 0);
+}
+
+#[gpui_kit::test]
+fn a_closed_member_tab_releases_its_lease(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let zip = dir.path().join("bundle.zip");
+    write_archive(&zip, BundleKind::Zip, &[("a.log", b"a\n")]).unwrap();
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let tab = cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_source(member(&zip, "a.log"), TabInit::default(), window, cx))).unwrap();
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.doc.read(cx).text().is_some()));
+    let cache = cx.update(|cx| CacheStore::get(cx));
+    assert_eq!(files_with_ext(cache.dir(), "member"), 1);
+    assert_eq!(cache.evict_to(0).removed, 0, "the open tab leases its member");
+    // No handle of ours may keep the tab alive.
+    drop(tab);
+    common::press(cx, w, "cmd-w");
+    assert!(ws.read_with(cx, |ws, _| ws.tabs().is_empty()));
+    cx.update(|_| {});
+    cx.run_until_parked();
+    assert_eq!(cache.evict_to(0).removed, 1, "closing the tab leaves nothing holding the lease");
     assert_eq!(files_with_ext(cache.dir(), "member"), 0);
 }
 
