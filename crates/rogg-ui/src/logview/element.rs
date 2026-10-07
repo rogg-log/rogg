@@ -1,5 +1,5 @@
 use super::model::{LogRow, LogRowSource, Span};
-use super::state::{LogViewEvent, LogViewState, RowGeometry};
+use super::state::{Drag, LogViewEvent, LogViewState, RowGeometry};
 use super::text::{MAX_DISPLAY_BYTES, Segment, display_text, segments};
 use crate::icons::IconName;
 use crate::theme::{ActiveRoggTheme, Color, RoggTheme, size};
@@ -7,7 +7,7 @@ use crate::logview::RowTint;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, Entity, Font, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent,
+    HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     LineLayout, ShapedLine, SharedString, Style, TextAlign, TextRun, TransformationMatrix, Window, WrappedLine, fill, font, outline, point, px,
     relative, size as gsize,
 };
@@ -245,10 +245,20 @@ struct PaintRow {
     body: RowBody,
 }
 
+/// The horizontal scrollbar thumb (wrap off, lines wider than the panel).
+#[derive(Clone, Copy)]
+struct HBar {
+    thumb: Bounds<Pixels>,
+    track_left: f32,
+    /// Track width minus thumb width.
+    travel: f32,
+}
+
 pub struct LogViewPrepaint {
     hitbox: Hitbox,
     rows: Vec<PaintRow>,
     thumb: Option<Bounds<Pixels>>,
+    hbar: Option<HBar>,
     theme: RoggTheme,
     selection: Option<(u64, u64)>,
     force_hover_row: Option<usize>,
@@ -382,6 +392,22 @@ impl Element for LogViewElement {
         let font_id = window.text_system().resolve_font(&mono);
         let advance = window.text_system().ch_advance(font_id, theme.metrics.log_font_size).map(f32::from).unwrap_or(7.);
         self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));
+        let (max_x, wrap_now, scroll_x_now) = {
+            let s = self.state.read(cx);
+            (s.max_scroll_x, s.wrap(), s.scroll_x)
+        };
+        let hbar = (!wrap_now && max_x > 0.).then(|| {
+            let track_left = f32::from(text_left);
+            let track_w = (f32::from(bounds.right() - text_left) - size::SCROLL_THUMB_W - 6.).max(1.);
+            let len = (track_w * text_w / (text_w + max_x)).max(size::SCROLL_THUMB_MIN_H).min(track_w);
+            let travel = track_w - len;
+            let x = track_left + travel * (scroll_x_now / max_x).clamp(0., 1.);
+            HBar {
+                thumb: Bounds::new(point(px(x), bounds.bottom() - px(size::SCROLL_THUMB_W + 2.)), gsize(px(len), px(size::SCROLL_THUMB_W))),
+                track_left,
+                travel,
+            }
+        });
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (visible, rows_src, selection, force_hover_row, scroll_x, thumb) = {
@@ -413,7 +439,7 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x) }
+        LogViewPrepaint { hitbox, rows, thumb, hbar, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x) }
     }
 
     fn paint(
@@ -511,6 +537,9 @@ impl Element for LogViewElement {
             if let Some(thumb) = pre.thumb {
                 window.paint_quad(fill(thumb, p.scrollbar_thumb).corner_radii(Corners::all(px(3.))));
             }
+            if let Some(bar) = pre.hbar {
+                window.paint_quad(fill(bar.thumb, p.scrollbar_thumb).corner_radii(Corners::all(px(3.))));
+            }
         });
 
         let state = self.state.clone();
@@ -535,19 +564,58 @@ impl Element for LogViewElement {
                 RowBody::Gap(_) => None,
             })
             .collect();
+        let vthumb = pre.thumb;
+        let hbar = pre.hbar;
+        let track_top = bounds.top();
+        let track_bottom = bounds.bottom();
+        let track_h = f32::from(bounds.size.height);
+
         let state = self.state.clone();
+        let hitbox = pre.hitbox.clone();
+        let down_targets = targets.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
+            if phase != DispatchPhase::Bubble || e.button != MouseButton::Left || !hitbox.is_hovered(window) {
                 return;
             }
-            if let Some((hb, row, number)) = targets.iter().find(|(hb, _, _)| hb.is_hovered(window)) {
+            if let Some(thumb) = vthumb
+                && e.position.x >= thumb.left() - px(4.)
+            {
+                let grab = if thumb.contains(&e.position) { f32::from(e.position.y - thumb.top()) } else { f32::from(thumb.size.height) / 2. };
+                let thumb_h = f32::from(thumb.size.height);
+                state.update(cx, |s, cx| {
+                    s.drag = Some(Drag::VThumb { grab });
+                    s.drag_vthumb(f32::from(e.position.y - track_top) - grab, track_h, thumb_h);
+                    cx.notify();
+                });
+                cx.stop_propagation();
+                return;
+            }
+            if let Some(bar) = hbar
+                && e.position.y >= bar.thumb.top() - px(3.)
+                && f32::from(e.position.x) >= bar.track_left
+            {
+                let grab = if bar.thumb.contains(&e.position) { f32::from(e.position.x - bar.thumb.left()) } else { f32::from(bar.thumb.size.width) / 2. };
+                state.update(cx, |s, cx| {
+                    s.drag = Some(Drag::HThumb { grab });
+                    s.drag_hthumb(f32::from(e.position.x) - bar.track_left - grab, bar.travel);
+                    cx.notify();
+                });
+                cx.stop_propagation();
+                return;
+            }
+            if let Some((hb, row, number)) = down_targets.iter().find(|(hb, _, _)| hb.is_hovered(window)) {
                 let in_gutter = e.position.x < hb.bounds.left() + px(size::GUTTER_PIN_W);
-                let (row, number) = (*row, *number);
+                let (row, number, shift) = (*row, *number, e.modifiers.shift);
                 state.update(cx, |s, cx| {
                     if in_gutter {
                         cx.emit(LogViewEvent::TogglePin { number });
                     } else {
-                        s.set_selected(Some(number), cx);
+                        if shift {
+                            s.extend_selection(number, cx);
+                        } else {
+                            s.set_selected(Some(number), cx);
+                        }
+                        s.drag = Some(Drag::Select);
                         cx.emit(LogViewEvent::Selected { row, number });
                     }
                     cx.notify();
@@ -558,13 +626,75 @@ impl Element for LogViewElement {
 
         let row_hitboxes: Vec<(usize, Hitbox)> = pre.rows.iter().map(|r| (r.row, r.hitbox.clone())).collect();
         let hovered_now = row_hitboxes.iter().find(|(_, h)| h.is_hovered(window)).map(|(r, _)| *r);
-        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _| {
+        let state = self.state.clone();
+        window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
+            }
+            let drag = state.read(cx).drag;
+            if e.pressed_button == Some(MouseButton::Left)
+                && let Some(drag) = drag
+            {
+                match drag {
+                    Drag::VThumb { grab } => {
+                        if let Some(thumb) = vthumb {
+                            let thumb_h = f32::from(thumb.size.height);
+                            state.update(cx, |s, cx| {
+                                s.drag_vthumb(f32::from(e.position.y - track_top) - grab, track_h, thumb_h);
+                                cx.notify();
+                            });
+                        }
+                    }
+                    Drag::HThumb { grab } => {
+                        if let Some(bar) = hbar {
+                            state.update(cx, |s, cx| {
+                                s.drag_hthumb(f32::from(e.position.x) - bar.track_left - grab, bar.travel);
+                                cx.notify();
+                            });
+                        }
+                    }
+                    Drag::Select => {
+                        if let Some((_, row, number)) = targets.iter().find(|(hb, _, _)| hb.is_hovered(window)) {
+                            let (row, number) = (*row, *number);
+                            state.update(cx, |s, cx| {
+                                if s.selected != Some(number) {
+                                    s.extend_selection(number, cx);
+                                    cx.emit(LogViewEvent::Selected { row, number });
+                                }
+                            });
+                        } else if e.position.y < track_top {
+                            state.update(cx, |s, cx| {
+                                s.scroll_by_px(-s.row_h, 0.);
+                                cx.notify();
+                            });
+                        } else if e.position.y > track_bottom {
+                            state.update(cx, |s, cx| {
+                                s.scroll_by_px(s.row_h, 0.);
+                                cx.notify();
+                            });
+                        }
+                    }
+                }
+                return;
+            }
+            if drag.is_some() {
+                // The button was released outside the window.
+                state.update(cx, |s, _| s.drag = None);
             }
             let now = row_hitboxes.iter().find(|(_, h)| h.is_hovered(window)).map(|(r, _)| *r);
             if now != hovered_now {
                 window.refresh();
+            }
+        });
+
+        let state = self.state.clone();
+        window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble && e.button == MouseButton::Left {
+                state.update(cx, |s, cx| {
+                    if s.drag.take().is_some() {
+                        cx.notify();
+                    }
+                });
             }
         });
     }

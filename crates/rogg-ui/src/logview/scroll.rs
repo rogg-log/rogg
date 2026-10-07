@@ -134,6 +134,17 @@ impl ScrollGeometry<'_> {
         out
     }
 
+    /// Inverse of `thumb`: the anchor whose thumb top is at fraction `pos` of the content (0 = top).
+    pub fn at_position(&self, pos: f32) -> ScrollAnchor {
+        if self.row_count == 0 || pos <= 0. {
+            return self.top();
+        }
+        let exact = pos.min(1.) * self.row_count as f32;
+        let row = (exact.floor() as usize).min(self.row_count - 1);
+        let offset = (exact - row as f32) * (self.height_of)(row);
+        self.clamp(ScrollAnchor { row, offset })
+    }
+
     /// Scrollbar thumb as (top fraction, length fraction); None when everything fits.
     pub fn thumb(&self, a: ScrollAnchor) -> Option<(f32, f32)> {
         if self.row_count == 0 || self.bottom() == self.top() {
@@ -256,5 +267,17 @@ mod tests {
         let g = geo(1000, 230., &h);
         assert_eq!(g.row_top(40), ScrollAnchor { row: 40, offset: 0. });
         assert_eq!(g.row_top(999), g.bottom());
+    }
+
+    #[test]
+    fn at_position_inverts_thumb() {
+        let h = |_| 23.;
+        let g = geo(1000, 230., &h);
+        assert_eq!(g.at_position(0.), g.top());
+        let a = g.at_position(0.5);
+        assert_eq!(a.row, 500);
+        let (pos, _) = g.thumb(a).unwrap();
+        assert!((pos - 0.5).abs() < 1e-3);
+        assert_eq!(g.at_position(1.), g.bottom());
     }
 }

@@ -33,6 +33,15 @@ pub enum ScrollTo {
     Top,
 }
 
+/// A mouse drag in progress, started by a press on a row or a scrollbar thumb.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Drag {
+    Select,
+    /// `grab`: pointer offset from the thumb's top (or left) edge.
+    VThumb { grab: f32 },
+    HThumb { grab: f32 },
+}
+
 /// Scroll position, selection, wrap and layout caches for one log panel.
 pub struct LogViewState {
     pub(crate) rows: Rc<dyn LogRowSource>,
@@ -54,6 +63,7 @@ pub struct LogViewState {
     pub(crate) heights: HashMap<usize, f32>,
     pub(crate) heights_width: f32,
     pub(crate) last_rows: Vec<RowGeometry>,
+    pub(crate) drag: Option<Drag>,
     initialized: bool,
 }
 
@@ -77,6 +87,7 @@ impl LogViewState {
             heights: HashMap::new(),
             heights_width: 0.,
             last_rows: Vec::new(),
+            drag: None,
             initialized: false,
         }
     }
@@ -331,6 +342,23 @@ impl LogViewState {
         if !self.wrap {
             self.scroll_x = (self.scroll_x + dx).clamp(0., self.max_scroll_x.max(0.));
         }
+    }
+
+    /// Scrolls so the vertical thumb's top sits `thumb_top` px below the track top (thumb of `thumb_h` px in a
+    /// track of `track` px), using the same mapping the element uses to place the thumb.
+    pub(crate) fn drag_vthumb(&mut self, thumb_top: f32, track: f32, thumb_h: f32) {
+        let Some((_, len)) = self.thumb() else { return };
+        let travel = (track - thumb_h).max(1.);
+        let pos = (thumb_top / travel).clamp(0., 1.) * (1. - len);
+        self.anchor = self.with_geometry(|g| g.at_position(pos));
+    }
+
+    /// Scrolls horizontally so the thumb's left edge sits `thumb_left` px into a track with `travel` px of play.
+    pub(crate) fn drag_hthumb(&mut self, thumb_left: f32, travel: f32) {
+        if self.wrap {
+            return;
+        }
+        self.scroll_x = ((thumb_left / travel.max(1.)).clamp(0., 1.) * self.max_scroll_x).clamp(0., self.max_scroll_x);
     }
 }
 

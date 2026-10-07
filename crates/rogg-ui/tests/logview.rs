@@ -268,3 +268,109 @@ fn range_selection_copies_lines_with_and_without_numbers(cx: &mut TestAppContext
     state.update(cx, |s, cx| s.set_selected(Some(1008), cx));
     assert_eq!(state.read_with(cx, |s, _| s.selection_range()), Some((1008, 1008)), "a plain selection clears the range");
 }
+
+#[gpui_kit::test]
+fn dragging_over_rows_extends_the_selection(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(50, None)));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.drag(point(px(300.), px(4. + 23. + 10.)), point(px(300.), px(4. + 23. * 4. + 10.)), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(state.read_with(cx, |s, _| s.selection_range()), Some((1001, 1004)));
+}
+
+#[gpui_kit::test]
+fn dragging_the_scrollbar_thumb_scrolls(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(1000, None)));
+    let w = open(cx, state.clone());
+    // The thumb sits at the right edge (x 792..798), 24 px tall at the top of the 238 px track.
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.drag(point(px(795.), px(10.)), point(px(795.), px(117.)), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    assert!((400..600).contains(&first), "half-way thumb shows the middle rows, got {first}");
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), None, "grabbing the thumb does not select");
+}
+
+#[gpui_kit::test]
+fn dragging_the_horizontal_thumb_scrolls_long_lines(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let long = LogRow::Line(LogLine { number: 1, text: "x".repeat(500).into(), spans: vec![], pinned: false, context: false, tint: None });
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![long]))));
+    let w = open(cx, state.clone());
+    // The horizontal thumb starts at the text column (x = 89) and sits 2 px above the bottom (y 230..236).
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        window.drag(point(px(99.), px(233.)), point(px(299.), px(233.)), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(state.read_with(cx, |s, _| s.scroll_x()) > px(0.));
+}
+
+fn press_left(window: &mut gpui_kit::Window, at: gpui_kit::Point<gpui_kit::Pixels>, shift: bool, cx: &mut gpui_kit::App) {
+    use gpui_kit::{InputEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
+    let modifiers = Modifiers { shift, ..Default::default() };
+    window.dispatch_event(MouseDownEvent { button: MouseButton::Left, position: at, modifiers, click_count: 1, first_mouse: false }.to_platform_input(), cx);
+    window.dispatch_event(MouseUpEvent { button: MouseButton::Left, position: at, modifiers, click_count: 1 }.to_platform_input(), cx);
+}
+
+#[gpui_kit::test]
+fn shift_click_extends_from_the_selected_line(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(50, None)));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        press_left(window, point(px(300.), px(4. + 23. + 10.)), false, cx);
+        window.render_frame(cx);
+        press_left(window, point(px(300.), px(4. + 23. * 3. + 10.)), true, cx);
+        window.render_frame(cx);
+        // The press is released: a later move with a stale pressed button must not keep extending.
+        let stale = gpui_kit::MouseMoveEvent { position: point(px(300.), px(4. + 23. * 6. + 10.)), pressed_button: Some(gpui_kit::MouseButton::Left), modifiers: Default::default() };
+        window.dispatch_event(gpui_kit::InputEvent::to_platform_input(stale), cx);
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.selection_range()), Some((1001, 1003)));
+}
+
+#[gpui_kit::test]
+fn clicking_the_scrollbar_track_centres_the_thumb_on_the_pointer(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(1000, None)));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        press_left(window, point(px(795.), px(200.)), false, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    assert!(first > 600, "a click low in the track jumps far down, got {first}");
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), None);
+}
+
+#[gpui_kit::test]
+fn dragging_below_the_panel_scrolls_and_keeps_extending(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.drag(point(px(300.), px(4. + 10.)), point(px(300.), px(600.)), cx);
+    })
+    .unwrap();
+    let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    assert!(first > 0, "pointer below the panel auto-scrolls");
+}
