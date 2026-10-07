@@ -38,3 +38,12 @@ fn sample_lines_follow_the_reference_formula() {
     assert_eq!(demo::line_text(0), "2026-10-05 14:32:08.142  INFO   server       request started method=POST path=/v1/payments request_id=req_8f29");
     assert_eq!(demo::sample_bytes().iter().filter(|&&b| b == b'\n').count(), 39);
 }
+
+#[gpui_kit::test]
+fn demo_with_files_shows_the_demo_first(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let file = common::write_log(dir.path(), "mine.log", &["x"]);
+    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![file] });
+    let title = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).title(cx).to_string());
+    assert_eq!(title, rogg_app::demo::TABS[0]);
+}

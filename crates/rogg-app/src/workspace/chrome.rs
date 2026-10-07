@@ -63,6 +63,11 @@ fn classify(path: &Path) -> PathKind {
     }
 }
 
+/// Two spellings of one file: equal paths, or equal canonical paths once both exist.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+}
+
 impl Workspace {
     /// Opens each path: folders and archives as sidebar roots (spec §4.1), files in a tab (or by activating the tab
     /// already showing them). Opened files, folders and archives are recorded in Recent.
@@ -163,7 +168,7 @@ impl Workspace {
     }
 
     fn open_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let existing = self.tabs.iter().position(|t| t.read(cx).doc.read(cx).source.path() == Some(path.as_path()));
+        let existing = self.tabs.iter().position(|t| t.read(cx).doc.read(cx).source.path().is_some_and(|p| same_file(p, &path)));
         match existing {
             Some(index) => self.activate(index, window, cx),
             None => {
@@ -414,9 +419,9 @@ impl Workspace {
         });
     }
 
-    /// Sidebar edge drag: the sidebar starts at the window's left edge, so its width is the pointer's x.
-    pub fn drag_sidebar(&mut self, x: Pixels, cx: &mut Context<Self>) {
-        self.sidebar_width = x.clamp(px(size::SIDEBAR_MIN_W), px(size::SIDEBAR_MAX_W));
+    /// Sidebar edge drag: sets the sidebar's width, clamped to 155–360 px.
+    pub fn drag_sidebar(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        self.sidebar_width = width.clamp(px(size::SIDEBAR_MIN_W), px(size::SIDEBAR_MAX_W));
         cx.notify();
     }
 

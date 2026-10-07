@@ -320,8 +320,14 @@ impl Workspace {
             .on_action(keys::unless_dialog(cx, |ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
             .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
-            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| ws.drag_band(e.event.position.y, cx)))
-            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| ws.drag_sidebar(e.event.position.x, cx))),
+            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| {
+                let top = e.drag(cx).band_top(e.event.position.y);
+                ws.drag_band(top, cx);
+            }))
+            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| {
+                let width = e.drag(cx).width(e.event.position.x);
+                ws.drag_sidebar(width, cx);
+            })),
             cx,
         )
     }

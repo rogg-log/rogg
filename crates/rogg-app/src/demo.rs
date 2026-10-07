@@ -143,8 +143,9 @@ pub fn sidebar() -> FixedSidebar {
 /// Opens the demo in `ws`: the bundle sidebar and the three reference tabs, api.log active.
 pub fn open(ws: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     ws.set_fixed_sidebar(sidebar(), cx);
+    let first = ws.tabs().len();
     for name in TABS {
         ws.open_source(source(name), init(name), window, cx);
     }
-    ws.activate(0, window, cx);
+    ws.activate(first, window, cx);
 }

@@ -130,3 +130,18 @@ fn unreadable_recent_and_history_files_toast_at_start(cx: &mut TestAppContext) {
     assert!(toasts.iter().any(|m| m.contains("history.json.bak")) && toasts.iter().any(|m| m.contains("recent.json.bak")));
     assert!(dir.path().join("recent.json.bak").exists());
 }
+
+#[gpui_kit::test]
+fn one_tab_per_file_whatever_the_path_spelling(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    let raw = dir.path().join("sub/../late.log");
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![raw] });
+    assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1, "a missing file opens an error tab");
+    common::write_log(dir.path(), "late.log", &["here"]);
+    let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
+    doc.update(cx, |d, cx| d.retry(cx));
+    let canonical = dir.path().join("late.log").canonicalize().unwrap();
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_paths(vec![canonical], window, cx))).unwrap();
+    assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1, "the same file activates its tab");
+}

@@ -5,7 +5,7 @@ use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, CursorStyle, EmptyView, Entity, SharedString, TestSupportExt, Window, div, px};
+use gpui_kit::{AnyElement, App, CursorStyle, EmptyView, Entity, Pixels, Point, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -379,7 +379,10 @@ impl RenderOnce for FilterBand {
                         .h(px(9.))
                         .pt(px(2.))
                         .cursor(CursorStyle::ResizeRow)
-                        .on_drag(BandDrag, |_, _, _, cx| cx.new(|_| EmptyView))
+                        .on_drag(BandDrag::default(), |drag: &BandDrag, offset: Point<Pixels>, _, cx| {
+                            drag.grab.set(f32::from(offset.y));
+                            cx.new(|_| EmptyView)
+                        })
                         .child(div().w(px(30.)).h(px(3.)).rounded(px(5.)).bg(p.band_handle)),
                 ),
             )

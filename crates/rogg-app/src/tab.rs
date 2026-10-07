@@ -229,6 +229,14 @@ impl Tab {
         }
         if let Some(rows) = filtered_rows {
             self.filtered.update(cx, |s, cx| s.set_rows(rows, cx));
+            // The tab's selection may become shown only now (a background scan finished, a filter changed): select it
+            // in the filtered pane too, without scrolling (M2 carry-over).
+            if let Some(number) = self.selection
+                && self.filtered.read(cx).selected().is_none()
+                && self.filtered.read(cx).rows().row_for_number(number).is_some()
+            {
+                self.filtered.update(cx, |s, cx| s.set_selected(Some(number), cx));
+            }
         }
         if loaded && let Some(number) = self.pending_selection.take() {
             let in_filtered = self.filtered.read(cx).rows().row_for_number(number).is_some();

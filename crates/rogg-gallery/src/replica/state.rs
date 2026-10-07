@@ -145,10 +145,10 @@ impl ReplicaState {
         let mut bottom_rows = Vec::new();
         let mut prev: Option<usize> = None;
         for &i in &self.filtered.visible {
-            if let Some(prev) = prev {
-                if i > prev + 1 {
-                    bottom_rows.push(LogRow::Gap { omitted: (i - prev - 1) as u64 });
-                }
+            if let Some(prev) = prev
+                && i > prev + 1
+            {
+                bottom_rows.push(LogRow::Gap { omitted: (i - prev - 1) as u64 });
             }
             bottom_rows.push(LogRow::Line(self.line(i, true, !self.filtered.anchors.contains(&i), &q_bottom)));
             prev = Some(i);
@@ -171,10 +171,11 @@ impl ReplicaState {
                 let i = (*number - FIRST_LINE_NUMBER) as usize;
                 self.selected = Some(i);
                 self.status_selection = Some(i);
-                if from_bottom && self.follow {
-                    if let Some(row) = self.top.read(cx).rows().row_for_number(*number) {
-                        self.top.update(cx, |s, cx| s.center_on_row(row, cx));
-                    }
+                if from_bottom
+                    && self.follow
+                    && let Some(row) = self.top.read(cx).rows().row_for_number(*number)
+                {
+                    self.top.update(cx, |s, cx| s.center_on_row(row, cx));
                 }
                 self.rebuild(cx);
             }

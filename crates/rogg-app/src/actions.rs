@@ -8,6 +8,9 @@ gpui_kit::actions!(
     rogg,
     [
         Quit,
+        Hide,
+        HideOthers,
+        ShowAll,
         OpenFile,
         OpenFolder,
         CloseTab,
@@ -115,6 +118,8 @@ pub fn shortcuts() -> Vec<Shortcut> {
         shortcut!("Toggle sidebar", "⌘ \\", "cmd-\\", ToggleSidebar, WS),
         shortcut!("Close dialog / cancel", "Esc", "escape", Dismiss, WS),
         shortcut!("Minimize", "⌘ M", "cmd-m", Minimize, None),
+        shortcut!("Hide rogg", "⌘ H", "cmd-h", Hide, None),
+        shortcut!("Hide others", "⌥ ⌘ H", "alt-cmd-h", HideOthers, None),
         shortcut!("Quit", "⌘ Q", "cmd-q", Quit, None),
     ]
 }
@@ -143,6 +148,12 @@ mod tests {
             let context = binding.predicate().map(|p| format!("{p:?}"));
             assert!(seen.insert((keys.clone(), context.clone())), "duplicate binding {keys:?} in {context:?}");
         }
+    }
+
+    #[test]
+    fn hide_is_bound_to_cmd_h() {
+        let rows = shortcut_rows();
+        assert!(rows.iter().any(|(label, keys)| label == "Hide rogg" && keys == "⌘ H"));
     }
 
     #[test]

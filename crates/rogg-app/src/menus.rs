@@ -1,4 +1,4 @@
-//! Native menu bar (spec §5.9): File, Edit, View and Window.
+//! Native menu bar (spec §5.9): rogg, File, Edit, View and Window.
 
 use crate::actions::*;
 use gpui_kit::{Menu, MenuItem, OsAction, SharedString};
@@ -12,7 +12,13 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
         .map(|(index, e)| MenuItem::action(SharedString::from(e.label()), OpenRecent { index }))
         .collect();
     vec![
-        Menu::new("rogg").items([MenuItem::action("Quit rogg", Quit)]),
+        Menu::new("rogg").items([
+            MenuItem::action("Hide rogg", Hide),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action("Quit rogg", Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("Open…", OpenFile),
             MenuItem::action("Open Folder…", OpenFolder),
@@ -51,6 +57,8 @@ mod tests {
         let menus = app_menus(&[RecentEntry::file("/var/log/a.log"), RecentEntry::folder("/logs")]);
         let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
         assert_eq!(names, ["rogg", "File", "Edit", "View", "Window"]);
+        let app = &menus[0];
+        assert_eq!(app.items.len(), 5, "Hide rogg, Hide Others, Show All, separator, Quit rogg");
         let file = &menus[1];
         let recent = file.items.iter().find_map(|i| match i {
             MenuItem::Submenu(m) if m.name.as_ref() == "Open Recent" => Some(m),

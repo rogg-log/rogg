@@ -1,6 +1,6 @@
 use crate::theme::{ActiveRoggTheme, size};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Bounds, CursorStyle, EmptyView, Pixels, TestSupportExt, Window, canvas, div, px, relative};
+use gpui_kit::{AnyElement, App, Bounds, CursorStyle, EmptyView, Pixels, Point, TestSupportExt, Window, canvas, div, px, relative};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -33,13 +33,38 @@ pub struct SingleParts {
     pub overlay: Option<AnyElement>,
 }
 
-/// Drag payload of the filter band handle; the app turns it into a split ratio with `LayoutMeasure`.
-#[derive(Clone, Copy, Debug)]
-pub struct BandDrag;
+/// The filter band's handle being dragged. `grab` is where the pointer took the handle (px below its top), recorded
+/// when the drag starts so the band does not jump.
+#[derive(Clone, Default)]
+pub struct BandDrag {
+    pub grab: Rc<Cell<f32>>,
+}
 
-/// Drag payload of the sidebar's right edge; the app turns the pointer x into a sidebar width.
-#[derive(Clone, Copy, Debug)]
-pub struct SidebarDrag;
+impl BandDrag {
+    /// The handle sits 4 px above the band's top edge (`filter.rs`).
+    const HANDLE_ABOVE: f32 = 4.;
+
+    /// Where the band's top edge goes for the pointer at `y`.
+    pub fn band_top(&self, y: Pixels) -> Pixels {
+        y - px(self.grab.get()) + px(Self::HANDLE_ABOVE)
+    }
+}
+
+/// The sidebar's resize edge being dragged; `grab` is the pointer's offset into the 6 px edge.
+#[derive(Clone, Default)]
+pub struct SidebarDrag {
+    pub grab: Rc<Cell<f32>>,
+}
+
+impl SidebarDrag {
+    /// The edge starts 3 px left of the sidebar's right edge.
+    const EDGE_INSET: f32 = 3.;
+
+    /// The sidebar width for the pointer at `x` (the sidebar starts at the window's left edge).
+    pub fn width(&self, x: Pixels) -> Pixels {
+        x - px(self.grab.get()) + px(Self::EDGE_INSET)
+    }
+}
 
 /// Bounds of the main column and the filter band, recorded during layout so a band drag can be mapped to a
 /// split ratio.
@@ -113,6 +138,21 @@ fn recorder(measure: Rc<LayoutMeasure>, band: bool) -> impl IntoElement {
     .inset_0()
 }
 
+/// Keeps the dragged handle's cursor for the whole drag: `set_window_cursor_style` overrides every hitbox cursor, and
+/// this only applies while a drag with a cursor is active.
+fn drag_cursor() -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        |_, _, window, cx| {
+            if let Some(style) = cx.active_drag_cursor_style() {
+                window.set_window_cursor_style(style);
+            }
+        },
+    )
+    .absolute()
+    .size_0()
+}
+
 fn side(sidebar: Option<AnyElement>, resizable: bool) -> Option<AnyElement> {
     sidebar.map(|s| {
         div()
@@ -131,7 +171,10 @@ fn side(sidebar: Option<AnyElement>, resizable: bool) -> Option<AnyElement> {
                         .right(px(-3.))
                         .w(px(6.))
                         .cursor(CursorStyle::ResizeColumn)
-                        .on_drag(SidebarDrag, |_, _, _, cx| cx.new(|_| EmptyView)),
+                        .on_drag(SidebarDrag::default(), |drag: &SidebarDrag, offset: Point<Pixels>, _, cx| {
+                            drag.grab.set(f32::from(offset.x));
+                            cx.new(|_| EmptyView)
+                        }),
                 )
             })
             .into_any_element()
@@ -199,6 +242,7 @@ impl RenderOnce for MainWindowLayout {
                             ),
                     )
                     .children(parts.overlay)
+                    .child(drag_cursor())
             }
             Body::Single(parts) => root
                 .child(parts.titlebar)
@@ -223,7 +267,8 @@ impl RenderOnce for MainWindowLayout {
                                 .children(parts.status),
                         ),
                 )
-                .children(parts.overlay),
+                .children(parts.overlay)
+                .child(drag_cursor()),
         }
     }
 }
@@ -244,5 +289,15 @@ mod tests {
         assert!((half - 0.5).abs() < 1e-4, "{half}");
         assert_eq!(m.split_at(px(0.)), Some(0.1));
         assert_eq!(m.split_at(px(2000.)), Some(0.9));
+    }
+
+    #[test]
+    fn drags_keep_the_grab_offset() {
+        let band = BandDrag::default();
+        band.grab.set(6.);
+        assert_eq!(band.band_top(px(100.)), px(98.), "handle grabbed 6 px into it, 4 px above the band");
+        let side = SidebarDrag::default();
+        side.grab.set(1.);
+        assert_eq!(side.width(px(250.)), px(252.), "edge grabbed 1 px into it, 3 px left of the sidebar edge");
     }
 }

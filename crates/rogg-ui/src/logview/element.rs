@@ -1,6 +1,6 @@
 use super::model::{LogRow, LogRowSource, Span};
 use super::state::{ContextTarget, Drag, LogViewEvent, LogViewState, RowGeometry};
-use super::text::{MAX_DISPLAY_BYTES, Segment, display_text, segments, token_at};
+use super::text::{MAX_DISPLAY_BYTES, MAX_DISPLAY_TEXT_BYTES, Segment, display_text, segments, token_at};
 use crate::icons::IconName;
 use crate::theme::{ActiveRoggTheme, Color, RoggTheme, size};
 use crate::logview::RowTint;
@@ -40,7 +40,7 @@ impl IntoElement for LogViewElement {
 }
 
 enum Shaped {
-    Line(ShapedLine),
+    Line(Box<ShapedLine>),
     Wrapped(Vec<WrappedLine>),
 }
 
@@ -333,7 +333,7 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font
             RowBody::Gap(window.text_system().shape_line(label, px(9.), &runs, None))
         }
         LogRow::Line(line) => {
-            let (display, truncated) = display_text(&line.text, MAX_DISPLAY_BYTES);
+            let (display, truncated) = display_text(&line.text, MAX_DISPLAY_TEXT_BYTES);
             let cut = if truncated { display.len() - '…'.len_utf8() } else { display.len() };
             let spans = clip_spans(&line.spans, &display, cut);
             let display: SharedString = display.into();
@@ -351,7 +351,7 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font
                 Some(w) => Shaped::Wrapped(
                     window.text_system().shape_text(display, font_size, &runs, Some(w), None).map(|v| v.into_vec()).unwrap_or_default(),
                 ),
-                None => Shaped::Line(window.text_system().shape_line(display, font_size, &runs, None)),
+                None => Shaped::Line(Box::new(window.text_system().shape_line(display, font_size, &runs, None))),
             };
             RowBody::Line { number: line.number, number_line, text, pinned: line.pinned, tint: line.tint, marks, outlines }
         }

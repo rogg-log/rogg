@@ -1,8 +1,9 @@
 mod common;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, point, px};
 use rogg_app::args::Args;
-use rogg_app::document::Pane;
-use rogg_app::tab::Tab;
+use rogg_app::document::{DocumentInit, EngineConfig, Pane, Source};
+use rogg_app::tab::{Tab, TabInit};
+use rogg_core::filter::FilterSpec;
 use rogg_app::workspace::Workspace;
 
 const LINES: [&str; 8] = ["ok start", "ERROR disk full", "retry 1", "timeout talking to db", "ok", "ERROR timeout again", "healthcheck ERROR", "done"];
@@ -123,4 +124,18 @@ fn not_yet_buttons_explain_themselves(cx: &mut TestAppContext) {
     common::click(cx, w, "tool-open-tab");
     assert_eq!(ws.read_with(cx, |ws, _| ws.toasts.len()), 1);
     assert!(common::exists(cx, w, "toast-0"));
+}
+
+#[gpui_kit::test]
+fn a_selection_shown_after_a_background_scan_is_selected_in_the_filtered_pane(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let lines: Vec<String> = (0..50_000).map(|i| if i % 100 == 0 { format!("needle {i}") } else { format!("hay {i}") }).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let path = common::write_log(dir.path(), "big.log", &refs);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let init = TabInit { doc: DocumentInit { spec: FilterSpec::from_expression("needle"), ..Default::default() }, selection: Some(201), ..Default::default() };
+    let tab = cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_source(Source::File(path), init, window, cx))).unwrap();
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.doc.read(cx).filter.progress.is_none() && t.doc.read(cx).text().is_some()));
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.filtered.read(cx).selected() == Some(201)));
 }

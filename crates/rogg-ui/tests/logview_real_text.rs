@@ -139,9 +139,11 @@ fn right_click_takes_the_word_under_the_pointer(cx: &mut HeadlessAppContext) {
     }
 }
 
+type Case = (&'static str, fn(&mut HeadlessAppContext));
+
 fn main() {
     let mut cx = headless();
-    let cases: [(&str, fn(&mut HeadlessAppContext)); 3] = [
+    let cases: [Case; 3] = [
         ("spans_inside_multibyte_chars_render_without_panicking", spans_inside_multibyte_chars_render_without_panicking),
         ("dense_hit_line_renders_a_frame_quickly", dense_hit_line_renders_a_frame_quickly),
         ("right_click_takes_the_word_under_the_pointer", right_click_takes_the_word_under_the_pointer),

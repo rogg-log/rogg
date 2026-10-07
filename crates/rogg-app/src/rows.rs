@@ -17,12 +17,22 @@ use std::sync::Arc;
 /// Colour slots in the filter-hit palette (spec §5.1).
 const HIT_SLOTS: usize = 4;
 
-/// At most `MAX_DISPLAY_BYTES` + 4 bytes of line `i`, lossily decoded: enough for the log view to cut the line
-/// at the display limit and append `…`, without decoding a multi-megabyte line.
+/// Line `i` for display (spec §4.4): a line over `MAX_DISPLAY_BYTES` is cut there — never inside a UTF-8 character —
+/// and marked with `…`; invalid bytes become U+FFFD. Only the kept bytes are decoded, so a multi-megabyte line costs
+/// no more than a 64 KB one.
 pub fn display_line(text: &LogText, i: u64) -> SharedString {
     let raw = text.line(i);
-    let cut = raw.len().min(MAX_DISPLAY_BYTES + 4);
-    String::from_utf8_lossy(&raw[..cut]).into_owned().into()
+    if raw.len() <= MAX_DISPLAY_BYTES {
+        return String::from_utf8_lossy(raw).into_owned().into();
+    }
+    // Back up over continuation bytes (at most 3) so the cut falls before a character, not inside it.
+    let mut cut = MAX_DISPLAY_BYTES;
+    while cut > MAX_DISPLAY_BYTES - 3 && raw[cut] & 0xC0 == 0x80 {
+        cut -= 1;
+    }
+    let mut display = String::from_utf8_lossy(&raw[..cut]).into_owned();
+    display.push('…');
+    display.into()
 }
 
 fn decorated(display: SharedString, number: u64, pinned: bool, context: bool, hits: Vec<Span>, search: Option<&CompiledSearch>) -> LogLine {
@@ -251,7 +261,8 @@ mod tests {
         let long = format!("{} needle", "a".repeat(70_000));
         let t = text(&[&long]);
         let display = display_line(&t, 0);
-        assert_eq!(display.len(), MAX_DISPLAY_BYTES + 4, "only a little past the display limit is decoded");
+        assert_eq!(display.len(), MAX_DISPLAY_BYTES + '…'.len_utf8(), "cut at the limit and marked");
+        assert!(display.ends_with('…'));
         let spec = FilterSpec::from_expression("needle || a");
         let view = FilteredView::build(Arc::new(vec![0]), &BTreeSet::new(), 0, 1, |_| false);
         let search = Arc::new(SearchQuery { text: "aaa".into(), regex: false, case_sensitive: false }.compile().unwrap());
@@ -259,5 +270,25 @@ mod tests {
         let row = line(rows.row(0));
         assert!(row.spans.iter().all(|s| s.range.end <= row.text.len()), "spans stay inside the display text");
         assert_eq!(rows.copy_text(0).map(|s| s.len()), Some(long.len()));
+    }
+
+    #[test]
+    fn invalid_bytes_in_a_short_line_are_not_marked_as_cut() {
+        let t = Arc::new(LogText::from_bytes(vec![0xFF; 30_000]));
+        let display = display_line(&t, 0);
+        assert_eq!(display.chars().count(), 30_000, "every invalid byte becomes one U+FFFD");
+        assert!(!display.ends_with('…'));
+        let (shown, cut) = rogg_ui::logview::text::display_text(&display, rogg_ui::logview::text::MAX_DISPLAY_TEXT_BYTES);
+        assert!(!cut && shown.len() == display.len(), "the log view keeps it whole");
+    }
+
+    #[test]
+    fn the_display_cut_never_splits_a_character() {
+        let mut raw = vec![b'a'; MAX_DISPLAY_BYTES - 1];
+        raw.extend("é".as_bytes()); // straddles the limit
+        raw.extend(b"tail");
+        let t = Arc::new(LogText::from_bytes(raw));
+        let display = display_line(&t, 0);
+        assert_eq!(display.as_ref(), format!("{}…", "a".repeat(MAX_DISPLAY_BYTES - 1)));
     }
 }

@@ -20,7 +20,8 @@ pub fn setup_with(cx: &mut TestAppContext, appearance: Appearance, density: Dens
 }
 
 /// A view that renders whatever the closure builds; used to host RenderOnce components.
-pub struct Host(pub Box<dyn Fn(&mut Window, &mut App) -> AnyElement>);
+type Build = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+pub struct Host(pub Build);
 
 impl Render for Host {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

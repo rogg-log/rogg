@@ -60,4 +60,7 @@ pub fn install_globals(cx: &mut App, paths: AppPaths) {
     cx.set_global(paths);
     actions::bind(cx);
     cx.on_action(|_: &actions::Quit, cx| cx.quit());
+    cx.on_action(|_: &actions::Hide, cx| cx.hide());
+    cx.on_action(|_: &actions::HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &actions::ShowAll, cx| cx.unhide_other_apps());
 }

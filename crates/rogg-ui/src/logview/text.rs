@@ -5,6 +5,11 @@ use std::ops::Range;
 /// Lines longer than this are cut for display (spec §4.4); matching still sees the full line.
 pub const MAX_DISPLAY_BYTES: usize = 64 * 1024;
 
+/// The log view cuts decoded text only beyond this. Row producers cut raw lines at `MAX_DISPLAY_BYTES` before decoding
+/// and mark the cut themselves; decoding can triple a line's size (each invalid byte becomes a 3-byte U+FFFD), so a
+/// short line full of invalid bytes still fits.
+pub const MAX_DISPLAY_TEXT_BYTES: usize = 3 * MAX_DISPLAY_BYTES + 3;
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Segment {
     pub range: Range<usize>,
@@ -310,7 +315,7 @@ mod tests {
         for i in 0..10 {
             let pos = i * (LINE_LEN / 10);
             if pos < LINE_LEN {
-                let seg = segs.iter().find(|s| s.range.contains(&pos)).expect(&format!("no segment at {}", pos));
+                let seg = segs.iter().find(|s| s.range.contains(&pos)).unwrap_or_else(|| panic!("no segment at {pos}"));
                 assert!(seg.hit_bg.is_some());
             }
         }
