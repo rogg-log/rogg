@@ -30,10 +30,10 @@ bench:
     cargo test -p rogg-core --release --test memory -- --ignored --nocapture
 
 run *args:
-    cargo run -p rogg-app -- {{args}}
+    cargo run --release -p rogg-app -- {{args}}
 
 demo:
-    cargo run -p rogg-app -- --demo
+    cargo run --release -p rogg-app -- --demo
 
 visual-app:
     cd tools/visual-diff && ROGG_VISUAL_PAGE=app npm run all

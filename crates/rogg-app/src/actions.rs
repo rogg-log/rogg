@@ -112,6 +112,7 @@ pub fn shortcuts() -> Vec<Shortcut> {
         shortcut!("Toggle follow selection", "⇧ ⌘ F", "shift-cmd-f", ToggleFollow, WS),
         shortcut!("Toggle sidebar", "⌘ \\", "cmd-\\", ToggleSidebar, WS),
         shortcut!("Close dialog / cancel", "Esc", "escape", Dismiss, WS),
+        shortcut!("Minimize", "⌘ M", "cmd-m", Minimize, None),
         shortcut!("Quit", "⌘ Q", "cmd-q", Quit, None),
     ]
 }
@@ -140,6 +141,12 @@ mod tests {
             let context = binding.predicate().map(|p| format!("{p:?}"));
             assert!(seen.insert((keys.clone(), context.clone())), "duplicate binding {keys:?} in {context:?}");
         }
+    }
+
+    #[test]
+    fn minimize_is_bound_to_cmd_m() {
+        let rows = shortcut_rows();
+        assert!(rows.iter().any(|(label, keys)| label == "Minimize" && keys == "⌘ M"));
     }
 
     #[test]
