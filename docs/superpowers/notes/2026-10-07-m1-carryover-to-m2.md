@@ -25,3 +25,5 @@ Engine contracts M2 (main window wiring) must honor, and known limits deliberate
 - `run_filter` result peak is about 182 MB at 8.5 M matches.
 - Cancelling inside a single huge line (hundreds of MB, no newline) takes 100+ ms.
 - SIGBUS on external truncation of a mapped file (planned for M3).
+- UTF-16 transcode partials (`<dst>.<pid>.<n>.partial`) are left behind if the process is killed mid-transcode or the final rename fails. Sweep `*.partial` in the cache directory at startup (M2/M3).
+- An empty regex term matches every line, while an empty plain term never matches. This is only reachable programmatically, because `split_expression` drops empty terms. Never build a `Term` from empty text.
