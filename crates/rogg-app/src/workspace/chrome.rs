@@ -1,56 +1,26 @@
 //! Tab management, the sidebar, recent files, open prompts, drag-and-drop and the split handles.
 
 use super::{Workspace, act_ix};
-use crate::document::{LoadState, Source};
+use crate::cache::CacheStore;
+use crate::document::{LoadState, POLL_INTERVAL, Source};
 use crate::history::HistoryStore;
 use crate::menus;
 use crate::recent::RecentStore;
 use crate::sidebar_model::{self, FixedSidebar, OpenFile, RowAction, SidebarEntry, SidebarGroup};
+use crate::sources::{TreeJob, TreeResult};
 use crate::tab::TabInit;
 use gpui_kit::{AnyElement, App, BorrowAppContext, Context, Entity, EntityId, IntoElement, PathPromptOptions, Pixels, SharedString, Window, px};
-use rogg_core::encoding::Encoding;
+use rogg_core::archive::{ArchiveKind, Content, sniff};
+use rogg_core::folder::MAX_SCAN_FILES;
 use rogg_core::recent::RecentEntry;
+use rogg_core::source::SourceRef;
 use rogg_core::stats::{group_digits, noun};
+use rogg_core::tree::{Listing, NodeId, NodeKind};
 use rogg_ui::sidebar::{RecentItem, Sidebar, SidebarFooter};
 use rogg_ui::theme::size;
 use std::collections::HashSet;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-
-/// Open Folder (M2) opens at most this many files: the regular, non-hidden text files directly inside the folder.
-/// Recursive folder trees and archives arrive with folder sources (M3).
-pub const FOLDER_FILE_LIMIT: usize = 50;
-
-/// The regular, non-hidden files directly in `dir` that look like text (no NUL byte in the first 8 KB, unless the
-/// file starts with a UTF-16 BOM), sorted by name, at most `FOLDER_FILE_LIMIT`.
-pub fn folder_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut candidates = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with('.') || !entry.file_type()?.is_file() {
-            continue;
-        }
-        candidates.push(entry.path());
-    }
-    candidates.sort();
-    // Probe lazily, in name order, so a big folder reads at most what it takes to find the first 50 text files.
-    Ok(candidates.into_iter().filter(|p| looks_like_text(p)).take(FOLDER_FILE_LIMIT).collect())
-}
-
-fn looks_like_text(path: &Path) -> bool {
-    let Ok(mut file) = std::fs::File::open(path) else { return false };
-    let mut head = [0u8; 8192];
-    let mut len = 0;
-    while len < head.len() {
-        match file.read(&mut head[len..]) {
-            Ok(0) => break,
-            Ok(n) => len += n,
-            Err(_) => return false,
-        }
-    }
-    Encoding::detect(&head[..len]).is_utf16() || !head[..len].contains(&0)
-}
 
 /// The Recent list as the sidebar and welcome view show it. Reads only the store's cached missing flags, so a
 /// render never touches the filesystem.
@@ -66,19 +36,39 @@ pub fn recent_items(cx: &App) -> Vec<RecentItem> {
         .unwrap_or_default()
 }
 
+/// What an opened or dropped path holds.
+enum PathKind {
+    Folder,
+    Archive(ArchiveKind, u64),
+    File,
+}
+
+fn classify(path: &Path) -> PathKind {
+    let Ok(meta) = std::fs::metadata(path) else { return PathKind::File };
+    if meta.is_dir() {
+        return PathKind::Folder;
+    }
+    match sniff(path) {
+        Ok(Content::Archive(kind)) => PathKind::Archive(kind, meta.len()),
+        _ => PathKind::File,
+    }
+}
+
 impl Workspace {
-    /// Opens each path: folders through `open_folder`, files in a tab or by activating the tab already showing them.
-    /// Files that exist are recorded in Recent.
+    /// Opens each path: folders and archives as sidebar roots (spec §4.1), files in a tab (or by activating the tab
+    /// already showing them). Opened files, folders and archives are recorded in Recent.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         for path in paths {
             let path = path.canonicalize().unwrap_or(path);
-            if path.is_dir() {
-                self.open_folder(path, window, cx);
-            } else {
-                if path.exists() {
-                    self.record_recent(RecentEntry::file(&path), cx);
+            match classify(&path) {
+                PathKind::Folder => self.open_folder(path, window, cx),
+                PathKind::Archive(kind, size) => self.open_archive(path, kind, size, true, window, cx),
+                PathKind::File => {
+                    if path.exists() {
+                        self.record_recent(RecentEntry::file(&path), cx);
+                    }
+                    self.open_file(path, window, cx);
                 }
-                self.open_file(path, window, cx);
             }
         }
     }
@@ -93,17 +83,154 @@ impl Workspace {
         }
     }
 
+    /// A folder becomes a tree root, scanned on a background thread; its first log opens when the scan arrives.
     pub fn open_folder(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        match folder_files(&dir) {
-            Ok(files) if files.is_empty() => self.toast(format!("No text files in {}", dir.display()), cx),
-            Ok(files) => {
-                self.record_recent(RecentEntry::folder(&dir), cx);
-                for file in files {
-                    self.open_file(file, window, cx);
+        self.record_recent(RecentEntry::folder(&dir), cx);
+        if let Some(root) = self.sources.tree.root_for(&dir) {
+            self.sources.expanded.insert(root);
+            cx.notify();
+            return;
+        }
+        let root = self.sources.tree.add_root(&dir, NodeKind::Folder, None);
+        self.sources.tree.set_listing(root, Listing::Listing);
+        self.sources.expanded.insert(root);
+        self.sources.open_first.insert(root);
+        self.sources.jobs.push(TreeJob::scan(root, dir));
+        self.ensure_tree_polling(window, cx);
+        cx.notify();
+    }
+
+    /// An archive becomes a tree root, listed on a background thread; with `open_first`, its first log opens when the
+    /// listing arrives.
+    pub fn open_archive(&mut self, path: PathBuf, kind: ArchiveKind, size: u64, open_first: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if open_first {
+            self.record_recent(RecentEntry::file(&path), cx);
+        }
+        if let Some(root) = self.sources.tree.root_for(&path) {
+            self.sources.expanded.insert(root);
+            cx.notify();
+            return;
+        }
+        let root = self.sources.tree.add_root(&path, NodeKind::Archive(kind), Some(size));
+        self.sources.expanded.insert(root);
+        if open_first {
+            self.sources.open_first.insert(root);
+        }
+        self.start_listing(root, window, cx);
+        cx.notify();
+    }
+
+    fn start_listing(&mut self, node: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = self.sources.tree.node(node).source.clone() else { return };
+        self.sources.tree.set_listing(node, Listing::Listing);
+        self.sources.jobs.push(TreeJob::list(node, source, CacheStore::get(cx)));
+        self.ensure_tree_polling(window, cx);
+    }
+
+    fn ensure_tree_polling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sources.polling {
+            return;
+        }
+        self.sources.polling = true;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                match this.update_in(cx, |ws, window, cx| ws.poll_tree(window, cx)) {
+                    Ok(true) => continue,
+                    _ => break,
                 }
             }
-            Err(e) => self.toast(format!("Could not read {}: {e}", dir.display()), cx),
+        })
+        .detach();
+    }
+
+    /// Applies finished scans and listings; returns whether any job is still running.
+    fn poll_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let mut finished = Vec::new();
+        self.sources.jobs.retain(|job| match job.poll() {
+            Some(result) => {
+                finished.push((job.node, result));
+                false
+            }
+            None => true,
+        });
+        for (node, result) in finished {
+            let name = self.sources.tree.node(node).name.clone();
+            match result {
+                TreeResult::Scanned(Ok(scan)) => {
+                    self.sources.tree.insert_folder(node, &scan);
+                    if scan.files.is_empty() {
+                        self.toast(format!("No log files in {name}"), cx);
+                    }
+                    if scan.truncated {
+                        self.toast(format!("{name}: showing the first {} files", group_digits(MAX_SCAN_FILES as u64)), cx);
+                    }
+                }
+                TreeResult::Listed(Ok(entries)) => self.sources.tree.insert_listing(node, &entries),
+                TreeResult::Scanned(Err(e)) | TreeResult::Listed(Err(e)) => {
+                    self.sources.tree.set_listing(node, Listing::Failed(e.to_string()));
+                    self.toast(format!("Could not read {name}: {e}"), cx);
+                }
+                TreeResult::Died => {
+                    self.sources.tree.set_listing(node, Listing::Failed("stopped unexpectedly".into()));
+                    self.toast(format!("Could not read {name}: stopped unexpectedly"), cx);
+                }
+            }
+            if self.sources.open_first.remove(&node)
+                && let Some(first) = self.sources.tree.first_openable(node)
+            {
+                self.open_node(first, false, window, cx);
+            }
         }
+        cx.notify();
+        let active = !self.sources.jobs.is_empty();
+        if !active {
+            self.sources.polling = false;
+        }
+        active
+    }
+
+    /// The tab showing `source`.
+    fn tab_for(&self, source: &SourceRef, cx: &App) -> Option<usize> {
+        self.tabs.iter().position(|t| t.read(cx).doc.read(cx).source.source_ref().as_ref() == Some(source))
+    }
+
+    /// Opens a file or member row (or activates the tab showing it). `record` puts it in Recent: true for the user's
+    /// clicks, false when a folder or archive opens its first log by itself.
+    pub fn open_node(&mut self, id: NodeId, record: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = self.sources.tree.node(id).source.clone() else { return };
+        self.open_source_ref(source, record, window, cx);
+    }
+
+    fn open_source_ref(&mut self, source: SourceRef, record: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tab_for(&source, cx) {
+            self.activate(index, window, cx);
+            return;
+        }
+        if record {
+            let entry = match &source {
+                SourceRef::File(path) => RecentEntry::file(path),
+                SourceRef::Member { .. } => RecentEntry::member(source.root_path(), source.member_chain().iter().map(|m| m.to_string()).collect()),
+            };
+            self.record_recent(entry, cx);
+        }
+        let document = match source {
+            SourceRef::File(path) => Source::File(path),
+            member => Source::Member(member),
+        };
+        self.open_source(document, TabInit::default(), window, cx);
+    }
+
+    /// Folder and archive rows expand and collapse; an archive is listed the first time it opens.
+    pub fn toggle_node(&mut self, id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sources.expanded.remove(&id) {
+            self.sources.expanded.insert(id);
+            let node = self.sources.tree.node(id);
+            if matches!(node.kind, NodeKind::Archive(_)) && node.listing == Listing::Pending {
+                self.start_listing(id, window, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// ⌘O / ⇧⌘O: the native open panel.
@@ -127,8 +254,15 @@ impl Workspace {
             cx.update_global::<RecentStore, _>(|s, _| s.remove(&entry.path));
             self.refresh_menus(cx);
             self.toast(format!("{} no longer exists and was removed from Recent", entry.label()), cx);
-        } else {
-            self.open_paths(vec![entry.path], window, cx);
+            return;
+        }
+        match (entry.source(), classify(&entry.path)) {
+            // An archive member: the archive appears in the sidebar and the member opens.
+            (Some(member), PathKind::Archive(kind, size)) => {
+                self.open_archive(entry.path.clone(), kind, size, false, window, cx);
+                self.open_source_ref(member, true, window, cx);
+            }
+            _ => self.open_paths(vec![entry.path], window, cx),
         }
     }
 
@@ -220,6 +354,7 @@ impl Workspace {
                     path: d.source.path().map(Path::to_path_buf),
                     bytes: d.text().map(|text| text.bytes().len() as u64),
                     failed: matches!(d.load, LoadState::Failed { .. }),
+                    source: d.source.source_ref(),
                 }
             })
             .collect()
@@ -243,7 +378,13 @@ impl Workspace {
     fn active_footer(&self, cx: &App) -> Option<SidebarFooter> {
         let tab = self.active_tab()?;
         let d = tab.read(cx).doc.read(cx);
-        let mut lines: Vec<SharedString> = vec![d.source.path().and_then(Path::parent).map(|p| p.display().to_string()).unwrap_or_else(|| "In memory".into()).into()];
+        if let Some(node) = d.source.source_ref().and_then(|s| self.sources.tree.find(&s)) {
+            return Some(sidebar_model::tree_footer(&self.sources.tree, self.sources.tree.root_of(node)));
+        }
+        let mut lines: Vec<SharedString> = vec![match d.source.path().and_then(Path::parent) {
+            Some(dir) => dir.display().to_string().into(),
+            None => d.source.location(),
+        }];
         if let Some(text) = d.text() {
             let n = text.line_count();
             lines.push(format!("{} {} · {}", group_digits(n), noun(n, "line", "lines"), crate::format::format_size(text.bytes().len() as u64)).into());
@@ -251,19 +392,38 @@ impl Workspace {
         Some(SidebarFooter { title: d.title(), lines })
     }
 
+    /// The footer the sidebar shows now (tests).
+    pub fn sidebar_footer(&self, cx: &App) -> Option<SidebarFooter> {
+        match &self.fixed_sidebar {
+            Some(fixed) => Some(fixed.footer.clone()),
+            None => self.active_footer(cx),
+        }
+    }
+
     pub(crate) fn sidebar(&self, this: &Entity<Self>, cx: &App) -> Option<AnyElement> {
         if !self.sidebar_visible {
             return None;
         }
         let files = self.open_files(cx);
-        let groups = self.sidebar_groups(&files);
-        let failed: HashSet<EntityId> = files.iter().filter(|f| f.failed).map(|f| f.tab).collect();
         let active = self.active_tab().map(|t| t.entity_id());
-        let (rows, actions) = sidebar_model::rows_with_failures(&groups, active, &self.collapsed, &failed);
-        let file_count: u64 = groups.iter().map(|g| g.entries.len() as u64).sum();
-        let (count, footer, recent) = match &self.fixed_sidebar {
-            Some(fixed) => (fixed.count.clone(), Some(fixed.footer.clone()), fixed.recent.clone()),
-            None => (format!("{file_count} {}", noun(file_count, "file", "files")).into(), self.active_footer(cx), recent_items(cx)),
+        let failed: HashSet<EntityId> = files.iter().filter(|f| f.failed).map(|f| f.tab).collect();
+        let (rows, actions, count, recent) = match &self.fixed_sidebar {
+            Some(fixed) => {
+                let groups = self.sidebar_groups(&files);
+                let (rows, actions) = sidebar_model::rows_with_failures(&groups, active, &self.collapsed, &failed);
+                (rows, actions, fixed.count.clone(), fixed.recent.clone())
+            }
+            None => {
+                let tree = &self.sources.tree;
+                let (mut rows, mut actions) = sidebar_model::tree_rows(tree, &self.sources.expanded, &files, active);
+                // Files opened on their own (not from a folder or archive) keep the M2 grouping by folder.
+                let loose: Vec<OpenFile> = files.into_iter().filter(|f| f.source.as_ref().is_none_or(|s| tree.find(s).is_none())).collect();
+                let (more_rows, more_actions) = sidebar_model::rows_with_failures(&sidebar_model::group_open_files(&loose), active, &self.collapsed, &failed);
+                rows.extend(more_rows);
+                actions.extend(more_actions);
+                let total = tree.roots().iter().map(|&r| tree.summary(r).files).sum::<u64>() + loose.len() as u64;
+                (rows, actions, format!("{total} {}", noun(total, "file", "files")).into(), recent_items(cx))
+            }
         };
         let actions = Rc::new(actions);
         Some(
@@ -272,7 +432,7 @@ impl Workspace {
                 .count(count)
                 .rows(rows)
                 .recent(recent)
-                .footer(footer)
+                .footer(self.sidebar_footer(cx))
                 .on_row(act_ix(this, move |ws, i, window, cx| {
                     if let Some(action) = actions.get(i).cloned() {
                         ws.sidebar_action(action, window, cx);
@@ -299,35 +459,9 @@ impl Workspace {
             RowAction::Open(source, init) => {
                 self.open_source(source, init, window, cx);
             }
+            RowAction::ToggleNode(id) => self.toggle_node(id, window, cx),
+            RowAction::OpenNode(id) => self.open_node(id, true, window, cx),
             RowAction::Nothing => {}
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn folder_files_skips_hidden_binary_and_nested() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("b.log"), "text").unwrap();
-        std::fs::write(dir.path().join("a.log"), "text").unwrap();
-        std::fs::write(dir.path().join(".hidden"), "text").unwrap();
-        std::fs::write(dir.path().join("image.png"), [137, 80, 78, 71, 0, 0]).unwrap();
-        std::fs::create_dir(dir.path().join("nested")).unwrap();
-        let names: Vec<String> = folder_files(dir.path()).unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["a.log", "b.log"]);
-    }
-
-    #[test]
-    fn folder_files_keeps_the_first_fifty_by_name() {
-        let dir = tempfile::tempdir().unwrap();
-        for i in 0..(FOLDER_FILE_LIMIT + 10) {
-            std::fs::write(dir.path().join(format!("f{i:03}.log")), "text").unwrap();
-        }
-        let names: Vec<String> = folder_files(dir.path()).unwrap().iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        let expected: Vec<String> = (0..FOLDER_FILE_LIMIT).map(|i| format!("f{i:03}.log")).collect();
-        assert_eq!(names, expected);
     }
 }

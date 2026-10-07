@@ -16,6 +16,7 @@ pub mod paths;
 pub mod recent;
 pub mod rows;
 pub mod sidebar_model;
+pub mod sources;
 pub mod tab;
 pub mod tab_view;
 pub mod window;

@@ -83,26 +83,6 @@ fn rendering_recent_never_stats_the_filesystem(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn folders_open_their_text_files(cx: &mut TestAppContext) {
-    let dir = common::setup(cx);
-    let logs = dir.path().join("logs");
-    std::fs::create_dir(&logs).unwrap();
-    common::write_log(&logs, "one.log", &["1"]);
-    common::write_log(&logs, "two.log", &["2"]);
-    common::write_log(&logs, ".hidden.log", &["h"]);
-    std::fs::write(logs.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
-    std::fs::write(logs.join("utf16.log"), [0xFF, 0xFE, b'h', 0, b'i', 0]).unwrap();
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![logs.clone()] });
-    let titles: Vec<String> = ws.read_with(cx, |ws, cx| ws.tabs().iter().map(|t| t.read(cx).title(cx).to_string()).collect());
-    assert_eq!(titles, ["one.log", "two.log", "utf16.log"]);
-    cx.update(|cx| {
-        let entries = cx.global::<RecentStore>().entries();
-        assert_eq!(entries.len(), 1, "the folder is recorded, not each file");
-        assert!(entries[0].is_folder);
-    });
-}
-
-#[gpui_kit::test]
 fn drag_handles_resize_panes_and_sidebar(cx: &mut TestAppContext) {
     let (_dir, w, ws) = open_two(cx);
     let band = common::bounds(cx, w, "filter-band");

@@ -2,6 +2,7 @@
 
 use crate::error::CoreError;
 use crate::persist::{load_json, save_json};
+use crate::source::SourceRef;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -12,20 +13,40 @@ pub struct RecentEntry {
     pub path: PathBuf,
     #[serde(default)]
     pub is_folder: bool,
+    /// For an archive: the member chain of the last member opened in it (spec §6.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
 }
 
 impl RecentEntry {
     pub fn file(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), is_folder: false }
+        Self { path: path.into(), is_folder: false, members: Vec::new() }
     }
 
     pub fn folder(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), is_folder: true }
+        Self { path: path.into(), is_folder: true, members: Vec::new() }
     }
 
-    /// The last path component, for list labels.
+    /// An archive with the member last opened in it (outermost member first, for nested archives).
+    pub fn member(archive: impl Into<PathBuf>, members: Vec<String>) -> Self {
+        Self { path: archive.into(), is_folder: false, members }
+    }
+
+    /// The member to reopen; None for files and folders.
+    pub fn source(&self) -> Option<SourceRef> {
+        if self.members.is_empty() {
+            return None;
+        }
+        Some(self.members.iter().fold(SourceRef::File(self.path.clone()), |archive, m| SourceRef::member(archive, m.clone())))
+    }
+
+    /// The list label: the last path component, or `incident.zip › api.log` for an archive member.
     pub fn label(&self) -> String {
-        self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| self.path.display().to_string())
+        let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| self.path.display().to_string());
+        match self.source() {
+            Some(source) => format!("{name} › {}", source.name()),
+            None => name,
+        }
     }
 
     /// True when the path no longer exists; such entries render faint (spec §6.3).
@@ -136,5 +157,24 @@ mod tests {
         assert_eq!(RecentEntry::file(&present).label(), "here.log");
         assert!(!RecentEntry::file(&present).is_missing());
         assert!(RecentEntry::file(dir.path().join("gone.log")).is_missing());
+    }
+
+    #[test]
+    fn archive_entries_remember_their_member() {
+        let entry = RecentEntry::member("/b/incident.zip", vec!["nested/inner.tgz".into(), "app/x.log".into()]);
+        assert_eq!(entry.label(), "incident.zip › x.log");
+        assert_eq!(
+            entry.source(),
+            Some(SourceRef::member(SourceRef::member(SourceRef::File("/b/incident.zip".into()), "nested/inner.tgz"), "app/x.log"))
+        );
+        assert_eq!(RecentEntry::file("/a.log").source(), None);
+        let json = serde_json::to_string(&RecentEntry::file("/a.log")).unwrap();
+        assert!(!json.contains("members"), "plain entries keep the M2 format: {json}");
+        let old: RecentEntry = serde_json::from_str(r#"{"path":"/x.zip","is_folder":false}"#).unwrap();
+        assert!(old.members.is_empty());
+        let mut list = RecentList::default();
+        list.record(RecentEntry::file("/b/incident.zip"));
+        list.record(RecentEntry::member("/b/incident.zip", vec!["api.log".into()]));
+        assert_eq!(list.entries().len(), 1, "one entry per archive: the last opened member");
     }
 }
