@@ -102,6 +102,20 @@ fn add_term_appends_or_restates(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn add_term_matches_the_literal_word_in_regex_mode(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    let doc = doc_from(cx, ["x a.b{ y", "axb", "a.b{", "other"].join("\n"), DocumentInit::default());
+    doc.update(cx, |d, cx| d.toggle_regex(cx));
+    doc.update(cx, |d, cx| d.add_term("a.b{", false, cx));
+    doc.read_with(cx, |d, _| assert!(d.filter.error.is_none(), "the escaped word is a valid regex: {:?}", d.filter.error));
+    assert_eq!(matches(&doc, cx), [0, 2], "only lines with the literal text");
+    doc.update(cx, |d, cx| d.add_term("a.b{", true, cx));
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.terms.len()), 1, "the escaped term is found again");
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.terms[0].state), TermState::Exclude);
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.terms[0].text.clone()), r"a\.b\{");
+}
+
+#[gpui_kit::test]
 fn applied_filters_are_recorded_in_history(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let doc = small_doc(cx);

@@ -3,4 +3,4 @@ mod compiled;
 mod spec;
 
 pub use compiled::{CompiledFilter, ScanResult};
-pub use spec::{FilterSpec, MAX_CONTEXT, Term, TermCounts, TermState, join_expression, split_expression};
+pub use spec::{FilterSpec, MAX_CONTEXT, Term, TermCounts, TermState, join_expression, literal_term, split_expression};

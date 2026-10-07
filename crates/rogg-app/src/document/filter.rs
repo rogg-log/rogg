@@ -7,7 +7,7 @@ use crate::history::HistoryStore;
 use gpui_kit::{BorrowAppContext, Context, SharedString};
 use rogg_core::CancelToken;
 use rogg_core::engine::{DEFAULT_CHUNK_LINES, FilterEvent, FilterJob, run_filter};
-use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState};
+use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState, literal_term};
 use rogg_core::highlight::Highlighter;
 use rogg_core::stats::FilterStats;
 use rogg_core::view::FilteredView;
@@ -169,6 +169,8 @@ impl Document {
     pub fn add_term(&mut self, text: &str, exclude: bool, cx: &mut Context<Self>) {
         let state = if exclude { TermState::Exclude } else { TermState::Include };
         let mut spec = self.filter.spec.clone();
+        // In regex mode the word must match itself, not act as a pattern.
+        let text = literal_term(text, spec.regex);
         match spec.terms.iter_mut().find(|t| t.text == text) {
             Some(term) => term.state = state,
             None => spec.terms.push(Term::new(text, state)),

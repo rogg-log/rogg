@@ -52,6 +52,12 @@ pub struct TermCounts {
     pub off: usize,
 }
 
+/// The text a new term gets when it stands for the literal `text` (Filter on / Exclude a word): regex-escaped when
+/// the filter is in regex mode, so the word matches itself and nothing else.
+pub fn literal_term(text: &str, regex: bool) -> String {
+    if regex { regex::escape(text) } else { text.to_string() }
+}
+
 /// Splits on `||`, honouring `\|\|` as a literal `||`; trims terms and drops empty ones (spec §4.6).
 pub fn split_expression(text: &str) -> Vec<String> {
     let mut terms = Vec::new();
@@ -140,6 +146,18 @@ impl FilterSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literal_term_escapes_only_in_regex_mode() {
+        let word = "{payments_v2:true,";
+        assert_eq!(literal_term(word, false), word);
+        let escaped = literal_term(word, true);
+        assert_ne!(escaped, word);
+        let re = regex::Regex::new(&escaped).expect("the escaped word compiles");
+        assert!(re.is_match(&format!("x {word} y")));
+        assert!(!re.is_match("{payments_v2:true"), "the punctuation is literal");
+        assert!(regex::Regex::new(word).is_err(), "unescaped it is not even a regex");
+    }
 
     #[test]
     fn splits_on_double_pipe_trims_and_drops_empty() {
