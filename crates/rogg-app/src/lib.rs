@@ -7,10 +7,13 @@ pub mod actions;
 pub mod args;
 pub mod decorate;
 pub mod document;
+pub mod format;
 pub mod history;
 pub mod menus;
 pub mod paths;
+pub mod recent;
 pub mod rows;
+pub mod sidebar_model;
 pub mod tab;
 pub mod tab_view;
 pub mod window;
@@ -38,13 +41,15 @@ pub fn init_with(cx: &mut App, paths: AppPaths) {
     gpui_kit::init(cx);
     RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
     install_globals(cx, paths);
-    cx.set_menus(menus::app_menus(&[]));
+    let recent = cx.global::<recent::RecentStore>().entries().to_vec();
+    cx.set_menus(menus::app_menus(&recent));
 }
 
 /// App globals and key bindings only, for hosts that initialise gpui-kit and the theme themselves (the gallery).
 pub fn install_globals(cx: &mut App, paths: AppPaths) {
     cx.set_global(document::EngineConfig::default());
     cx.set_global(history::HistoryStore::load(paths.history.clone()));
+    cx.set_global(recent::RecentStore::load(paths.recent.clone()));
     cx.set_global(paths);
     actions::bind(cx);
     cx.on_action(|_: &actions::Quit, cx| cx.quit());

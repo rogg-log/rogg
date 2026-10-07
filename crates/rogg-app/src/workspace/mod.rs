@@ -1,36 +1,44 @@
 //! The main window view: title bar, tabs, sidebar, dialogs, toasts and the app's actions.
 
-use crate::actions::{self, Dismiss, OpenFile, OpenFolder, ShowShortcuts};
+pub mod chrome;
+
+use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenFile, OpenFolder, OpenRecent, PrevTab, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::Source;
+use crate::history::HistoryStore;
+use crate::recent::RecentStore;
+use crate::sidebar_model::FixedSidebar;
 use crate::tab::{Tab, TabEvent, TabInit};
 use crate::tab_view::{self, TabBody};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, Pixels, SharedString, Stateful, Subscription, Window, div, px};
+use gpui_kit::{
+    AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, ExternalPaths, FocusHandle, Pixels, ScrollHandle, SharedString, Stateful, Subscription,
+    Window, div, px,
+};
 use rogg_ui::dialogs::{self, ModalLayer};
 use rogg_ui::empty;
-use rogg_ui::layout::{LayoutMeasure, MainWindowLayout, MainWindowParts, SingleParts};
+use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, SidebarDrag, SingleParts};
 use rogg_ui::theme::size;
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
 /// How long a toast stays up.
 const TOAST_TIME: Duration = Duration::from_secs(4);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub enum Dialog {
     Shortcuts,
+    AllTabs,
+    History,
 }
 
 pub struct Workspace {
     pub(crate) focus: FocusHandle,
-    #[expect(dead_code)] // read by the layout once the sidebar arrives (Task 12)
-    pub(crate) sidebar_visible: bool,
-    pub(crate) sidebar_width: Pixels,
+    pub sidebar_visible: bool,
+    pub sidebar_width: Pixels,
     pub(crate) dialog: Option<Dialog>,
     pub(crate) tabs: Vec<Entity<Tab>>,
     pub(crate) active: usize,
@@ -39,6 +47,9 @@ pub struct Workspace {
     pub toasts: Vec<(u64, SharedString)>,
     next_toast: u64,
     traffic_lights: bool,
+    pub(crate) tab_scroll: ScrollHandle,
+    pub(crate) collapsed: HashSet<SharedString>,
+    pub(crate) fixed_sidebar: Option<FixedSidebar>,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -72,7 +83,16 @@ impl Workspace {
             toasts: Vec::new(),
             next_toast: 0,
             traffic_lights: false,
+            tab_scroll: ScrollHandle::new(),
+            collapsed: HashSet::new(),
+            fixed_sidebar: None,
         };
+        if cx.try_global::<HistoryStore>().is_some_and(|h| h.recovered) {
+            ws.toast("Filter history was unreadable and has been reset; the old file was kept as history.json.bak", cx);
+        }
+        if cx.try_global::<RecentStore>().is_some_and(|r| r.recovered) {
+            ws.toast("Recent files were unreadable and have been reset; the old file was kept as recent.json.bak", cx);
+        }
         ws.open_paths(args.paths, window, cx);
         ws
     }
@@ -101,23 +121,10 @@ impl Workspace {
         tab
     }
 
-    /// Opens each path in a tab, or activates the tab already showing it.
-    pub fn open_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        for path in paths {
-            let path = path.canonicalize().unwrap_or(path);
-            let existing = self.tabs.iter().position(|t| t.read(cx).doc.read(cx).source.path() == Some(path.as_path()));
-            match existing {
-                Some(index) => self.activate(index, window, cx),
-                None => {
-                    self.open_source(Source::File(path), TabInit::default(), window, cx);
-                }
-            }
-        }
-    }
-
     pub fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(index) else { return };
         self.active = index;
+        self.tab_scroll.scroll_to_item(index);
         let title = tab.read(cx).title(cx);
         window.set_window_title(&title);
         cx.notify();
@@ -143,7 +150,7 @@ impl Workspace {
     fn on_tab_event(&mut self, event: &TabEvent, _window: &mut Window, cx: &mut Context<Self>) {
         match event {
             TabEvent::Toast(message) => self.toast(message.clone(), cx),
-            TabEvent::ShowHistory => {}
+            TabEvent::ShowHistory => self.open_dialog(Dialog::History, cx),
         }
     }
 
@@ -191,23 +198,47 @@ impl Workspace {
         TitleBar::new(items)
             .sidebar_width(self.sidebar_width)
             .traffic_lights(self.traffic_lights)
+            .tab_scroll(self.tab_scroll.clone())
             .on_select_tab(act_ix(this, |ws, i, window, cx| ws.activate(i, window, cx)))
+            .on_close_tab(act_ix(this, |ws, i, window, cx| ws.close_tab(i, window, cx)))
+            .on_toggle_sidebar(act(this, |ws, _, cx| ws.toggle_sidebar(cx)))
+            .on_all_tabs(act(this, |ws, _, cx| ws.open_dialog(Dialog::AllTabs, cx)))
             .on_shortcuts(act(this, |ws, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
+            .on_settings(act(this, |ws, _, cx| ws.toast("Settings arrive in a later version", cx)))
     }
 
-    fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>) -> AnyElement {
+    fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>, cx: &App) -> AnyElement {
+        let close = act(this, |ws, _, cx| ws.close_dialog(cx));
         match dialog {
             Dialog::Shortcuts => dialogs::shortcuts(&actions::shortcut_rows())
                 .description("Keyboard shortcuts for the full log, the filter line and the filtered log.")
-                .on_close(act(this, |ws, _, cx| ws.close_dialog(cx)))
+                .on_close(close)
                 .into_any_element(),
+            Dialog::AllTabs => {
+                let tabs: Vec<(SharedString, bool)> = self.tabs.iter().enumerate().map(|(i, t)| (t.read(cx).title(cx), i == self.active)).collect();
+                let pick = act_ix(this, |ws, i, window, cx| {
+                    ws.activate(i, window, cx);
+                    ws.close_dialog(cx);
+                });
+                dialogs::all_tabs(&tabs, Rc::new(pick)).description("All open tabs, including those outside the visible header.").on_close(close).into_any_element()
+            }
+            Dialog::History => {
+                let entries: Vec<(SharedString, SharedString)> = cx
+                    .try_global::<HistoryStore>()
+                    .map(|h| h.entries().iter().map(|e| (SharedString::from(e.expression()), SharedString::from(e.to_spec().summary()))).collect())
+                    .unwrap_or_default();
+                dialogs::history_picker(&entries, Rc::new(act_ix(this, |ws, i, _, cx| ws.restore_history(i, cx))))
+                    .description("Restore an expression together with its term states and matching options.")
+                    .on_close(close)
+                    .into_any_element()
+            }
         }
     }
 
     /// The modal layer and the toasts, over everything else. The container has no handlers, so it does not catch
     /// the mouse.
-    fn overlay(&self, this: &Entity<Self>) -> Option<AnyElement> {
-        let modal = self.dialog.as_ref().map(|d| ModalLayer::new(self.dialog_element(d, this)).on_dismiss(act(this, |ws, _, cx| ws.close_dialog(cx))));
+    fn overlay(&self, this: &Entity<Self>, cx: &App) -> Option<AnyElement> {
+        let modal = self.dialog.as_ref().map(|d| ModalLayer::new(self.dialog_element(d, this, cx)).on_dismiss(act(this, |ws, _, cx| ws.close_dialog(cx))));
         if modal.is_none() && self.toasts.is_empty() {
             return None;
         }
@@ -224,10 +255,14 @@ impl Workspace {
         )
     }
 
-    fn welcome(&self) -> AnyElement {
+    fn welcome(&self, this: &Entity<Self>, cx: &App) -> AnyElement {
         let open_file: rogg_ui::Callback = Rc::new(|window: &mut Window, cx: &mut App| window.dispatch_action(Box::new(OpenFile), cx));
         let open_folder: rogg_ui::Callback = Rc::new(|window: &mut Window, cx: &mut App| window.dispatch_action(Box::new(OpenFolder), cx));
-        empty::welcome(vec![], open_file, open_folder, Rc::new(|_: usize, _: &mut Window, _: &mut App| {})).into_any_element()
+        let recent = match &self.fixed_sidebar {
+            Some(fixed) => fixed.recent.clone(),
+            None => chrome::recent_items(cx),
+        };
+        empty::welcome(recent, open_file, open_folder, Rc::new(act_ix(this, |ws, i, window, cx| ws.open_recent(i, window, cx)))).into_any_element()
     }
 
     fn root(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -238,6 +273,20 @@ impl Workspace {
             .track_focus(&self.focus)
             .on_action(cx.listener(|ws, _: &Dismiss, window, cx| ws.dismiss(window, cx)))
             .on_action(cx.listener(|ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
+            .on_action(cx.listener(|ws, _: &OpenFile, window, cx| ws.prompt_open(false, window, cx)))
+            .on_action(cx.listener(|ws, _: &OpenFolder, window, cx| ws.prompt_open(true, window, cx)))
+            .on_action(cx.listener(|ws, action: &OpenRecent, window, cx| ws.open_recent(action.index, window, cx)))
+            .on_action(cx.listener(|ws, _: &CloseTab, window, cx| {
+                let index = ws.active;
+                ws.close_tab(index, window, cx);
+            }))
+            .on_action(cx.listener(|ws, _: &NextTab, window, cx| ws.cycle_tab(true, window, cx)))
+            .on_action(cx.listener(|ws, _: &PrevTab, window, cx| ws.cycle_tab(false, window, cx)))
+            .on_action(cx.listener(|ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
+            .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
+            .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
+            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| ws.drag_band(e.event.position.y, cx)))
+            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| ws.drag_sidebar(e.event.position.x, cx)))
     }
 }
 
@@ -250,10 +299,12 @@ impl Render for Workspace {
         }
         let this = cx.entity();
         let titlebar = self.titlebar(&this, cx).into_any_element();
-        let overlay = self.overlay(&this);
-        let sidebar: Option<AnyElement> = None;
+        let overlay = self.overlay(&this, cx);
+        let sidebar = self.sidebar(&this, cx);
         let content = match self.active_tab() {
-            None => MainWindowLayout::single(SingleParts { titlebar, sidebar, info_bar: None, body: self.welcome(), status: None, overlay }).into_any_element(),
+            None => MainWindowLayout::single(SingleParts { titlebar, sidebar, info_bar: None, body: self.welcome(&this, cx), status: None, overlay })
+                .sidebar_resizable(true)
+                .into_any_element(),
             Some(tab) => {
                 let parts = tab_view::parts(&tab, window, cx);
                 match parts.body {
@@ -275,6 +326,7 @@ impl Render for Workspace {
                     .into_any_element(),
                     TabBody::Placeholder(body) => {
                         MainWindowLayout::single(SingleParts { titlebar, sidebar, info_bar: Some(parts.info_bar), body, status: Some(parts.status), overlay })
+                            .sidebar_resizable(true)
                             .into_any_element()
                     }
                 }
