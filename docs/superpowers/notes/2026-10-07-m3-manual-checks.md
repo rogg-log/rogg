@@ -6,7 +6,8 @@ memory, the native window). Use release builds (`just demo`, `just run …`).
 ## Bundles
 - `just bundle tgz 10 1G target/genlog/big.tgz`, then `just run target/genlog/big.tgz`: the sidebar lists 10 members
   with sizes; the first member opens with `Extracting service-00.log` progress and a working Cancel; the footer reads
-  `10 members · 10.0 GB expanded` / `Members open individually`.
+  `10 members · 10.7 GB expanded` (genlog's `1G` is 1 GiB; sizes are shown in decimal units) /
+  `Members open individually`.
 - A real support bundle (zip with nested `.tgz` and rotated `*.log.N.gz`): nested archives list on first expand
   (`listing…`), `.gz` members decompress, a damaged member shows the error state with Retry, other members open.
 - Reopen a member: it opens at once (cache hit). `~/Library/Caches/rogg` holds `*.member` / `*.log` entries; with
@@ -30,7 +31,8 @@ memory, the native window). Use release builds (`just demo`, `just run …`).
 - Truncate a 1 GB file (`: > big.log`) while scrolling it: no crash (SIGBUS guard), then the reload.
 
 ## stdin and FIFOs
-- `just pipe`: a `stdin` tab fills while `cat` runs and follows its end.
+- `just genlog` first (it writes `target/genlog/sample.log`), then `just pipe`: a `stdin` tab fills while `cat` runs
+  and follows its end. Closing the tab with ⌘W stops the capture and deletes its file under `streams/`.
 - Starting rogg from Finder (stdin is `/dev/null`) opens no stdin tab.
 - A real piped launch: `printf 'one\ntwo\n' | just run` opens a `stdin` tab with two lines (a pipe on a real
   terminal, not the test harness's stand-in).
