@@ -1,0 +1,9 @@
+[package]
+name = "rogg-genlog"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "genlog"
+path = "src/main.rs"

@@ -5693,6 +5693,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rogg-genlog"
+version = "0.1.0"
+
+[[package]]
 name = "rogg-ui"
 version = "0.1.0"
 dependencies = [
