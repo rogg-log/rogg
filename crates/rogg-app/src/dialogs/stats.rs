@@ -6,14 +6,19 @@ use rogg_core::filter::TermState;
 use rogg_core::stats::{FilterStats, group_digits, noun};
 use std::time::Duration;
 
-/// `15%`, `33.3%`, `<0.1%`; `0%` of nothing.
+/// `15%`, `33.3%`, `<0.1%`, `>99.9%`; `0%` of nothing. `100%` only when every line matches.
 pub fn percent(part: u64, total: u64) -> String {
     if total == 0 || part == 0 {
         return "0%".into();
     }
+    if part >= total {
+        return "100%".into();
+    }
     let p = part as f64 * 100. / total as f64;
     if p < 0.1 {
         "<0.1%".into()
+    } else if p >= 99.9 {
+        ">99.9%".into()
     } else if (p - p.round()).abs() < 0.05 {
         format!("{}%", p.round() as u64)
     } else {

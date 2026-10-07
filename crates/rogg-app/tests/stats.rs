@@ -41,7 +41,11 @@ fn statistics_rows_read_like_the_spec() {
     let running = rows(Some(&sample()), Some(0.45));
     assert_eq!(running[0].1.as_ref(), "6 of 40 (15%) · scanning 45%");
     assert_eq!(rows(None, None)[0].0.as_ref(), "No filter has run yet");
-    assert_eq!([percent(1, 3), percent(0, 0), percent(1, 10_000_000), percent(40, 40)], ["33.3%", "0%", "<0.1%", "100%"]);
+    assert_eq!(
+        [percent(1, 3), percent(0, 0), percent(1, 10_000_000), percent(40, 40), percent(9_997, 10_000), percent(9_999_999, 10_000_000), percent(999, 1_000)],
+        ["33.3%", "0%", "<0.1%", "100%", ">99.9%", ">99.9%", ">99.9%"]
+    );
+    assert_eq!([percent(99, 100), percent(998, 1_000)], ["99%", "99.8%"]);
     assert_eq!([duration_label(Duration::from_micros(400)), duration_label(Duration::from_millis(1_240))], ["0.4 ms", "1.24 s"]);
 }
 
@@ -55,8 +59,10 @@ fn the_footer_opens_live_statistics(cx: &mut TestAppContext) {
     doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.stats.is_some()));
     common::click(cx, w, "footer-stats");
-    assert!(common::exists(cx, w, "stat-0") && common::exists(cx, w, "stat-3"));
+    // One term: Matched, Pinned, Context, `error`, Scan time.
+    assert!(common::exists(cx, w, "stat-0") && common::exists(cx, w, "stat-4"));
+    assert!(!common::exists(cx, w, "stat-5"), "one term gives five rows");
     doc.update(cx, |d, cx| d.set_expression("error || ok", cx)).unwrap();
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.stats.as_ref().is_some_and(|s| s.matched == 3)));
-    assert!(common::exists(cx, w, "stat-4"), "the open popover follows the new filter");
+    assert!(common::exists(cx, w, "stat-5"), "the open popover follows the new filter");
 }
