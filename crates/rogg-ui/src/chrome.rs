@@ -47,6 +47,7 @@ impl InfoBar {
 impl RenderOnce for InfoBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let sep = move |s: &'static str| div().flex_none().mx(px(3.)).text_color(p.faint).child(s);
         let count = self.crumbs.len();
         let on_profile = self.on_profile;
@@ -62,7 +63,7 @@ impl RenderOnce for InfoBar {
             .px(px(13.))
             .border_b_1()
             .border_color(p.line)
-            .text_size(px(11.))
+            .text_size(s.px(11.))
             .text_color(p.muted)
             .whitespace_nowrap();
         for (i, crumb) in self.crumbs.into_iter().enumerate() {
@@ -136,6 +137,7 @@ impl PaneHeader {
 impl RenderOnce for PaneHeader {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .id(self.id)
@@ -149,8 +151,8 @@ impl RenderOnce for PaneHeader {
             .border_b_1()
             .border_color(p.line)
             .whitespace_nowrap()
-            .child(div().min_w_0().truncate().text_size(px(11.)).font_weight(FontWeight(550.)).text_color(p.text).child(self.title))
-            .child(div().flex_none().text_size(px(10.)).text_color(p.faint).child(self.count))
+            .child(div().min_w_0().truncate().text_size(s.px(11.)).font_weight(FontWeight(550.)).text_color(p.text).child(self.title))
+            .child(div().flex_none().text_size(s.px(10.)).text_color(p.faint).child(self.count))
             .child(div().ml_auto().flex_none().flex().items_center().gap(px(6.)).children(self.find).children(self.tools))
     }
 }
@@ -212,6 +214,7 @@ impl StatusBar {
 impl RenderOnce for StatusBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         div()
             .id("statusbar")
             .test_support()
@@ -224,7 +227,7 @@ impl RenderOnce for StatusBar {
             .bg(p.side)
             .border_t_1()
             .border_color(p.border)
-            .text_size(px(10.))
+            .text_size(s.px(10.))
             .text_color(p.muted)
             .whitespace_nowrap()
             .child(

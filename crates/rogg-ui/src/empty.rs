@@ -35,6 +35,7 @@ impl EmptyState {
 impl RenderOnce for EmptyState {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .id(self.id)
@@ -46,9 +47,9 @@ impl RenderOnce for EmptyState {
             .justify_center()
             .gap(px(10.))
             .font_family(t.fonts.ui.clone())
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .text_color(p.muted)
-            .child(div().text_size(px(15.)).font_weight(FontWeight::MEDIUM).text_color(p.text).child(self.title))
+            .child(div().text_size(s.px(15.)).font_weight(FontWeight::MEDIUM).text_color(p.text).child(self.title))
             .when_some(self.body, |d, b| d.child(b))
             .children(self.children)
     }

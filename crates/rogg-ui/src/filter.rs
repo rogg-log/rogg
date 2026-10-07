@@ -80,6 +80,7 @@ impl FilterChip {
 impl RenderOnce for FilterChip {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         let slot = self.color.unwrap_or(p.chips[self.index % p.chips.len()]);
         let (border, bg, term) = match self.state {
@@ -100,7 +101,7 @@ impl RenderOnce for FilterChip {
             .rounded(px(5.))
             .bg(bg)
             .font_family(t.fonts.mono.clone())
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .child(
                 div()
                     .id(SharedString::from(format!("token-state-{i}")))
@@ -117,7 +118,7 @@ impl RenderOnce for FilterChip {
                     .border_r_1()
                     .border_color(p.chip_divider)
                     .font_family(t.fonts.ui.clone())
-                    .text_size(px(9.))
+                    .text_size(s.px(9.))
                     .text_color(p.muted)
                     .cursor_pointer()
                     .hover(move |s| s.bg(p.hover))
@@ -276,6 +277,7 @@ fn call(cb: &Option<Callback>) -> impl Fn(&mut Window, &mut App) + 'static {
 impl RenderOnce for FilterBand {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         let editing = self.editing.is_some();
 
@@ -299,7 +301,7 @@ impl RenderOnce for FilterBand {
                         .border_color(p.accent)
                         .rounded(px(4.))
                         .child(
-                            Input::new(&input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(px(12.)).text_color(p.text),
+                            Input::new(&input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text),
                         ),
                 )
                 .child(
@@ -312,7 +314,7 @@ impl RenderOnce for FilterBand {
                         .border_1()
                         .border_color(p.accent)
                         .rounded(px(5.))
-                        .text_size(px(11.))
+                        .text_size(s.px(11.))
                         .text_color(p.accent)
                         .cursor_pointer()
                         .hover(move |s| s.bg(p.hover))
@@ -327,7 +329,7 @@ impl RenderOnce for FilterBand {
                 let mut row = div().id("filters").test_support().flex().flex_1().min_w_0().items_center().gap(px(7.)).overflow_x_scroll();
                 for (i, (text, state)) in self.terms.iter().cloned().enumerate() {
                     if i > 0 {
-                        row = row.child(div().flex_none().font_family(t.fonts.mono.clone()).text_size(px(11.)).text_color(p.faint).child("||"));
+                        row = row.child(div().flex_none().font_family(t.fonts.mono.clone()).text_size(s.px(11.)).text_color(p.faint).child("||"));
                     }
                     let on_cycle = self.on_cycle.clone();
                     row = row.child(FilterChip::new(i, text, state).color(self.chip_colors.as_deref().map(|c| chip_color(i, Some(c), &p))).on_cycle(move |w, cx| {
@@ -360,7 +362,7 @@ impl RenderOnce for FilterBand {
             .items_center()
             .gap(px(13.))
             .mt(px(8.))
-            .text_size(px(10.))
+            .text_size(s.px(10.))
             .text_color(p.muted)
             .child(TextButton::small("history", "History⌄").icon(IconName::History).on_click(call(&self.on_history)))
             .child(
@@ -373,7 +375,7 @@ impl RenderOnce for FilterBand {
                 ),
             )
             .child(div().child(self.summary))
-            .child(div().ml_auto().text_size(px(9.)).text_color(p.faint).child(self.hint));
+            .child(div().ml_auto().text_size(s.px(9.)).text_color(p.faint).child(self.hint));
 
         div()
             .id("filter-band")
@@ -425,7 +427,7 @@ impl RenderOnce for FilterBand {
                         .id("filter-error")
                         .test_support()
                         .mt(px(6.))
-                        .text_size(px(10.))
+                        .text_size(s.px(10.))
                         .text_color(p.error)
                         .child(format!("Previous results retained · {e}")),
                 )

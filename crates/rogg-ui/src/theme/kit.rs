@@ -13,9 +13,10 @@ pub(super) fn apply(theme: &RoggTheme, cx: &mut App) {
     let p = theme.palette;
     let ui = theme.fonts.ui.clone();
     let mono = theme.fonts.mono.clone();
+    let scale = theme.text_scale();
     KitTheme::update(cx, move |t| {
         t.font_family = ui;
-        t.font_size = px(13.);
+        t.font_size = scale.px(13.);
         t.mono_font_family = mono;
         t.mono_font_size = px(12.);
         t.radius = px(5.);

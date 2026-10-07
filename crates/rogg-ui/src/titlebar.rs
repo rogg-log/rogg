@@ -118,6 +118,7 @@ fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, _: &mut App) {
 impl RenderOnce for TitleBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let traffic = div().id("traffic").on_mouse_down(MouseButton::Left, drag_window).w(px(53.)).flex_none().flex().items_center().gap(px(7.)).when(self.traffic_lights, |d| {
             d.children(p.traffic.map(|c| div().size(px(10.)).rounded_full().bg(c)))
         });
@@ -132,7 +133,7 @@ impl RenderOnce for TitleBar {
             .px(px(13.))
             .child(traffic)
             .child(button(IconButton::icon("toggle-sidebar", IconName::Side), self.on_toggle_sidebar))
-            .child(div().id("brand").text_size(px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).on_mouse_down(MouseButton::Left, drag_window).child("rogg"));
+            .child(div().id("brand").text_size(s.px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).on_mouse_down(MouseButton::Left, drag_window).child("rogg"));
 
         let tab_strip = div()
             .id("tabs")
@@ -206,6 +207,7 @@ struct TabShell {
 impl RenderOnce for TabShell {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let i = self.index;
         let active = self.item.active;
         let group: SharedString = format!("tab-group-{i}").into();
@@ -250,7 +252,7 @@ impl RenderOnce for TabShell {
                     .px(px(7.))
                     .h(px(27.))
                     .max_w(px(size::TAB_LABEL_MAX_W))
-                    .text_size(px(11.))
+                    .text_size(s.px(11.))
                     .text_color(if active { p.text } else { p.muted })
                     .cursor_pointer()
                     .when(!self.item.tooltip.is_empty(), |d| {
@@ -276,7 +278,7 @@ impl RenderOnce for TabShell {
                     .w(px(18.))
                     .h(px(20.))
                     .rounded(px(5.))
-                    .text_size(px(14.))
+                    .text_size(s.px(14.))
                     .text_color(p.muted)
                     .cursor_pointer()
                     .hover(move |s| s.bg(p.hover))

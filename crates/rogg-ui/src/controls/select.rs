@@ -30,6 +30,7 @@ impl CompactSelect {
 impl RenderOnce for CompactSelect {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         // `.filter-bottom select` inherits the muted color and 10px font; like a native select, it is as wide as its
         // widest option, so the label box is sized by measuring every option.
@@ -39,7 +40,7 @@ impl RenderOnce for CompactSelect {
             .iter()
             .map(|o| {
                 let run = TextRun { len: o.len(), font: font.clone(), color: p.muted.hsla(), background_color: None, underline: None, strikethrough: None };
-                window.text_system().shape_line(o.clone(), px(10.), &[run], None).width
+                window.text_system().shape_line(o.clone(), s.px(10.), &[run], None).width
             })
             .fold(px(0.), |a, b| a.max(b));
         let variant = ButtonCustomVariant::new(cx)
@@ -67,7 +68,7 @@ impl RenderOnce for CompactSelect {
                     .flex()
                     .items_center()
                     .gap(px(3.))
-                    .text_size(px(10.))
+                    .text_size(s.px(10.))
                     .line_height(relative(size::LINE_HEIGHT))
                     .text_color(p.muted)
                     .child(div().w(label_w).child(label))

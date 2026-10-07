@@ -49,6 +49,7 @@ impl DialogFrame {
 impl RenderOnce for DialogFrame {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let on_close = self.on_close;
         div()
             .id("dialog")
@@ -70,7 +71,7 @@ impl RenderOnce for DialogFrame {
                     .flex()
                     .items_start()
                     .justify_between()
-                    .child(div().pb(px(6.)).text_size(px(17.)).font_weight(FontWeight(550.)).child(self.title))
+                    .child(div().pb(px(6.)).text_size(s.px(17.)).font_weight(FontWeight(550.)).child(self.title))
                     .child(IconButton::glyph("dialog-close", "✕").on_click(move |w, cx| {
                         if let Some(f) = &on_close {
                             f(w, cx)
@@ -85,11 +86,11 @@ impl RenderOnce for DialogFrame {
                     .min_h_0()
                     .overflow_y_scroll()
                     .when_some(self.description, |d, text| {
-                        d.child(div().my(px(12.)).text_size(px(12.)).line_height(px(20.4)).text_color(p.muted).child(text))
+                        d.child(div().my(px(12.)).text_size(s.px(12.)).line_height(px(20.4)).text_color(p.muted).child(text))
                     })
                     .children(self.body)
                     .when_some(self.note, |d, text| {
-                        d.child(div().my(px(10.)).text_size(px(10.)).line_height(px(17.)).text_color(p.muted).child(text))
+                        d.child(div().my(px(10.)).text_size(s.px(10.)).line_height(px(17.)).text_color(p.muted).child(text))
                     }),
             )
     }
@@ -169,6 +170,7 @@ impl RuleRow {
 impl RenderOnce for RuleRow {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .id(self.id)
@@ -179,10 +181,10 @@ impl RenderOnce for RuleRow {
             .py(px(14.))
             .border_t_1()
             .border_color(p.border)
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .when_some(self.swatch, |d, c| d.child(div().flex_none().size(px(21.)).rounded(px(4.)).border_1().border_color(p.swatch_border).bg(c)))
             .child(div().when(self.code, |d| d.font_family(t.fonts.mono.clone())).child(self.lead))
-            .when_some(self.trailing, |d, s| d.child(div().ml_auto().text_size(px(11.)).text_color(p.muted).child(s)))
+            .when_some(self.trailing, |d, text| d.child(div().ml_auto().text_size(s.px(11.)).text_color(p.muted).child(text)))
     }
 }
 
@@ -197,6 +199,7 @@ pub struct ShortcutRow {
 impl RenderOnce for ShortcutRow {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .id(self.id)
@@ -206,9 +209,9 @@ impl RenderOnce for ShortcutRow {
             .py(px(9.))
             .border_b_1()
             .border_color(p.border)
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .child(self.label)
-            .child(div().font_family(t.fonts.mono.clone()).text_size(px(11.)).text_color(p.accent).child(self.keys))
+            .child(div().font_family(t.fonts.mono.clone()).text_size(s.px(11.)).text_color(p.accent).child(self.keys))
     }
 }
 
@@ -224,6 +227,7 @@ pub struct PickerItem {
 impl RenderOnce for PickerItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let on_click = self.on_click;
         div()
             .id(self.id)
@@ -237,7 +241,7 @@ impl RenderOnce for PickerItem {
             .border_1()
             .border_color(Color::TRANSPARENT)
             .rounded(px(5.))
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .cursor_pointer()
             .when(self.current, |d| d.bg(p.selection))
             .hover(move |s| s.bg(p.hover))
@@ -337,6 +341,7 @@ struct GoToLineField {
 impl RenderOnce for GoToLineField {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .mt(px(12.))
@@ -346,6 +351,6 @@ impl RenderOnce for GoToLineField {
             .border_1()
             .border_color(p.accent)
             .rounded(px(4.))
-            .child(Input::new(&self.input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(px(12.)).text_color(p.text))
+            .child(Input::new(&self.input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text))
     }
 }

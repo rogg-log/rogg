@@ -28,6 +28,7 @@ impl ToastStack {
 impl RenderOnce for ToastStack {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let on_dismiss = self.on_dismiss;
         div()
             .id("toasts")
@@ -57,7 +58,7 @@ impl RenderOnce for ToastStack {
                     .border_color(p.border)
                     .rounded(px(8.))
                     .shadow(vec![BoxShadow::new(px(0.), px(8.), p.dialog_shadow.hsla()).blur_radius(px(30.))])
-                    .text_size(px(11.))
+                    .text_size(s.px(11.))
                     .text_color(p.text)
                     .child(div().flex_1().min_w_0().child(message))
                     .child(IconButton::glyph(SharedString::from(format!("toast-close-{id}")), "✕").compact().on_click(move |w, cx| {

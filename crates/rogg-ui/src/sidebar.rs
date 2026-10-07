@@ -1,6 +1,6 @@
 use crate::IndexCallback;
 use crate::icons::{IconName, icon};
-use crate::theme::{ActiveRoggTheme, Palette, size};
+use crate::theme::{ActiveRoggTheme, Palette, TextScale, size};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, FontWeight, Pixels, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
@@ -93,18 +93,18 @@ impl Default for Sidebar {
 
 /// `.small-label`: 10px uppercase with `letter-spacing:1px`. gpui has no letter spacing, so each glyph is its own
 /// flex item with a 1px gap (plus the trailing 1px CSS adds after the last glyph).
-fn small_label(text: &'static str, p: &Palette) -> gpui_kit::Div {
+fn small_label(text: &'static str, p: &Palette, s: TextScale) -> gpui_kit::Div {
     div()
         .flex()
         .gap(px(1.))
         .pr(px(1.))
-        .text_size(px(10.))
+        .text_size(s.px(10.))
         .font_weight(FontWeight(600.))
         .text_color(p.muted)
         .children(text.to_uppercase().chars().map(|c| div().child(c.to_string())))
 }
 
-fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -> AnyElement {
+fn tree_row(i: usize, row: TreeRow, p: Palette, s: TextScale, on_row: Option<IndexCallback>) -> AnyElement {
     let base = div()
         .id(SharedString::from(format!("tree-row-{i}")))
         .test_support()
@@ -124,7 +124,7 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
         TreeRow::Folder { label, expanded, depth, note, failed } => base
             .pl(px(9. + depth as f32 * 18.))
             .pr(px(9.))
-            .text_size(px(11.))
+            .text_size(s.px(11.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(if failed { p.error } else { p.text })
             .rounded(px(4.))
@@ -139,7 +139,7 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
                         .test_support()
                         .ml_auto()
                         .flex_none()
-                        .text_size(px(10.))
+                        .text_size(s.px(10.))
                         .font_weight(FontWeight::NORMAL)
                         .text_color(if failed { p.error } else { p.faint })
                         .child(note),
@@ -150,7 +150,7 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
             .pl(px(27. + depth.saturating_sub(1) as f32 * 18.))
             .pr(px(9.))
             .rounded(px(4.))
-            .text_size(px(12.))
+            .text_size(s.px(12.))
             .text_color(if active {
                 p.text
             } else if failed {
@@ -162,7 +162,7 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
             .when(!active, |d| d.hover(move |s| s.bg(p.hover)))
             .child(icon(IconName::File).size(px(13.)).text_color(if active { p.accent } else { p.faint }))
             .child(div().min_w_0().truncate().child(label))
-            .child(div().ml_auto().flex_none().text_size(px(10.)).text_color(p.faint).child(file_size))
+            .child(div().ml_auto().flex_none().text_size(s.px(10.)).text_color(p.faint).child(file_size))
             .into_any_element(),
     }
 }
@@ -170,6 +170,7 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, on_row: Option<IndexCallback>) -
 impl RenderOnce for Sidebar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let on_row = self.on_row.clone();
         let on_recent = self.on_recent.clone();
         div()
@@ -193,8 +194,8 @@ impl RenderOnce for Sidebar {
                     .justify_between()
                     .h(px(size::SIDE_TOP_H))
                     .px(px(15.))
-                    .child(small_label("Files", &p))
-                    .child(div().text_size(px(10.)).text_color(p.faint).child(self.count)),
+                    .child(small_label("Files", &p, s))
+                    .child(div().text_size(s.px(10.)).text_color(p.faint).child(self.count)),
             )
             .child(
                 div()
@@ -204,8 +205,8 @@ impl RenderOnce for Sidebar {
                     .overflow_y_scroll()
                     .px(px(7.))
                     .py(px(5.))
-                    .children(self.rows.into_iter().enumerate().map(|(i, row)| tree_row(i, row, p, on_row.clone())))
-                    .child(div().mt(px(23.)).mx(px(9.)).mb(px(7.)).child(small_label("Recent", &p)))
+                    .children(self.rows.into_iter().enumerate().map(|(i, row)| tree_row(i, row, p, s, on_row.clone())))
+                    .child(div().mt(px(23.)).mx(px(9.)).mb(px(7.)).child(small_label("Recent", &p, s)))
                     .children(self.recent.into_iter().enumerate().map(|(i, item)| {
                         let on_recent = on_recent.clone();
                         div()
@@ -216,7 +217,7 @@ impl RenderOnce for Sidebar {
                             .gap(px(8.))
                             .px(px(10.))
                             .py(px(8.))
-                            .text_size(px(11.))
+                            .text_size(s.px(11.))
                             .text_color(if item.missing { p.faint } else { p.muted })
                             .cursor_pointer()
                             .child(
@@ -242,7 +243,7 @@ impl RenderOnce for Sidebar {
                         .py(px(12.))
                         .border_t_1()
                         .border_color(p.border)
-                        .text_size(px(10.))
+                        .text_size(s.px(10.))
                         .line_height(px(18.))
                         .text_color(p.muted)
                         .child(div().font_weight(FontWeight::MEDIUM).text_color(p.text).child(footer.title))

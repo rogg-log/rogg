@@ -28,6 +28,7 @@ impl Segmented {
 impl RenderOnce for Segmented {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let id = self.id.clone();
         div()
             .id(self.id)
@@ -45,7 +46,7 @@ impl RenderOnce for Segmented {
                     .id(SharedString::from(format!("{id}-{i}")))
                     .px(px(11.))
                     .py(px(6.))
-                    .text_size(px(12.))
+                    .text_size(s.px(12.))
                     .rounded(px(5.))
                     .border_1()
                     .cursor_pointer()

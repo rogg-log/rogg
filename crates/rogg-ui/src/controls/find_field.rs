@@ -33,8 +33,9 @@ impl FindField {
 impl RenderOnce for FindField {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         // Input::h is multi-line only and shadows Styled::h, so call the trait methods explicitly.
-        let input = Input::new(&self.input).xsmall().appearance(false).p_0().text_size(px(10.)).line_height(px(14.)).text_color(p.text);
+        let input = Input::new(&self.input).xsmall().appearance(false).p_0().text_size(s.px(10.)).line_height(px(14.)).text_color(p.text);
         let input = Styled::w(Styled::h(input, px(size::FIND_H - 2.)), px(size::FIND_INPUT_W));
         div()
             .id(self.id)
@@ -52,6 +53,6 @@ impl RenderOnce for FindField {
             .child(icon(IconName::Search).size(px(12.)).text_color(p.faint))
             .child(input)
             // `.found` is always present (empty without a query), so its leading 5px gap is part of the width.
-            .child(div().flex_none().text_size(px(9.)).text_color(p.faint).whitespace_nowrap().children(self.count))
+            .child(div().flex_none().text_size(s.px(9.)).text_color(p.faint).whitespace_nowrap().children(self.count))
     }
 }

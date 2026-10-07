@@ -15,3 +15,12 @@ fn install_sets_global_and_kit_mode(cx: &mut TestAppContext) {
         assert_eq!(KitTheme::global(cx).font_family.as_ref(), ".SystemUIFont");
     });
 }
+
+#[gpui_kit::test]
+fn the_kit_font_size_follows_the_ui_font_size(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        RoggTheme::new(Appearance::Dark, Density::Compact).with_ui_font_size(15.).install(cx);
+        assert_eq!(KitTheme::global(cx).font_size, gpui_kit::px(15.));
+    });
+}

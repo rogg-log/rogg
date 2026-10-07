@@ -14,6 +14,19 @@ pub const UI_FONT: &str = ".SystemUIFont";
 /// System monospaced font (SF Mono). The family name "SF Mono" silently falls back to Helvetica in gpui.
 pub const MONO_FONT: &str = ".AppleSystemUIFontMonospaced";
 
+/// UI text sizes relative to the reference's 13 px system font (spec §6.2 "UI font size"); `px(11.)` at 13 px stays 11.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextScale(pub f32);
+
+impl TextScale {
+    pub fn px(self, n: f32) -> Pixels {
+        px(n * self.0)
+    }
+}
+
+/// The reference UI font size.
+pub const BASE_UI_FONT_SIZE: f32 = 13.;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Appearance {
     #[default]
@@ -63,6 +76,15 @@ impl RoggTheme {
         self
     }
 
+    pub fn text_scale(&self) -> TextScale {
+        TextScale(f32::from(self.fonts.ui_size) / BASE_UI_FONT_SIZE)
+    }
+
+    pub fn with_ui_font_size(mut self, size: f32) -> Self {
+        self.fonts.ui_size = px(size);
+        self
+    }
+
     /// Makes this the active theme and mirrors it into gpui-kit. Call after `gpui_kit::init`.
     pub fn install(self, cx: &mut App) {
         kit::apply(&self, cx);
@@ -100,5 +122,15 @@ mod tests {
         assert_eq!(t.fonts.mono.as_ref(), MONO_FONT, "chips, dialogs and the gutter keep SF Mono");
         assert_eq!(t.metrics, Density::Compact.metrics_for(14.));
         assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).fonts.log.as_ref(), MONO_FONT);
+    }
+
+    #[test]
+    fn text_scale_follows_the_ui_font_size() {
+        let t = RoggTheme::new(Appearance::Dark, Density::Compact);
+        assert_eq!(t.text_scale().px(11.), px(11.), "13 px is the reference size: nothing scales");
+        let big = t.clone().with_ui_font_size(16.);
+        assert_eq!(big.fonts.ui_size, px(16.));
+        assert!((f32::from(big.text_scale().px(13.)) - 16.).abs() < 1e-4);
+        assert!((f32::from(big.text_scale().px(10.)) - 10. * 16. / 13.).abs() < 1e-4);
     }
 }

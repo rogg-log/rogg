@@ -184,6 +184,7 @@ fn side(sidebar: Option<AnyElement>, resizable: bool) -> Option<AnyElement> {
 impl RenderOnce for MainWindowLayout {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         let root = div()
             .id("app")
@@ -195,7 +196,7 @@ impl RenderOnce for MainWindowLayout {
             .bg(p.bg)
             .text_color(p.text)
             .font_family(t.fonts.ui.clone())
-            .text_size(px(13.))
+            .text_size(s.px(13.))
             .line_height(relative(size::LINE_HEIGHT));
         match self.body {
             Body::Panes(parts) => {

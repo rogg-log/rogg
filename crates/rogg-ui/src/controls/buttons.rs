@@ -51,6 +51,7 @@ impl IconButton {
 impl RenderOnce for IconButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let (side, pad_x, pad_y) =
             if self.compact { (size::TITLEBAR_ICON_BTN, 5., 3.) } else { (size::ICON_BTN, 6., 4.) };
         div()
@@ -69,7 +70,7 @@ impl RenderOnce for IconButton {
             .border_1()
             .border_color(Color::TRANSPARENT)
             .text_color(p.muted)
-            .text_size(px(13.))
+            .text_size(s.px(13.))
             .cursor_pointer()
             .when(self.force_hover, |d| d.bg(p.hover))
             .hover(move |s| s.bg(p.hover))
@@ -109,6 +110,7 @@ impl FlagButton {
 impl RenderOnce for FlagButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
+        let s = t.text_scale();
         let p = t.palette;
         div()
             .id(self.id)
@@ -124,7 +126,7 @@ impl RenderOnce for FlagButton {
             .rounded(px(5.))
             .border_1()
             .font_family(t.fonts.mono.clone())
-            .text_size(px(13.))
+            .text_size(s.px(13.))
             .cursor_pointer()
             .map(|d| {
                 if self.pressed {
@@ -174,6 +176,7 @@ impl ToolButton {
 impl RenderOnce for ToolButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         let fg = if self.pressed { p.accent } else { p.muted };
         div()
             .id(self.id)
@@ -187,7 +190,7 @@ impl RenderOnce for ToolButton {
             .py(px(3.))
             .rounded(px(5.))
             .border_1()
-            .text_size(px(10.))
+            .text_size(s.px(10.))
             .cursor_pointer()
             .map(|d| {
                 if self.pressed {
@@ -246,6 +249,7 @@ impl TextButton {
 impl RenderOnce for TextButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         div()
             .id(self.id)
             .test_support()
@@ -258,7 +262,7 @@ impl RenderOnce for TextButton {
             .rounded(px(5.))
             .border_1()
             .border_color(Color::TRANSPARENT)
-            .text_size(px(self.text_size))
+            .text_size(s.px(self.text_size))
             .text_color(p.muted)
             .cursor_pointer()
             .hover(move |s| s.bg(p.hover))
@@ -298,6 +302,7 @@ impl ActionButton {
 impl RenderOnce for ActionButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
         div()
             .id(self.id)
             .test_support()
@@ -306,7 +311,7 @@ impl RenderOnce for ActionButton {
             .py(px(7.))
             .rounded(px(5.))
             .border_1()
-            .text_size(px(11.))
+            .text_size(s.px(11.))
             .font_weight(FontWeight::NORMAL)
             .cursor_pointer()
             .map(|d| if self.primary { d.text_color(p.accent).border_color(p.accent_border) } else { d.text_color(p.muted).border_color(p.border) })
