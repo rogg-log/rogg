@@ -1,0 +1,23 @@
+[package]
+name = "rogg-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "rogg_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rogg"
+path = "src/main.rs"
+
+[dependencies]
+rogg-core = { path = "../rogg-core" }
+rogg-ui = { path = "../rogg-ui" }
+gpui-kit.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

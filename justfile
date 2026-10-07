@@ -28,3 +28,9 @@ genlog size="64M" out="target/genlog/sample.log":
 bench:
     cargo bench -p rogg-core --bench engine
     cargo test -p rogg-core --release --test memory -- --ignored --nocapture
+
+run *args:
+    cargo run -p rogg-app -- {{args}}
+
+demo:
+    cargo run -p rogg-app -- --demo

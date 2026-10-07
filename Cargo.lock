@@ -5817,6 +5817,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rogg-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "rogg-core",
+ "rogg-ui",
+ "tempfile",
+]
+
+[[package]]
 name = "rogg-core"
 version = "0.1.0"
 dependencies = [
