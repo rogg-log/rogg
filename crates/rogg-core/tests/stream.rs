@@ -77,3 +77,21 @@ fn terminals_and_dev_null_carry_no_data_but_fifos_do() {
     assert!(is_stream_path(&fifo));
     assert!(!is_stream_path(&dir.path().join("missing")));
 }
+
+#[test]
+fn a_panicking_capture_still_reports_done() {
+    struct Boom;
+    impl std::io::Read for Boom {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("reader exploded")
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let cache = rogg_core::cache::Cache::new(dir.path(), 1 << 30);
+    let capture = rogg_core::stream::StreamCapture::start(|| Ok(Boom), &cache).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !capture.is_done() {
+        assert!(std::time::Instant::now() < deadline, "done was never set");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}

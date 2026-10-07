@@ -30,6 +30,9 @@ pub use search::{Pane, PaneSearch};
 
 /// How often background job channels are polled: at most one UI update per frame.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
+/// How often an otherwise idle document checks its follower's channel (live follow): growth shows within 0.1 s, and
+/// many open live tabs no longer wake the app every frame (M3 carry-over).
+pub const FOLLOW_POLL: Duration = Duration::from_millis(100);
 
 /// A `.gz` being decompressed is checked this often for new bytes.
 pub const INFLATE_POLL: Duration = Duration::from_millis(100);
@@ -444,7 +447,11 @@ impl Document {
         self.polling = true;
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
+                let interval = match this.update(cx, |doc, _| doc.poll_interval()) {
+                    Ok(interval) => interval,
+                    Err(_) => break,
+                };
+                cx.background_executor().timer(interval).await;
                 match this.update(cx, |doc, cx| doc.poll_jobs(cx)) {
                     Ok(true) => continue,
                     _ => break,
@@ -452,6 +459,18 @@ impl Document {
             }
         })
         .detach();
+    }
+
+    /// The poll loop's period: every frame while a job besides the follower runs, else `FOLLOW_POLL`.
+    pub fn poll_interval(&self) -> Duration {
+        let busy = self.open_job.is_some()
+            || self.inflating.is_some()
+            || self.filter.job.is_some()
+            || self.filter.view_job.is_some()
+            || self.search_running()
+            || self.derived_job.is_some()
+            || self.export.is_some();
+        if busy { POLL_INTERVAL } else { FOLLOW_POLL }
     }
 
     /// Drains every job channel once; returns whether any job is still running.

@@ -185,3 +185,27 @@ fn tar_listing_reports_progress_as_it_reads() {
         assert_eq!(calls.last().map(|&(d, t)| d == t), Some(true), "{name}: ends complete");
     }
 }
+
+#[test]
+fn trailing_bytes_after_the_last_gzip_member_are_ignored() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let gz = dir.path().join("t.log.gz");
+    let member = |text: &str| {
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        enc.write_all(text.as_bytes()).unwrap();
+        enc.finish().unwrap()
+    };
+    let mut bytes = member("one\n");
+    bytes.extend(member("two\n"));
+    bytes.extend(b"\0\0\0garbage after the stream");
+    std::fs::write(&gz, &bytes).unwrap();
+    let mut out = Vec::new();
+    rogg_core::archive::gunzip(&gz, &mut out, &rogg_core::CancelToken::new(), |_, _| {}).unwrap();
+    assert_eq!(out, b"one\ntwo\n", "both members, then the trailing bytes are ignored like gzip -d does");
+    let mut corrupt = member("x\n");
+    let mid = corrupt.len() / 2;
+    corrupt[mid] ^= 0xff;
+    std::fs::write(&gz, &corrupt).unwrap();
+    assert!(rogg_core::archive::gunzip(&gz, &mut Vec::new(), &rogg_core::CancelToken::new(), |_, _| {}).is_err(), "a damaged member still fails");
+}

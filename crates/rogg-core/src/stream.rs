@@ -59,6 +59,14 @@ impl StreamCapture {
         };
         let (bytes, done, stop, error) = (capture.bytes.clone(), capture.done.clone(), capture.stop.clone(), capture.error.clone());
         let spawned = std::thread::Builder::new().name("rogg-stream".into()).spawn(move || {
+            /// Sets `done` however the thread ends — a panic in the reader included (M3 carry-over).
+            struct DoneGuard(Arc<AtomicBool>);
+            impl Drop for DoneGuard {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+            let _done = DoneGuard(done);
             let result = (|| -> io::Result<()> {
                 let mut input = open()?;
                 let mut buf = vec![0u8; 64 * 1024];
@@ -79,7 +87,6 @@ impl StreamCapture {
             if let Err(e) = result {
                 *error.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.to_string());
             }
-            done.store(true, Ordering::Release);
         });
         spawned.map_err(|source| CoreError::Io { path: capture.path.clone(), source })?;
         Ok(capture)

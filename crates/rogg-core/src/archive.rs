@@ -251,27 +251,40 @@ pub fn extract(
 }
 
 /// Decompresses the gzip file `src` (every member of a multi-member file) into `out`, writing as it goes so a reader
-/// of `out` sees the data at once; `progress(compressed bytes read, compressed size)`.
+/// of `out` sees the data at once; `progress(compressed bytes read, compressed size)`. Bytes after the last member that
+/// do not start another member are ignored, as `gzip -d` does.
 pub fn gunzip(src: &Path, out: &mut impl Write, cancel: &CancelToken, mut progress: impl FnMut(u64, u64)) -> Result<u64, CoreError> {
+    use std::io::BufRead;
     let file = File::open(src).map_err(CoreError::io(src))?;
     let total = file.metadata().map_err(CoreError::io(src))?.len();
     let read = Rc::new(Cell::new(0));
-    let mut decoder = MultiGzDecoder::new(Counting { inner: file, read: read.clone() });
+    let mut input = io::BufReader::with_capacity(COPY_CHUNK, Counting { inner: file, read: read.clone() });
     let mut buf = vec![0u8; COPY_CHUNK];
     let mut written = 0u64;
+    let mut members = 0u32;
     loop {
-        if cancel.is_cancelled() {
-            return Err(CoreError::Cancelled);
+        // At a member boundary: the end of the input, or bytes that do not start another member (padding, garbage —
+        // `gzip -d` warns and ignores them), end the stream once at least one member was read.
+        let head = input.fill_buf().map_err(|e| archive_error(src, e))?;
+        if head.is_empty() || (members > 0 && !head.starts_with(&[0x1f, 0x8b])) {
+            break;
         }
-        let n = match decoder.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(archive_error(src, e)),
-        };
-        out.write_all(&buf[..n]).map_err(CoreError::io(src))?;
-        written += n as u64;
-        progress(read.get().min(total), total);
+        let mut decoder = flate2::bufread::GzDecoder::new(&mut input);
+        loop {
+            if cancel.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let n = match decoder.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(archive_error(src, e)),
+            };
+            out.write_all(&buf[..n]).map_err(CoreError::io(src))?;
+            written += n as u64;
+            progress(read.get().min(total), total);
+        }
+        members += 1;
     }
     progress(total, total);
     Ok(written)

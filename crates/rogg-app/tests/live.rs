@@ -1,5 +1,6 @@
 mod common;
 use gpui_kit::{AppContext, Entity, TestAppContext};
+use rogg_app::args::Args;
 use rogg_app::document::{Document, DocumentEvent, DocumentInit, EngineConfig, Pane, Source};
 use rogg_core::filter::FilterSpec;
 use std::cell::RefCell;
@@ -160,4 +161,43 @@ fn a_replaced_file_is_reloaded(cx: &mut TestAppContext) {
     std::fs::rename(&fresh, &path).unwrap();
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.load_revision() == 2 && d.text().is_some_and(|t| t.line_count() == 2)));
     assert_eq!(matched(&doc, cx), [0, 1]);
+}
+
+#[gpui_kit::test]
+fn an_idle_followed_file_polls_slowly(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    // sync_bytes 0 puts every search on a background thread, so the busy interval is observable.
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let log = common::write_log(dir.path(), "idle.log", &["a", "b"]);
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some() && d.filter.progress.is_none()));
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.poll_interval() == rogg_app::document::FOLLOW_POLL));
+    doc.update(cx, |d, cx| d.set_search(Pane::Full, "a", cx));
+    assert_eq!(doc.read_with(cx, |d, _| d.poll_interval()), rogg_app::document::POLL_INTERVAL, "a running search polls every frame");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.poll_interval() == rogg_app::document::FOLLOW_POLL));
+}
+
+#[gpui_kit::test]
+fn truncating_a_large_file_mid_scan_reloads_and_renders(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let lines: Vec<String> = (0..400_000).map(|i| format!("line {i} error padding padding padding")).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let log = common::write_log(dir.path(), "big.log", &refs);
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log.clone()] });
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
+    std::fs::OpenOptions::new().write(true).open(&log).unwrap().set_len(0).unwrap();
+    std::fs::write(&log, "fresh\n").unwrap();
+    for _ in 0..20 {
+        common::render(cx, w);
+        cx.executor().advance_clock(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+    }
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some_and(|t| t.line_count() == 1)));
+    common::render(cx, w);
+    assert!(ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, t)| t.contains("truncated or replaced"))));
 }
