@@ -209,11 +209,15 @@ mod tests {
 
     #[test]
     fn spans_stay_on_char_boundaries_and_are_capped() {
-        let p = profile(vec![rule("é", |_| {}), rule(r"(?-u)\xA9", |r| r.regex = true)]);
+        // `é` is bytes 1..3; the byte regex matches only 2..3, mid-char, and must be widened to 1..3.
+        let p = profile(vec![rule(r"(?-u)\xA9", |r| {
+            r.regex = true;
+            r.bold = true;
+        })]);
         let (c, _) = CompiledProfile::compile(&p);
-        for (r, _) in c.style("aéb", false).match_spans {
-            assert!("aéb".is_char_boundary(r.start) && "aéb".is_char_boundary(r.end));
-        }
+        let s = c.style("aéb", false);
+        assert_eq!(s.match_spans, vec![(1..3, 0)]);
+        assert_eq!(s.bold, vec![1..3]);
         let line = "a ".repeat(10_000);
         let (c, _) = CompiledProfile::compile(&profile(vec![rule("a", |_| {})]));
         let covered: usize = c.style(&line, false).match_spans.iter().map(|(r, _)| r.len()).sum();
