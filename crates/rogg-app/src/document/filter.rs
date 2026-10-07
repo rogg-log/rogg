@@ -77,6 +77,9 @@ pub struct FilterState {
     pub(super) view_job: Option<ViewJob>,
     /// Rebuilds requested so far; only the newest one's result is installed.
     view_requests: u64,
+    /// A background build was wanted while another was in flight; one build for the newest state starts when
+    /// the in-flight one lands (at most one build runs per document).
+    view_pending: bool,
     /// Rebuilds that ran off the UI thread (tests).
     pub view_builds_off_thread: u64,
 }
@@ -117,6 +120,7 @@ impl FilterState {
             pins_revision: 0,
             view_job: None,
             view_requests: 0,
+            view_pending: false,
             view_builds_off_thread: 0,
         }
     }
@@ -226,6 +230,7 @@ impl Document {
     /// Drops the running scan and what it was building (a reload supersedes it: its progress must not reach the UI).
     pub(super) fn stop_filter(&mut self) {
         self.filter.view_job = None;
+        self.filter.view_pending = false;
         if let Some(job) = self.filter.job.take() {
             retire(job);
         }
@@ -428,42 +433,57 @@ impl Document {
     /// view is built without context (and without the exclusion check), so a progressive publish stays cheap and is
     /// always built here (`publish_due` throttles on the measured rebuild time). Every other rebuild whose work,
     /// `(matches + pins) × max(context, 1)`, exceeds `EngineConfig::view_sync_work` is built on a background thread
-    /// (even at context 0, where composing still walks every match); the current view stays until the new one lands,
-    /// and a result that is no longer the newest request is dropped.
+    /// (even at context 0, where composing still walks every match); the current view stays until the new one lands.
+    /// At most one background build runs per document: a request made while one is in flight only marks that a newer
+    /// state is wanted, and a landing result that is no longer the newest request is dropped (a build for the newest
+    /// state starts then). A synchronous rebuild installs at once and makes an in-flight result stale.
     pub(super) fn rebuild_view(&mut self, cx: &mut Context<Self>) {
         let total = self.text().map_or(0, |t| t.line_count());
         let f = &self.filter;
         let context = if f.progress.is_some() { 0 } else { f.spec.context };
         let publishing = f.progress.is_some();
         let work = (f.matches.len() as u64 + f.pins.len() as u64).saturating_mul(context.max(1) as u64);
+        self.filter.view_requests += 1;
+        if publishing || work <= EngineConfig::get(cx).view_sync_work {
+            // Newer than any in-flight build, which is now stale and replaced by nothing.
+            self.filter.view_pending = false;
+            let (view, stats) = self.view_build(total, context)();
+            self.install_view(view, stats, cx);
+        } else if self.filter.view_job.is_some() {
+            self.filter.view_pending = true;
+        } else {
+            self.spawn_view_build(total, context, cx);
+        }
+    }
+
+    /// Everything a view build needs, captured by value so it can run on any thread.
+    fn view_build(&self, total: u64, context: u32) -> impl FnOnce() -> (FilteredView, FilterStats) + Send + use<> {
+        let f = &self.filter;
         let excluding = match (self.text(), &f.compiled) {
             (Some(text), Some(filter)) if context > 0 => Some((text.clone(), filter.clone())),
             _ => None,
         };
         let (matches, pins, spec, hits, duration) = (f.matches.clone(), f.pins.clone(), f.spec.clone(), f.term_hits.clone(), f.duration);
-        let build = move || {
+        move || {
             let view = match &excluding {
                 Some((text, filter)) => FilteredView::build(matches.clone(), &pins, context, total, |n| filter.is_excluded(text.line(n))),
                 None => FilteredView::build(matches.clone(), &pins, context, total, |_| false),
             };
             let stats = FilterStats::from_parts(&spec, matches.len() as u64, &hits, total, duration, &view);
             (view, stats)
-        };
-        self.filter.view_requests += 1;
-        if publishing || work <= EngineConfig::get(cx).view_sync_work {
-            // A newer, cheap request supersedes a pending background one.
-            self.filter.view_job = None;
-            let (view, stats) = build();
-            self.install_view(view, stats, cx);
-        } else {
-            let (tx, rx) = mpsc::channel();
-            let _detached = std::thread::Builder::new().name("rogg-view".into()).spawn(move || {
-                let _ = tx.send(build());
-            });
-            self.filter.view_job = Some(ViewJob { request: self.filter.view_requests, rx });
-            self.filter.view_builds_off_thread += 1;
-            self.ensure_polling(cx);
         }
+    }
+
+    fn spawn_view_build(&mut self, total: u64, context: u32, cx: &mut Context<Self>) {
+        let build = self.view_build(total, context);
+        let (tx, rx) = mpsc::channel();
+        let _detached = std::thread::Builder::new().name("rogg-view".into()).spawn(move || {
+            let _ = tx.send(build());
+        });
+        self.filter.view_job = Some(ViewJob { request: self.filter.view_requests, rx });
+        self.filter.view_pending = false;
+        self.filter.view_builds_off_thread += 1;
+        self.ensure_polling(cx);
     }
 
     fn install_view(&mut self, view: FilteredView, stats: FilterStats, cx: &mut Context<Self>) {
@@ -477,24 +497,26 @@ impl Document {
         cx.notify();
     }
 
-    /// Installs a finished background view if it answers the newest request; returns whether one is still pending.
+    /// Installs a finished background view if it answers the newest request, else starts the one build that a newer
+    /// request is waiting for; returns whether a build is still in flight.
     pub(super) fn poll_view(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(job) = &self.filter.view_job else { return false };
-        match job.rx.try_recv() {
-            Ok((view, stats)) => {
-                let newest = job.request == self.filter.view_requests;
-                self.filter.view_job = None;
-                if newest {
-                    self.install_view(view, stats, cx);
-                }
-                false
+        let landed = match job.rx.try_recv() {
+            Ok(built) => Some(built),
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => None,
+        };
+        let newest = job.request == self.filter.view_requests;
+        self.filter.view_job = None;
+        if newest {
+            if let Some((view, stats)) = landed {
+                self.install_view(view, stats, cx);
             }
-            Err(TryRecvError::Empty) => true,
-            Err(TryRecvError::Disconnected) => {
-                self.filter.view_job = None;
-                false
-            }
+        } else if self.filter.view_pending {
+            self.filter.view_pending = false;
+            self.rebuild_view(cx);
         }
+        self.filter.view_job.is_some()
     }
 }
 
