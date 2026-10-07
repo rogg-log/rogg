@@ -1,7 +1,7 @@
 //! Per-panel search (spec §4.10): a query independent of the filters, over the whole text or the shown rows.
 
 use crate::cancel::CancelToken;
-use crate::engine::{chunk_ranges, run_filter};
+use crate::engine::{chunk_ranges, run_filter, run_filter_lines};
 use crate::error::CoreError;
 use crate::filter::{CompiledFilter, FilterSpec, Term};
 use crate::highlight::Highlighter;
@@ -20,6 +20,8 @@ pub struct SearchQuery {
 #[derive(Clone, Debug)]
 pub enum SearchScope {
     All,
+    /// The lines from this one to the end (counting only what an append added).
+    From(u64),
     /// The shown lines (ascending, as `FilteredView::shown_lines` yields them).
     Lines(Arc<Vec<u64>>),
 }
@@ -54,6 +56,7 @@ impl CompiledSearch {
     pub fn run(&self, text: &LogText, scope: &SearchScope, chunk_lines: u64, cancel: &CancelToken) -> Result<SearchResult, CoreError> {
         match scope {
             SearchScope::All => run_filter(text, &self.filter, chunk_lines, cancel).map(|r| SearchResult { lines: r.matches }),
+            SearchScope::From(from) => run_filter_lines(text, &self.filter, *from..text.line_count(), chunk_lines, cancel).map(|r| SearchResult { lines: r.matches }),
             SearchScope::Lines(lines) => self.run_lines(text, lines, chunk_lines, cancel),
         }
     }
@@ -150,6 +153,9 @@ mod tests {
         assert_eq!(all.count(), 3);
         let shown = c.run(&text(), &SearchScope::Lines(Arc::new(vec![1, 2, 3])), 2, &CancelToken::new()).unwrap();
         assert_eq!(shown.lines, vec![2]);
+        let tail = c.run(&text(), &SearchScope::From(3), 2, &CancelToken::new()).unwrap();
+        assert_eq!(tail.lines, vec![4], "From(n) counts only the lines from n on");
+        assert!(c.run(&text(), &SearchScope::From(99), 2, &CancelToken::new()).unwrap().lines.is_empty());
     }
 
     #[test]

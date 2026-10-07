@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 use rogg_core::CancelToken;
-use rogg_core::engine::run_filter;
+use rogg_core::engine::{TailBase, run_filter, run_filter_lines};
 use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState};
 use rogg_core::text::LogText;
 
@@ -97,5 +97,25 @@ proptest! {
         prop_assert_eq!(&result.matches, &expected);
         prop_assert_eq!(result.total_lines, text.line_count());
         prop_assert_eq!(result.term_hits, naive_term_hits(&display, &spec));
+    }
+}
+
+proptest! {
+    /// Spec §4.5 + Review Focus 3: a tail scan after an append, merged with the previous result, equals a full scan of
+    /// the grown text — even when the cut fell inside a line that the append completes.
+    #[test]
+    fn tail_scan_merge_equals_a_full_scan(lines in lines(), spec in spec(), cut in any::<prop::sample::Index>(), chunk in 1u64..9) {
+        let full = lines.join("\n").into_bytes();
+        let cut = cut.index(full.len() + 1);
+        let old = LogText::from_bytes(full[..cut].to_vec());
+        let new = LogText::from_bytes(full.clone());
+        let compiled = CompiledFilter::compile(&spec).unwrap();
+        let prev = run_filter(&old, &compiled, chunk, &CancelToken::new()).unwrap();
+        let base = TailBase::new(&old, &compiled, &prev.matches, &prev.term_hits);
+        let tail = run_filter_lines(&new, &compiled, base.from..new.line_count(), chunk, &CancelToken::new()).unwrap();
+        let (matches, hits) = base.merge(tail.matches, &tail.term_hits);
+        let whole = run_filter(&new, &compiled, chunk, &CancelToken::new()).unwrap();
+        prop_assert_eq!(matches, whole.matches);
+        prop_assert_eq!(hits, whole.term_hits);
     }
 }

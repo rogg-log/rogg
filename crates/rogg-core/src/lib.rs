@@ -8,6 +8,7 @@ pub mod engine;
 pub mod error;
 pub mod filter;
 pub mod folder;
+pub mod follow;
 pub mod highlight;
 pub mod history;
 pub mod index;

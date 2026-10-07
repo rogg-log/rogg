@@ -66,6 +66,11 @@ impl LineIndex {
         self.data_len
     }
 
+    /// Whether the indexed bytes end with `\n` (otherwise the last line may still be extended by an append).
+    pub fn ends_with_newline(&self) -> bool {
+        self.ends_with_newline
+    }
+
     /// Longest line in bytes, excluding its `\n`.
     pub fn longest_line(&self) -> u64 {
         self.longest_line

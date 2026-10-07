@@ -6,13 +6,17 @@
 use crate::cancel::CancelToken;
 use crate::encoding::{ENDINGS_SAMPLE_BYTES, Encoding, LineEndings, status_label, transcode_to_utf8};
 use crate::error::CoreError;
-use crate::index::{DEFAULT_CHUNK_BYTES, IndexProgress, LineIndex, build_index};
+use crate::index::{DEFAULT_CHUNK_BYTES, IndexProgress, LineIndex, build_index, build_index_into};
 use crate::mapping::SafeMap;
 use std::borrow::Cow;
 use std::fs::File;
 use std::ops::Range;
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Bytes of a file's start remembered to detect in-place rewrites.
+const HEAD_SAMPLE: usize = 64;
 
 enum Data {
     Mapped(SafeMap),
@@ -45,8 +49,20 @@ pub struct LogText {
     /// The file whose bytes are mapped: the source itself, or its UTF-8 conversion in the cache.
     backing: Option<PathBuf>,
     /// The mapped file, kept open so growth can re-map it (spec §4.5); None for in-memory and converted texts.
-    #[allow(dead_code)] // read by Task 7's growth re-map
     file: Option<Arc<File>>,
+    /// A copy of the file's first bytes when it was mapped: a file rewritten in place (emptied and written again, as
+    /// `logrotate copytruncate` does) is told apart from one that only grew, even when it is as long as before.
+    head: Vec<u8>,
+}
+
+/// What `LogText::refresh` found.
+#[allow(clippy::large_enum_variant)] // short-lived return value, moved straight into an `Arc`; boxing would only add an allocation
+pub enum Refresh {
+    Unchanged,
+    /// The file grew: a new snapshot whose index extends this one's (only the appended bytes were scanned).
+    Grew(LogText),
+    /// The file is shorter than what is mapped, or its start changed: it was truncated or rewritten (reopen it).
+    Truncated,
 }
 
 fn map_file(file: &File, path: &Path) -> Result<Data, CoreError> {
@@ -112,7 +128,8 @@ impl LogText {
         let mut index = build_index(text, DEFAULT_CHUNK_BYTES, cancel, |_, p: IndexProgress| on_progress(OpenProgress::Indexing { done: p.bytes_done, total }))?;
         index.shrink_to_fit();
         let endings = LineEndings::detect(&text[..text.len().min(ENDINGS_SAMPLE_BYTES)]);
-        Ok(LogText { data, start, index, encoding, endings, source_path: Some(path.to_path_buf()), backing: Some(backing), file: handle })
+        let head = data.bytes()[..data.bytes().len().min(HEAD_SAMPLE)].to_vec();
+        Ok(LogText { data, start, index, encoding, endings, source_path: Some(path.to_path_buf()), backing: Some(backing), file: handle, head })
     }
 
     /// Builds text from memory (tests, small inputs, stdin buffers). UTF-16 is decoded; a UTF-8 BOM is skipped.
@@ -127,7 +144,58 @@ impl LogText {
         let text = &data.bytes()[start..];
         let index = LineIndex::from_bytes(text);
         let endings = LineEndings::detect(&text[..text.len().min(ENDINGS_SAMPLE_BYTES)]);
-        LogText { data, start, index, encoding, endings, source_path: None, backing: None, file: None }
+        LogText { data, start, index, encoding, endings, source_path: None, backing: None, file: None, head: Vec::new() }
+    }
+
+    /// Lines an append cannot change: every line, or all but the last when the text does not end with `\n`.
+    pub fn stable_lines(&self) -> u64 {
+        let n = self.line_count();
+        if n == 0 || self.index.ends_with_newline() { n } else { n - 1 }
+    }
+
+    /// (device, inode) of the mapped file; live follow compares it with the path's to detect replacement.
+    pub fn file_identity(&self) -> Option<(u64, u64)> {
+        let meta = self.file.as_ref()?.metadata().ok()?;
+        Some((meta.dev(), meta.ino()))
+    }
+
+    /// Checks the mapped file (spec §4.5). A longer file whose start is unchanged gives a new snapshot that maps the
+    /// whole file and indexes only the appended bytes (an unfinished last line continues). A shorter file, or one whose
+    /// first bytes changed, is `Truncated`. Texts without a file handle (in memory, UTF-16 conversions) are always
+    /// `Unchanged`. A rewrite that keeps the first 64 bytes is indistinguishable from an append.
+    pub fn refresh(&self, cancel: &CancelToken) -> Result<Refresh, CoreError> {
+        let Some(file) = &self.file else { return Ok(Refresh::Unchanged) };
+        let path = self.backing.clone().unwrap_or_default();
+        let len = file.metadata().map_err(CoreError::io(&path))?.len();
+        let have = self.mapped_len();
+        if len < have {
+            return Ok(Refresh::Truncated);
+        }
+        let mut head = vec![0u8; self.head.len()];
+        if !head.is_empty() && (file.read_exact_at(&mut head, 0).is_err() || head != self.head) {
+            return Ok(Refresh::Truncated);
+        }
+        if len == have {
+            return Ok(Refresh::Unchanged);
+        }
+        let map = SafeMap::map(file).map_err(CoreError::io(&path))?;
+        let start = self.start.min(map.bytes().len());
+        let bytes = &map.bytes()[start..];
+        let mut index = build_index_into(self.index.clone(), bytes, DEFAULT_CHUNK_BYTES, cancel, |_, _| {})?;
+        index.shrink_to_fit();
+        let endings = if self.endings == LineEndings::None { LineEndings::detect(&bytes[..bytes.len().min(ENDINGS_SAMPLE_BYTES)]) } else { self.endings };
+        let head = map.bytes()[..map.bytes().len().min(HEAD_SAMPLE)].to_vec();
+        Ok(Refresh::Grew(LogText {
+            data: Data::Mapped(map),
+            start: self.start,
+            index,
+            encoding: self.encoding,
+            endings,
+            source_path: self.source_path.clone(),
+            backing: self.backing.clone(),
+            file: self.file.clone(),
+            head,
+        }))
     }
 
     /// UTF-8 text bytes (after any BOM).

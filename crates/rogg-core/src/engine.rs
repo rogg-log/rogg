@@ -124,9 +124,52 @@ fn collect(events: impl IntoIterator<Item = FilterEvent>) -> Result<FilterResult
 
 /// Blocking scan of the whole text.
 pub fn run_filter(text: &LogText, filter: &CompiledFilter, chunk_lines: u64, cancel: &CancelToken) -> Result<FilterResult, CoreError> {
+    run_filter_lines(text, filter, 0..text.line_count(), chunk_lines, cancel)
+}
+
+/// Blocking scan of `lines` only (tail scans after growth).
+pub fn run_filter_lines(text: &LogText, filter: &CompiledFilter, lines: Range<u64>, chunk_lines: u64, cancel: &CancelToken) -> Result<FilterResult, CoreError> {
     let mut events = Vec::new();
-    scan_lines(text, filter, 0..text.line_count(), chunk_lines, cancel, |e| events.push(e));
+    scan_lines(text, filter, lines, chunk_lines, cancel, |e| events.push(e));
     collect(events)
+}
+
+/// What a tail scan adds to (spec §4.5: after an append only the new lines are scanned): the previous result's matches
+/// before `from` and its term hits without the lines from `from` on. `from` is the previous text's `stable_lines()`,
+/// so an unfinished last line is scanned again — an append may complete it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TailBase {
+    pub from: u64,
+    pub matches: Vec<u64>,
+    pub term_hits: Vec<u64>,
+}
+
+impl TailBase {
+    pub fn new(prev: &LogText, filter: &CompiledFilter, matches: &[u64], term_hits: &[u64]) -> TailBase {
+        let from = prev.stable_lines();
+        let kept = matches.partition_point(|&m| m < from);
+        let mut hits = term_hits.to_vec();
+        hits.resize(filter.spec().terms.len(), 0);
+        if from < prev.line_count() {
+            let redo = filter.scan(prev, from..prev.line_count());
+            for (h, r) in hits.iter_mut().zip(&redo.term_hits) {
+                *h = h.saturating_sub(*r);
+            }
+        }
+        TailBase { from, matches: matches[..kept].to_vec(), term_hits: hits }
+    }
+
+    /// The grown text's result: these matches followed by the tail scan's (which start at `from`), hits added up.
+    pub fn merge(mut self, tail_matches: Vec<u64>, tail_hits: &[u64]) -> (Vec<u64>, Vec<u64>) {
+        self.matches.extend(tail_matches);
+        if self.term_hits.len() < tail_hits.len() {
+            self.term_hits.resize(tail_hits.len(), 0);
+        }
+        for (h, t) in self.term_hits.iter_mut().zip(tail_hits) {
+            *h += t;
+        }
+        (self.matches, self.term_hits)
+    }
 }
 
 /// A filter scan on a background thread; the receiver yields `FilterEvent`s as chunks complete.
@@ -138,13 +181,18 @@ pub struct FilterJob {
 
 impl FilterJob {
     pub fn spawn(text: Arc<LogText>, filter: Arc<CompiledFilter>, chunk_lines: u64) -> Self {
+        Self::spawn_from(text, filter, 0, chunk_lines)
+    }
+
+    /// A background scan of the lines from `from` to the end (a tail scan when `from > 0`).
+    pub fn spawn_from(text: Arc<LogText>, filter: Arc<CompiledFilter>, from: u64, chunk_lines: u64) -> Self {
         let cancel = CancelToken::new();
         let (tx, events) = mpsc::channel();
         let token = cancel.clone();
         let thread = std::thread::Builder::new()
             .name("rogg-filter".into())
             .spawn(move || {
-                scan_lines(&text, &filter, 0..text.line_count(), chunk_lines, &token, |e| {
+                scan_lines(&text, &filter, from..text.line_count(), chunk_lines, &token, |e| {
                     let _ = tx.send(e);
                 })
             })
