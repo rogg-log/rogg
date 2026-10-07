@@ -1,5 +1,5 @@
 use super::pressed;
-use crate::icons::{IconName, icon};
+use crate::icons::{IconName, chevron, icon};
 use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::Callback;
 use gpui_kit::prelude::*;
@@ -9,9 +9,10 @@ use std::rc::Rc;
 pub enum ButtonContent {
     Icon(IconName),
     Glyph(SharedString),
+    ChevronDown,
 }
 
-/// `.icon-btn`: a square-ish ghost button holding a 15px icon or a text glyph (⌄, ⌘, ✕).
+/// `.icon-btn`: a square-ish ghost button holding a 15px icon or a text glyph (⌘, ✕).
 #[derive(IntoElement)]
 pub struct IconButton {
     id: SharedString,
@@ -28,6 +29,11 @@ impl IconButton {
 
     pub fn glyph(id: impl Into<SharedString>, glyph: impl Into<SharedString>) -> Self {
         Self { id: id.into(), content: ButtonContent::Glyph(glyph.into()), compact: false, force_hover: false, on_click: None }
+    }
+
+    /// The "open files" button: the chevron, pointing down.
+    pub fn chevron_down(id: impl Into<SharedString>) -> Self {
+        Self { id: id.into(), content: ButtonContent::ChevronDown, compact: false, force_hover: false, on_click: None }
     }
 
     /// The 25px title-bar variant (`.title-actions .icon-btn`).
@@ -77,6 +83,7 @@ impl RenderOnce for IconButton {
             .child(match self.content {
                 ButtonContent::Icon(name) => icon(name).size(px(15.)).text_color(p.muted).into_any_element(),
                 ButtonContent::Glyph(g) => div().child(g).into_any_element(),
+                ButtonContent::ChevronDown => chevron(true).size(px(13.)).text_color(p.muted).into_any_element(),
             })
             .when_some(self.on_click, |d, f| d.on_click(move |_, window, cx| f(window, cx)))
     }

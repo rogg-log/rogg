@@ -14,7 +14,7 @@ fn icon_buttons_use_reference_box_sizes(cx: &mut TestAppContext) {
             .flex()
             .child(IconButton::icon("edit", IconName::Edit))
             .child(IconButton::icon("settings", IconName::Settings).compact())
-            .child(IconButton::glyph("all-tabs", "⌄").compact())
+            .child(IconButton::chevron_down("all-tabs").compact())
             .into_any_element()
     });
     // .icon-btn: 15px svg + 6px*2 padding + 1px*2 border = 29 wide; height fixed at 27.

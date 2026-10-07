@@ -1,5 +1,5 @@
 use crate::IndexCallback;
-use crate::icons::{IconName, icon};
+use crate::icons::{IconName, chevron, icon};
 use crate::theme::{ActiveRoggTheme, Palette, TextScale, size};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, FontWeight, Pixels, SharedString, TestSupportExt, Window, div, px};
@@ -129,7 +129,13 @@ fn tree_row(i: usize, row: TreeRow, p: Palette, s: TextScale, on_row: Option<Ind
             .text_color(if failed { p.error } else { p.text })
             .rounded(px(4.))
             .hover(move |s| s.bg(p.hover))
-            .child(div().flex_none().text_color(p.muted).child(if expanded { "⌄" } else { "›" }))
+            .child(
+                div()
+                    .id(SharedString::from(if expanded { format!("tree-chevron-open-{i}") } else { format!("tree-chevron-{i}") }))
+                    .test_support()
+                    .flex_none()
+                    .child(chevron(expanded).size(px(11.)).text_color(p.muted)),
+            )
             .child(icon(IconName::Folder).size(px(13.)).text_color(p.muted))
             .child(div().min_w_0().truncate().child(label))
             .when_some(note, |d, note| {

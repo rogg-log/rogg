@@ -364,7 +364,7 @@ impl RenderOnce for FilterBand {
             .mt(px(8.))
             .text_size(s.px(10.))
             .text_color(p.muted)
-            .child(TextButton::small("history", "History⌄").icon(IconName::History).on_click(call(&self.on_history)))
+            .child(TextButton::small("history", "History").icon(IconName::History).on_click(call(&self.on_history)))
             .child(
                 div().flex().items_center().gap(px(5.)).child("Context").child(
                     CompactSelect::new("context-select", self.context_options, self.context_selected).on_select(move |i, w, cx| {

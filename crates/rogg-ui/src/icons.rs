@@ -1,5 +1,5 @@
 use gpui_kit::prelude::*;
-use gpui_kit::{Svg, svg};
+use gpui_kit::{Svg, Transformation, radians, svg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum IconName {
@@ -24,16 +24,18 @@ pub enum IconName {
     Pause,
     Close,
     ChevronDown,
+    ChevronRight,
     /// Heavy chevron matching the native `<select>` arrow of the reference.
     SelectCaret,
 }
 
 impl IconName {
-    pub const ALL: [IconName; 22] = [
+    pub const ALL: [IconName; 23] = [
         IconName::File, IconName::Folder, IconName::Search, IconName::Wrap, IconName::Pin, IconName::PinFilled,
         IconName::Filter, IconName::Follow, IconName::Check, IconName::Off, IconName::Minus, IconName::History,
         IconName::Edit, IconName::Export, IconName::Sun, IconName::Settings, IconName::Side, IconName::OpenTab,
-        IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::SelectCaret,
+        IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::ChevronRight,
+        IconName::SelectCaret,
     ];
 
     pub fn path(self) -> &'static str {
@@ -59,7 +61,8 @@ impl IconName {
             IconName::Pause => "icons/rogg/pause.svg",
             IconName::Close => "icons/rogg/close.svg",
             IconName::ChevronDown => "icons/rogg/chevron-down.svg",
-            IconName::SelectCaret => "icons/rogg/select-caret.svg",
+            IconName::ChevronRight => "icons/rogg/chevron-right.svg",
+            IconName::SelectCaret =>"icons/rogg/select-caret.svg",
         }
     }
 }
@@ -67,4 +70,10 @@ impl IconName {
 /// An icon element. Always set `.size(..)` and `.text_color(..)`: gpui svgs paint only with an explicit text color.
 pub fn icon(name: IconName) -> Svg {
     svg().path(name.path()).flex_shrink_0()
+}
+
+/// The disclosure chevron: points right when closed and is rotated 90° clockwise (pointing down) when open.
+pub fn chevron(open: bool) -> Svg {
+    let s = icon(IconName::ChevronRight);
+    if open { s.with_transformation(Transformation::rotate(radians(std::f32::consts::FRAC_PI_2))) } else { s }
 }

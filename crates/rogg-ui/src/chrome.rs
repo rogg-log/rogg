@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, FontWeight, SharedString, TestSupportExt, Window, div, px, relative};
 use std::rc::Rc;
 
-/// `.meta`: breadcrumb on the left, `● Profile: X⌄ | Export` on the right.
+/// `.meta`: breadcrumb on the left, `● Profile: X | Export` on the right.
 #[derive(IntoElement)]
 pub struct InfoBar {
     crumbs: Vec<SharedString>,
@@ -93,7 +93,7 @@ impl RenderOnce for InfoBar {
                 .flex()
                 .items_center()
                 .gap(px(9.))
-                .child(TextButton::meta("profile", format!("Profile: {}⌄", self.profile)).dot().on_click(move |w, cx| {
+                .child(TextButton::meta("profile", format!("Profile: {}", self.profile)).dot().on_click(move |w, cx| {
                     if let Some(f) = &on_profile {
                         f(w, cx)
                     }

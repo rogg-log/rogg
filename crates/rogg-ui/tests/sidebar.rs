@@ -98,3 +98,15 @@ fn folder_rows_show_a_note_and_a_failed_state(cx: &mut TestAppContext) {
     let note = common::bounds(cx, w, "tree-note-2");
     assert!(note.right() <= row.right() && note.right() >= row.right() - px(9.) - px(1.), "the note sits at the row's right padding");
 }
+
+#[gpui_kit::test]
+fn folder_rows_show_a_chevron_that_turns_when_open(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let rows = vec![
+        TreeRow::Folder { label: "open".into(), expanded: true, depth: 0, note: None, failed: false },
+        TreeRow::Folder { label: "closed".into(), expanded: false, depth: 0, note: None, failed: false },
+    ];
+    let w = common::open(cx, 211., 400., move |_, _| Sidebar::new().rows(rows.clone()).into_any_element());
+    assert!(common::exists(cx, w, "tree-chevron-open-0") && !common::exists(cx, w, "tree-chevron-0"));
+    assert!(common::exists(cx, w, "tree-chevron-1") && !common::exists(cx, w, "tree-chevron-open-1"));
+}

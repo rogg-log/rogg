@@ -187,7 +187,7 @@ impl RenderOnce for TitleBar {
                     .items_center()
                     .gap(px(4.))
                     .pl(px(5.))
-                    .child(button(IconButton::glyph("all-tabs", "⌄").compact(), self.on_all_tabs))
+                    .child(button(IconButton::chevron_down("all-tabs").compact(), self.on_all_tabs))
                     .child(button(IconButton::glyph("shortcuts", "⌘").compact(), self.on_shortcuts))
                     .child(button(IconButton::icon("settings", IconName::Settings).compact(), self.on_settings)),
             )

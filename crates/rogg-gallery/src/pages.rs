@@ -118,7 +118,7 @@ fn controls(view: &GalleryView, p: &Palette) -> AnyElement {
     let buttons = row()
         .child(IconButton::icon("ib-normal", IconName::Edit))
         .child(IconButton::icon("ib-hover", IconName::Edit).force_hover(true))
-        .child(IconButton::glyph("ib-chevron", "⌄").compact())
+        .child(IconButton::chevron_down("ib-chevron").compact())
         .child(IconButton::glyph("ib-cmd", "⌘").compact())
         .child(IconButton::icon("ib-settings", IconName::Settings).compact())
         .child(IconButton::glyph("ib-close", "✕"));
@@ -134,9 +134,9 @@ fn controls(view: &GalleryView, p: &Palette) -> AnyElement {
         .child(ToolButton::new("tool-open-tab", IconName::OpenTab, "Open as tab"))
         .child(ToolButton::new("tool-pause", IconName::Pause, "Paused").pressed(true).badge(Some("+1,204".into())));
     let text_buttons = row()
-        .child(TextButton::meta("tb-profile", "Profile: Services⌄").dot())
+        .child(TextButton::meta("tb-profile", "Profile: Services").dot())
         .child(TextButton::meta("tb-export", "Export").icon(IconName::Export))
-        .child(TextButton::small("tb-history", "History⌄").icon(IconName::History))
+        .child(TextButton::small("tb-history", "History").icon(IconName::History))
         .child(ActionButton::new("ab-primary", "This direction works").primary())
         .child(ActionButton::new("ab-normal", "Needs adjustment"));
     let fields = row()
