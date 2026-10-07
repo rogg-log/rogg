@@ -200,6 +200,11 @@ fn loading(update: &OpenUpdate) -> LoadState {
     LoadState::Loading { fraction, label: label.into() }
 }
 
+/// A derived tab being built: `Building tab N%` (global constraints: footer and placeholder copy).
+fn building(fraction: f32) -> LoadState {
+    LoadState::Loading { fraction, label: format!("Building tab {:.0}%", fraction * 100.).into() }
+}
+
 /// Whether `path` must go through the source pipeline off the UI thread (a `.gz` or an archive), even when small.
 fn needs_pipeline(path: &Path) -> bool {
     let mut head = [0u8; 512];
@@ -339,7 +344,7 @@ impl Document {
             Source::Member(source) => self.spawn_open(source, cx),
             Source::Derived(source) => {
                 self.derived_job = Some(crate::derived::DerivedJob::spawn(source, CacheStore::get(cx)));
-                self.load = LoadState::Loading { fraction: 0., label: "Building tab".into() };
+                self.load = building(0.);
                 cx.notify();
                 self.ensure_polling(cx);
             }
@@ -455,7 +460,7 @@ impl Document {
         let Some(job) = &self.derived_job else { return };
         match job.poll() {
             crate::derived::DerivedPoll::Pending(Some(f)) => {
-                self.load = LoadState::Loading { fraction: f, label: "Building tab".into() };
+                self.load = building(f);
                 cx.notify();
             }
             crate::derived::DerivedPoll::Pending(None) => {}

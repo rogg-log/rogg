@@ -76,6 +76,11 @@ fn nested_derived_tabs_are_frozen_copies(cx: &mut TestAppContext) {
     filter(&root, "x", cx);
     common::press(cx, w, "shift-cmd-t");
     let a = active(&ws, cx);
+    let label = doc(&a, cx).read_with(cx, |d, _| match &d.load {
+        rogg_app::document::LoadState::Loading { label, .. } => label.to_string(),
+        _ => panic!("the copy is built on a background job"),
+    });
+    assert!(label.starts_with("Building tab ") && label.ends_with('%'), "{label}");
     ready(&a, cx);
     assert_eq!(texts(&a, cx), ["x2", "x y5", "x y8"]);
     assert_eq!(numbers(&a, cx), [1, 2, 3]);

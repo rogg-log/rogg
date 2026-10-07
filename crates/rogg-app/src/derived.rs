@@ -107,7 +107,12 @@ impl DerivedJob {
                     None => Err(CoreError::Parse { path: Default::default(), message: "this tab cannot be rebuilt".into() }),
                 },
             };
-            let _ = tx.send(Message::Done(Box::new(result)));
+            // The tab closed meanwhile: nobody will delete the copy, so delete it here.
+            if let Err(mpsc::SendError(Message::Done(result))) = tx.send(Message::Done(Box::new(result)))
+                && let Ok((derived, _)) = *result
+            {
+                let _ = std::fs::remove_file(&derived.path);
+            }
         });
         Self { cancel, rx }
     }
