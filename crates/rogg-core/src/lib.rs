@@ -22,6 +22,7 @@ pub mod search;
 pub mod settings;
 pub mod source;
 pub mod stats;
+pub mod style;
 pub mod stream;
 pub mod text;
 pub mod tree;

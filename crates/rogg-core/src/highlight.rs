@@ -8,13 +8,13 @@ use std::ops::Range;
 /// At most this many matches per term are considered per line (bounds work on hostile lines).
 pub const MAX_SPANS_PER_TERM: usize = 4096;
 
-enum Finder {
+pub(crate) enum Finder {
     Plain(AhoCorasick),
     Regex(regex::bytes::Regex),
 }
 
 impl Finder {
-    fn build(text: &str, regex: bool, case_sensitive: bool) -> Result<Self, CoreError> {
+    pub(crate) fn build(text: &str, regex: bool, case_sensitive: bool) -> Result<Self, CoreError> {
         if regex {
             regex::bytes::RegexBuilder::new(text)
                 .case_insensitive(!case_sensitive)
@@ -31,16 +31,24 @@ impl Finder {
         }
     }
 
-    fn ranges<'a>(&'a self, display: &'a str) -> Box<dyn Iterator<Item = Range<usize>> + 'a> {
+    pub(crate) fn ranges<'a>(&'a self, display: &'a str) -> Box<dyn Iterator<Item = Range<usize>> + 'a> {
         match self {
             Finder::Plain(ac) => Box::new(ac.find_iter(display).map(|m| m.range())),
             Finder::Regex(re) => Box::new(re.find_iter(display.as_bytes()).map(|m| m.range())),
         }
     }
+
+    /// Whether the pattern matches anywhere in `display` (an empty match counts: `^` matches every line).
+    pub(crate) fn is_match(&self, display: &str) -> bool {
+        match self {
+            Finder::Plain(ac) => ac.is_match(display),
+            Finder::Regex(re) => re.is_match(display.as_bytes()),
+        }
+    }
 }
 
 /// Widens `range` to the nearest char boundaries (byte regexes such as `(?-u)\xA9` can match mid-char).
-fn snap_to_char_boundaries(display: &str, range: Range<usize>) -> Range<usize> {
+pub(crate) fn snap_to_char_boundaries(display: &str, range: Range<usize>) -> Range<usize> {
     let mut start = range.start;
     while !display.is_char_boundary(start) {
         start -= 1;
