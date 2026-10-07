@@ -11,6 +11,11 @@ fn truncation_under_a_mapping_reads_zeros_and_slots_are_released() {
     let before = guarded_count();
     let map = SafeMap::map(&File::open(&path).unwrap()).unwrap();
     assert!(map.is_guarded());
+    // Our handler must run on the alternate stack, like Rust's own, so stack overflows are still reported.
+    // SAFETY: reads the current SIGBUS action into a zeroed struct.
+    let mut current: libc::sigaction = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut current) };
+    assert!(current.sa_flags & libc::SA_ONSTACK != 0, "the SIGBUS handler runs on the alternate stack");
     assert_eq!(guarded_count(), before + 1);
     // `logrotate copytruncate` / `> app.log`: the file shrinks under the mapping.
     OpenOptions::new().write(true).open(&path).unwrap().set_len(100).unwrap();
@@ -19,6 +24,13 @@ fn truncation_under_a_mapping_reads_zeros_and_slots_are_released() {
     assert_eq!(map.bytes()[(1 << 20) - 1], 0);
     drop(map);
     assert_eq!(guarded_count(), before, "dropping a mapping frees its slot");
+
+    // An empty file cannot be mapped.
+    let empty = dir.path().join("empty.log");
+    std::fs::write(&empty, b"").unwrap();
+    let error = SafeMap::map(&File::open(&empty).unwrap()).err().expect("mapping an empty file fails");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(guarded_count(), before, "a failed mapping leaves no slot behind");
 
     // The same through LogText: reading every line of a truncated file does not crash.
     let lines: Vec<u8> = (0..50_000).flat_map(|i| format!("line {i}\n").into_bytes()).collect();

@@ -37,7 +37,9 @@ fn install() {
             let _ = PREVIOUS.set(previous);
             let mut action: libc::sigaction = std::mem::zeroed();
             action.sa_sigaction = on_sigbus as *const () as libc::sighandler_t;
-            action.sa_flags = libc::SA_SIGINFO;
+            // SA_ONSTACK like Rust's own handler: a stack-overflow guard-page hit raises SIGBUS on macOS and must be
+            // handled on the alternate stack.
+            action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
             libc::sigemptyset(&mut action.sa_mask);
             libc::sigaction(libc::SIGBUS, &action, std::ptr::null_mut());
         }
@@ -47,10 +49,12 @@ fn install() {
 /// End address of the registered mapping containing `addr`.
 fn guarded_end(addr: usize) -> Option<usize> {
     SLOTS.iter().find_map(|s| {
-        // `len` is published after `start` and cleared before it, so a non-zero `len` means `start` is valid.
+        // `len` is published after `start` and cleared before it. Re-reading `len` after `start` rejects a slot that
+        // was unregistered and re-registered in between (a stale `len` paired with a new `start`).
         let len = s.len.load(Ordering::Acquire);
         let start = s.start.load(Ordering::Acquire);
-        (len > 0 && addr >= start && addr - start < len).then_some(start + len)
+        let recheck = s.len.load(Ordering::Acquire);
+        (len > 0 && len == recheck && addr >= start && addr - start < len).then_some(start + len)
     })
 }
 
@@ -103,6 +107,9 @@ pub struct SafeMap {
 impl SafeMap {
     /// Maps all of `file` read-only. Fails for an empty file (there is nothing to map).
     pub fn map(file: &File) -> std::io::Result<SafeMap> {
+        if file.metadata()?.len() == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "cannot map an empty file"));
+        }
         install();
         // SAFETY: a read-only mapping that rogg never writes through. Another process writing the file only changes
         // what is displayed; a truncation is caught by the SIGBUS guard above.
