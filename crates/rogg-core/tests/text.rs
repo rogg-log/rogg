@@ -171,3 +171,29 @@ fn changed_utf16_file_gets_a_new_cache_entry() {
     assert_eq!(lines(&open(&p, &cache)), ["one", "two"]);
     assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 2);
 }
+
+#[test]
+fn only_top_level_cache_entries_are_converted_under_their_stem() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    std::fs::create_dir_all(cache.join("streams")).unwrap();
+    let utf16 = |s: &str| {
+        let mut b = vec![0xFF, 0xFE];
+        for u in s.encode_utf16() {
+            b.extend(u.to_le_bytes());
+        }
+        b
+    };
+    // A cache entry is immutable and origin-keyed already: its conversion is named after it.
+    let entry = cache.join("0123456789abcdef.log");
+    std::fs::write(&entry, utf16("entry\n")).unwrap();
+    assert_eq!(lines(&open(&entry, &cache)), ["entry"]);
+    assert!(cache.join("0123456789abcdef.utf8").exists());
+    // A capture is named by pid and counter, which a later run can reuse for other data: it keeps the origin key.
+    let capture = cache.join("streams").join("stream-7-0.log");
+    std::fs::write(&capture, utf16("capture\n")).unwrap();
+    assert_eq!(lines(&open(&capture, &cache)), ["capture"]);
+    assert!(!cache.join("stream-7-0.utf8").exists(), "the capture's name is not a key");
+    let converted: Vec<_> = std::fs::read_dir(&cache).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".utf8")).collect();
+    assert_eq!(converted.len(), 2, "{converted:?}");
+}

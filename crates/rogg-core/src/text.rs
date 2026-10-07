@@ -74,10 +74,11 @@ fn map_file(file: &File, path: &Path) -> Result<Data, CoreError> {
 }
 
 /// Where the UTF-8 conversion of the UTF-16 file at `path` lives in the cache (spec §4.2 key). A cache entry is
-/// immutable and already origin-keyed (leasing touches its mtime, which would change an `origin_key`), so its
-/// conversion is keyed by its file stem.
+/// immutable and already origin-keyed (leasing touches its mtime, which would change an `origin_key`), so a top-level
+/// entry's conversion is keyed by its file stem. Anything deeper (a capture in `streams/`, named by pid and counter,
+/// which a later run can reuse for other data) keeps the origin key.
 fn transcoded_path(cache_dir: &Path, path: &Path) -> Result<PathBuf, CoreError> {
-    if path.starts_with(cache_dir)
+    if path.parent() == Some(cache_dir)
         && let Some(stem) = path.file_stem()
     {
         return Ok(cache_dir.join(format!("{}.utf8", stem.to_string_lossy())));
