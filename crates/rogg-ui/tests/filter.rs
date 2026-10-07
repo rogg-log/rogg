@@ -3,7 +3,7 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{TestAppContext, px};
 use rogg_ui::filter::{ChipState, FilterBand};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 fn terms(n: usize) -> Vec<(gpui_kit::SharedString, ChipState)> {
@@ -119,4 +119,20 @@ fn chip_colours_can_be_overridden_per_slot() {
     assert_eq!(chip_color(5, None, &p), p.chips[1]);
     let custom = vec![ChipColor { border: Color::rgb(0x111111), bg: Color::rgb(0x222222), term: Color::rgb(0x333333) }];
     assert_eq!(chip_color(5, Some(&custom), &p), custom[0]);
+}
+
+#[gpui_kit::test]
+fn the_band_keeps_its_height_in_edit_mode(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let chips = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(3)).into_any_element());
+    let slot: Rc<RefCell<Option<gpui_kit::Entity<InputState>>>> = Rc::default();
+    let editing = common::open(cx, 1200., 200., move |window, cx| {
+        let input = slot.borrow_mut().get_or_insert_with(|| cx.new(|cx| InputState::new(window, cx).default_value("error || timeout"))).clone();
+        FilterBand::new(terms(3)).editing(Some(input)).into_any_element()
+    });
+    let a = common::bounds(cx, chips, "filter-band");
+    let b = common::bounds(cx, editing, "filter-band");
+    assert_eq!(a.size.height, b.size.height, "chips {a:?} vs editor {b:?}");
+    assert_eq!(common::bounds(cx, editing, "expression").size.height, px(28.));
+    assert_eq!(common::bounds(cx, editing, "apply").size.height, px(28.));
 }

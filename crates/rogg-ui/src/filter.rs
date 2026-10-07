@@ -294,14 +294,16 @@ impl RenderOnce for FilterBand {
                         .test_support()
                         .flex_1()
                         .min_w(px(80.))
+                        .h(px(size::CHIP_H))
+                        .flex()
+                        .items_center()
                         .px(px(8.))
-                        .py(px(6.))
                         .bg(p.bg)
                         .border_1()
                         .border_color(p.accent)
                         .rounded(px(4.))
                         .child(
-                            Input::new(&input).appearance(false).p_0().font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text),
+                            Input::new(&input).appearance(false).p_0().h(px(size::CHIP_H - 2.)).font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text),
                         ),
                 )
                 .child(
@@ -309,8 +311,10 @@ impl RenderOnce for FilterBand {
                         .id("apply")
                         .test_support()
                         .flex_none()
+                        .h(px(size::CHIP_H))
+                        .flex()
+                        .items_center()
                         .px(px(8.))
-                        .py(px(5.))
                         .border_1()
                         .border_color(p.accent)
                         .rounded(px(5.))
