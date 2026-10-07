@@ -28,6 +28,20 @@ pub fn display_text(text: &str, max_bytes: usize) -> (String, bool) {
     (out, truncated)
 }
 
+/// The run of non-whitespace characters around byte `index` (snapped back to a char boundary); None on
+/// whitespace, on the `…` truncation marker and for empty text. An index at the end belongs to the last word.
+pub fn token_at(text: &str, index: usize) -> Option<String> {
+    let index = text.floor_char_boundary(index.min(text.len()));
+    let is_word = |c: char| !c.is_whitespace() && c != '…';
+    // The character under the index must itself be a word character (the end of the text excepted).
+    if text[index..].chars().next().is_some_and(|c| !is_word(c)) {
+        return None;
+    }
+    let start = text[..index].char_indices().rev().take_while(|&(_, c)| is_word(c)).last().map_or(index, |(i, _)| i);
+    let end = text[index..].char_indices().find(|&(_, c)| !is_word(c)).map_or(text.len(), |(i, _)| index + i);
+    (start < end).then(|| text[start..end].to_string())
+}
+
 fn resolve(style: SpanStyle, p: &Palette) -> Option<Color> {
     match style {
         SpanStyle::Faint => Some(p.faint),
@@ -338,5 +352,22 @@ mod tests {
         assert_eq!(segs[1].range, 10..15);
         assert_eq!(segs[1].hit_bg, Some(p().hits[0].bg));
         assert_eq!(segs[1].fg, p().hits[0].fg);
+    }
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::token_at;
+
+    #[test]
+    fn token_at_takes_the_word_under_the_index() {
+        let line = "14:32:08  ERROR  timeout waiting for metrics";
+        assert_eq!(token_at(line, 12).as_deref(), Some("ERROR"));
+        assert_eq!(token_at(line, 10).as_deref(), Some("ERROR"), "start of a word");
+        assert_eq!(token_at(line, 9), None, "whitespace");
+        assert_eq!(token_at(line, line.len()).as_deref(), Some("metrics"), "end of the line belongs to the last word");
+        assert_eq!(token_at("a=é1 b", 3).as_deref(), Some("a=é1"), "indices inside a multi-byte char snap back");
+        assert_eq!(token_at("cut…", 4), None, "the truncation marker is not a word");
+        assert_eq!(token_at("", 0), None);
     }
 }

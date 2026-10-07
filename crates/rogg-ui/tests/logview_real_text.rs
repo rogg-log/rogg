@@ -30,9 +30,14 @@ impl Render for Host {
 }
 
 fn open(cx: &mut HeadlessAppContext, lines: Vec<LogLine>, wrap: bool) -> AnyWindowHandle {
+    open_state(cx, lines, wrap).0
+}
+
+fn open_state(cx: &mut HeadlessAppContext, lines: Vec<LogLine>, wrap: bool) -> (AnyWindowHandle, gpui_kit::Entity<LogViewState>) {
     let rows = Rc::new(VecRows::new(lines.into_iter().map(LogRow::Line).collect()));
     cx.update(|cx| {
         let state = cx.new(|_| LogViewState::new(rows));
+        let shared = state.clone();
         if wrap {
             state.update(cx, |s, cx| s.set_wrap(true, cx));
         }
@@ -43,7 +48,7 @@ fn open(cx: &mut HeadlessAppContext, lines: Vec<LogLine>, wrap: bool) -> AnyWind
             ..Default::default()
         };
         let (handle, _) = gpui_kit::open_window(options, cx, move |_, cx| cx.new(|_| Host(state))).expect("open window");
-        handle
+        (handle, shared)
     })
 }
 
@@ -104,11 +109,40 @@ fn dense_hit_line_renders_a_frame_quickly(cx: &mut HeadlessAppContext) {
     }
 }
 
+/// Right-click at `x` over the first row: the word under the pointer, from the real glyph metrics.
+fn right_click_token(cx: &mut HeadlessAppContext, text: &str, wrap: bool, x: f32) -> Option<String> {
+    use gpui_kit::{InputEvent, MouseButton, MouseDownEvent, MouseMoveEvent, point};
+    let (w, state) = open_state(cx, vec![line(1, text, vec![])], wrap);
+    render(cx, w);
+    let position = point(px(x), px(4. + 11.));
+    cx.update_window(w, |_, window, cx| {
+        window.dispatch_event(MouseMoveEvent { position, pressed_button: None, modifiers: Default::default() }.to_platform_input(), cx);
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        let down = MouseDownEvent { button: MouseButton::Right, position, modifiers: Default::default(), click_count: 1, first_mouse: false };
+        window.dispatch_event(down.to_platform_input(), cx);
+    })
+    .unwrap();
+    cx.update(|cx| state.read(cx).context_target().expect("target recorded").token.clone())
+}
+
+/// The context menu's word comes from the glyph under the pointer, wrapped or not.
+fn right_click_takes_the_word_under_the_pointer(cx: &mut HeadlessAppContext) {
+    use rogg_ui::theme::size::{GUTTER_NUMBER_W, GUTTER_PIN_W};
+    let left = GUTTER_PIN_W + GUTTER_NUMBER_W;
+    let text = format!("alpha{}omega", " ".repeat(40));
+    for wrap in [false, true] {
+        assert_eq!(right_click_token(cx, &text, wrap, left + 3.).as_deref(), Some("alpha"), "wrap={wrap}, first glyph");
+        assert_eq!(right_click_token(cx, &text, wrap, left + 150.), None, "wrap={wrap}, inside the gap");
+    }
+}
+
 fn main() {
     let mut cx = headless();
-    let cases: [(&str, fn(&mut HeadlessAppContext)); 2] = [
+    let cases: [(&str, fn(&mut HeadlessAppContext)); 3] = [
         ("spans_inside_multibyte_chars_render_without_panicking", spans_inside_multibyte_chars_render_without_panicking),
         ("dense_hit_line_renders_a_frame_quickly", dense_hit_line_renders_a_frame_quickly),
+        ("right_click_takes_the_word_under_the_pointer", right_click_takes_the_word_under_the_pointer),
     ];
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     for (name, case) in cases {

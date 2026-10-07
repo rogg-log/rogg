@@ -54,6 +54,7 @@ fn click_selects_and_gutter_click_toggles_pin(cx: &mut TestAppContext) {
             e.borrow_mut().push(match ev {
                 LogViewEvent::Selected { number, .. } => format!("select {number}"),
                 LogViewEvent::TogglePin { number } => format!("pin {number}"),
+                LogViewEvent::AddTerm { text, exclude } => format!("term {text} {exclude}"),
             })
         })
         .detach();
@@ -418,4 +419,66 @@ fn the_bottom_right_corner_outside_the_horizontal_track_selects_rows(cx: &mut Te
     .unwrap();
     assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1009));
     assert_eq!(state.read_with(cx, |s, _| s.scroll_x()), px(0.));
+}
+
+use gpui_kit::{FocusHandle, KeyBinding};
+use rogg_ui::logview::actions::{self, CopySelection, CopySelectionWithNumbers, SelectLast, SelectNext};
+
+fn open_focusable(cx: &mut TestAppContext, state: Entity<LogViewState>) -> (gpui_kit::AnyWindowHandle, FocusHandle) {
+    let focus = cx.update(|cx| cx.focus_handle());
+    let f = focus.clone();
+    let w = common::open(cx, 800., 238., move |_, _| LogView::new("log-test", state.clone()).focus(f.clone()).into_any_element());
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new("down", SelectNext, Some(actions::KEY_CONTEXT)),
+            KeyBinding::new("cmd-down", SelectLast, Some(actions::KEY_CONTEXT)),
+            KeyBinding::new("cmd-c", CopySelection, Some(actions::KEY_CONTEXT)),
+            KeyBinding::new("alt-cmd-c", CopySelectionWithNumbers, Some(actions::KEY_CONTEXT)),
+        ])
+    });
+    (w, focus)
+}
+
+#[gpui_kit::test]
+fn clicking_focuses_and_keys_move_and_copy(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None)));
+    let (w, focus) = open_focusable(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.click_at("log-test", point(px(300.), px(4. + 23. + 10.)), cx);
+        assert!(focus.is_focused(window), "a click focuses the panel");
+        window.press("down", cx);
+        window.press("cmd-c", cx);
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1002));
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()).as_deref(), Some("line 2\n"));
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.press("cmd-down", cx);
+        window.press("alt-cmd-c", cx);
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1019));
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()).as_deref(), Some("1019\tline 19\n"));
+}
+
+#[gpui_kit::test]
+fn right_click_selects_and_records_the_context_target(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None)));
+    let (w, _) = open_focusable(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        window.right_click("log-test", cx); // the centre of a 238 px panel is row 5
+    })
+    .unwrap();
+    cx.run_until_parked();
+    state.read_with(cx, |s, _| {
+        assert_eq!(s.selected(), Some(1005));
+        let target = s.context_target().expect("target recorded");
+        assert_eq!((target.number, target.pinned), (1005, false));
+    });
 }

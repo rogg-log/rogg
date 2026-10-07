@@ -1,5 +1,8 @@
 //! rogg's design system: theme, icons and components shared by the app and the gallery.
 
+// The Action derive emits `gpui::` paths; gpui-kit documents aliasing itself as `gpui` for that.
+extern crate gpui_kit as gpui;
+
 pub mod theme;
 pub mod assets;
 pub mod icons;

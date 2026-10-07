@@ -179,6 +179,8 @@ impl ReplicaState {
                 self.rebuild(cx);
             }
             LogViewEvent::TogglePin { number } => self.toggle_pin((*number - FIRST_LINE_NUMBER) as usize, cx),
+            // The replica has no filter model to add terms to.
+            LogViewEvent::AddTerm { .. } => {}
         }
     }
 

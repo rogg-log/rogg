@@ -22,6 +22,8 @@ pub struct RowGeometry {
 pub enum LogViewEvent {
     Selected { row: usize, number: u64 },
     TogglePin { number: u64 },
+    /// Context menu "Filter on …" / "Exclude …": add the word as a filter term.
+    AddTerm { text: String, exclude: bool },
 }
 
 /// Where `scroll_to_row` puts the row.
@@ -31,6 +33,14 @@ pub enum ScrollTo {
     /// Only scroll if needed, by the smallest amount.
     Visible,
     Top,
+}
+
+/// The line under the pointer when the context menu opened, and the word under the pointer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContextTarget {
+    pub number: u64,
+    pub pinned: bool,
+    pub token: Option<String>,
 }
 
 /// A mouse drag in progress, started by a press on a row or a scrollbar thumb.
@@ -64,6 +74,7 @@ pub struct LogViewState {
     pub(crate) heights_width: f32,
     pub(crate) last_rows: Vec<RowGeometry>,
     pub(crate) drag: Option<Drag>,
+    pub(crate) context_target: Option<ContextTarget>,
     initialized: bool,
 }
 
@@ -88,8 +99,13 @@ impl LogViewState {
             heights_width: 0.,
             last_rows: Vec::new(),
             drag: None,
+            context_target: None,
             initialized: false,
         }
+    }
+
+    pub fn context_target(&self) -> Option<&ContextTarget> {
+        self.context_target.as_ref()
     }
 
     pub fn rows(&self) -> &Rc<dyn LogRowSource> {

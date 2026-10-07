@@ -1,12 +1,12 @@
 use super::model::{LogRow, LogRowSource, Span};
-use super::state::{Drag, LogViewEvent, LogViewState, RowGeometry};
-use super::text::{MAX_DISPLAY_BYTES, Segment, display_text, segments};
+use super::state::{ContextTarget, Drag, LogViewEvent, LogViewState, RowGeometry};
+use super::text::{MAX_DISPLAY_BYTES, Segment, display_text, segments, token_at};
 use crate::icons::IconName;
 use crate::theme::{ActiveRoggTheme, Color, RoggTheme, size};
 use crate::logview::RowTint;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, Entity, Font, GlobalElementId, Hitbox,
+    App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, GlobalElementId, Hitbox,
     HitboxBehavior, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     LineLayout, ShapedLine, SharedString, Style, TextAlign, TextRun, TransformationMatrix, Window, WrappedLine, fill, font, outline, point, px,
     relative, size as gsize,
@@ -17,11 +17,18 @@ use std::ops::Range;
 
 pub struct LogViewElement {
     state: Entity<LogViewState>,
+    focus: Option<FocusHandle>,
 }
 
 impl LogViewElement {
     pub fn new(state: Entity<LogViewState>) -> Self {
-        Self { state }
+        Self { state, focus: None }
+    }
+
+    /// Focus this handle on any mouse press inside the panel.
+    pub fn focus(mut self, handle: FocusHandle) -> Self {
+        self.focus = Some(handle);
+        self
     }
 }
 
@@ -71,6 +78,14 @@ impl Shaped {
                 }
                 TextGeometry { lines: out }
             }
+        }
+    }
+
+    /// The display text this row was shaped from.
+    fn text(&self) -> SharedString {
+        match self {
+            Shaped::Line(line) => line.text.clone(),
+            Shaped::Wrapped(lines) => lines.first().map(|l| l.text.clone()).unwrap_or_default(),
         }
     }
 
@@ -225,6 +240,30 @@ fn split_at_lines(range: Range<usize>, starts: &[usize], len: usize) -> Vec<(usi
         .collect()
 }
 
+/// Byte index in `display` under `at` (relative to the text origin), by re-shaping the one row that was
+/// right-clicked.
+#[allow(clippy::too_many_arguments)]
+fn index_at(display: &SharedString, at: Point<Pixels>, font: &Font, font_size: Pixels, wrap: Option<Pixels>, row_h: Pixels, color: Color, window: &mut Window) -> Option<usize> {
+    if display.is_empty() {
+        return None;
+    }
+    let runs = [run(display.len(), font, color, None)];
+    match wrap {
+        None => window.text_system().shape_line(display.clone(), font_size, &runs, None).index_for_x(at.x),
+        Some(w) => window.text_system().shape_text(display.clone(), font_size, &runs, Some(w), None).ok()?.first()?.index_for_position(at, row_h).ok(),
+    }
+}
+
+/// A painted line row, kept for the right-click handler.
+struct MenuTarget {
+    hitbox: Hitbox,
+    row: usize,
+    number: u64,
+    pinned: bool,
+    display: SharedString,
+    origin: Point<Pixels>,
+}
+
 enum RowBody {
     Gap(ShapedLine),
     Line {
@@ -264,6 +303,7 @@ pub struct LogViewPrepaint {
     force_hover_row: Option<usize>,
     text_left: Pixels,
     scroll_x: Pixels,
+    wrap_width: Option<Pixels>,
 }
 
 fn run(len: usize, font: &Font, fg: Color, bg: Option<Color>) -> TextRun {
@@ -439,7 +479,7 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, hbar, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x) }
+        LogViewPrepaint { hitbox, rows, thumb, hbar, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x), wrap_width: wrap.then(|| px(text_w)) }
     }
 
     fn paint(
@@ -572,10 +612,14 @@ impl Element for LogViewElement {
 
         let state = self.state.clone();
         let hitbox = pre.hitbox.clone();
+        let focus = self.focus.clone();
         let down_targets = targets.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left || !hitbox.is_hovered(window) {
                 return;
+            }
+            if let Some(f) = &focus {
+                f.focus(window, cx);
             }
             if let Some(thumb) = vthumb
                 && e.position.x >= thumb.left() - px(4.)
@@ -690,6 +734,46 @@ impl Element for LogViewElement {
                     }
                 });
             }
+        });
+
+        let menu_targets: Vec<MenuTarget> = pre
+            .rows
+            .iter()
+            .filter_map(|r| match &r.body {
+                RowBody::Line { number, pinned, text, .. } => Some(MenuTarget {
+                    hitbox: r.hitbox.clone(),
+                    row: r.row,
+                    number: *number,
+                    pinned: *pinned,
+                    display: text.text(),
+                    origin: point(pre.text_left - pre.scroll_x, r.bounds.top()),
+                }),
+                RowBody::Gap(_) => None,
+            })
+            .collect();
+        let mono = font(pre.theme.fonts.mono.clone());
+        let (font_size, wrap_width, text_color) = (m.log_font_size, pre.wrap_width, p.log_text);
+        let state = self.state.clone();
+        let focus = self.focus.clone();
+        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture || e.button != MouseButton::Right {
+                return;
+            }
+            let Some(t) = menu_targets.iter().find(|t| t.hitbox.is_hovered(window)) else { return };
+            let index = index_at(&t.display, e.position - t.origin, &mono, font_size, wrap_width, row_h, text_color, window);
+            let token = index.and_then(|i| token_at(&t.display, i));
+            if let Some(f) = &focus {
+                f.focus(window, cx);
+            }
+            let (row, number, pinned) = (t.row, t.number, t.pinned);
+            state.update(cx, |s, cx| {
+                if !s.is_selected(number) {
+                    s.set_selected(Some(number), cx);
+                    cx.emit(LogViewEvent::Selected { row, number });
+                }
+                s.context_target = Some(ContextTarget { number, pinned, token });
+                cx.notify();
+            });
         });
     }
 }
