@@ -24,3 +24,7 @@ visual-check:
 
 genlog size="64M" out="target/genlog/sample.log":
     cargo run --release -p rogg-genlog -- --size {{size}} --out {{out}}
+
+bench:
+    cargo bench -p rogg-core --bench engine
+    cargo test -p rogg-core --release --test memory -- --ignored --nocapture

@@ -18,3 +18,9 @@ serde_json.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
+rogg-genlog = { path = "../rogg-genlog" }
+
+[[bench]]
+name = "engine"
+harness = false
