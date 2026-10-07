@@ -16,6 +16,7 @@ pub mod index;
 pub mod mapping;
 pub mod paths;
 pub mod persist;
+pub mod profile;
 pub mod recent;
 pub mod search;
 pub mod settings;
