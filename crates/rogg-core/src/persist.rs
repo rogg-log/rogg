@@ -35,7 +35,9 @@ pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), CoreError> 
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(CoreError::io(dir))?;
     }
-    let json = serde_json::to_string_pretty(value).expect("plain state structs serialize");
+    // Not every state serializes: a path that is not valid UTF-8 has no JSON form.
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| CoreError::Io { path: path.to_path_buf(), source: std::io::Error::new(std::io::ErrorKind::InvalidData, e) })?;
     let partial = with_suffix(path, ".partial");
     std::fs::write(&partial, json).map_err(CoreError::io(&partial))?;
     std::fs::rename(&partial, path).map_err(CoreError::io(path))

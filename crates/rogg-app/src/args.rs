@@ -1,5 +1,6 @@
 //! Command line: `rogg [--demo] [FILE...]`.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 pub const USAGE: &str = "usage: rogg [--demo] [FILE...]";
@@ -13,13 +14,14 @@ pub struct Args {
 
 impl Args {
     /// Parses the arguments after the program name. `-h`/`--help` returns `Err(USAGE)`.
-    pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    /// Paths may be any bytes (`args_os`); only flags need to be UTF-8.
+    pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let mut out = Args::default();
         for arg in args {
-            match arg.as_str() {
-                "--demo" => out.demo = true,
-                "-h" | "--help" => return Err(USAGE.to_string()),
-                flag if flag.starts_with('-') => return Err(format!("unknown option `{flag}`\n{USAGE}")),
+            match arg.to_str() {
+                Some("--demo") => out.demo = true,
+                Some("-h" | "--help") => return Err(USAGE.to_string()),
+                Some(flag) if flag.starts_with('-') => return Err(format!("unknown option `{flag}`\n{USAGE}")),
                 _ => out.paths.push(PathBuf::from(arg)),
             }
         }
@@ -32,7 +34,7 @@ mod tests {
     use super::*;
 
     fn parse(s: &str) -> Result<Args, String> {
-        Args::parse(s.split_whitespace().map(String::from))
+        Args::parse(s.split_whitespace().map(OsString::from))
     }
 
     #[test]
@@ -41,6 +43,16 @@ mod tests {
         let a = parse("--demo a.log /tmp/b.log").unwrap();
         assert!(a.demo);
         assert_eq!(a.paths, [PathBuf::from("a.log"), PathBuf::from("/tmp/b.log")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_path_argument_is_kept() {
+        use std::os::unix::ffi::OsStringExt;
+        let odd = OsString::from_vec(b"/tmp/\xff.log".to_vec());
+        let a = Args::parse([OsString::from("--demo"), odd.clone()]).unwrap();
+        assert!(a.demo);
+        assert_eq!(a.paths, [PathBuf::from(odd)]);
     }
 
     #[test]

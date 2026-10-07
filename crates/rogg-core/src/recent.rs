@@ -75,6 +75,18 @@ impl RecentList {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_path_fails_to_save_instead_of_panicking() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut list = RecentList::default();
+        list.record(RecentEntry::file(PathBuf::from(std::ffi::OsStr::from_bytes(b"\xff.log"))));
+        let target = dir.path().join("recent.json");
+        assert!(matches!(list.save(&target), Err(CoreError::Io { .. })));
+        assert!(!target.exists(), "nothing half-written is left behind");
+    }
+
     #[test]
     fn record_dedups_by_path_moves_to_front_and_caps() {
         let mut list = RecentList::default();
