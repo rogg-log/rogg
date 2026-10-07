@@ -227,10 +227,15 @@ impl Document {
         self.rebuild_view(cx);
     }
 
-    /// Drops the running scan and what it was building (a reload supersedes it: its progress must not reach the UI).
+    /// Drops the running scan and what it was building (a reload supersedes it: its progress must not reach the UI),
+    /// and the view and statistics of the text being replaced: their line numbers must not show against the new text
+    /// while it loads.
     pub(super) fn stop_filter(&mut self) {
         self.filter.view_job = None;
         self.filter.view_pending = false;
+        self.filter.view = Arc::new(empty_view());
+        self.filter.stats = None;
+        self.filter.revision += 1;
         if let Some(job) = self.filter.job.take() {
             retire(job);
         }

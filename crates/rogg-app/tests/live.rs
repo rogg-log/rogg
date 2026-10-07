@@ -127,6 +127,31 @@ fn truncation_reloads_with_a_toast_and_drops_pins(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_reload_shows_no_stale_view_while_the_new_text_loads(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    // Every open runs in the background, so the reload has a window in which the new text is not there yet.
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let path = common::write_log(dir.path(), "stale.log", &["a", "a", "a", ""]);
+    let doc = doc_for(cx, &path, "a");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.view.shown_lines().len() == 3));
+    let after_reload = Rc::new(RefCell::new(None));
+    let (seen, handle) = (after_reload.clone(), doc.clone());
+    cx.update(|cx| {
+        cx.subscribe(&doc, move |_, ev: &DocumentEvent, cx| {
+            if *ev == DocumentEvent::Reloaded {
+                let d = handle.read(cx);
+                *seen.borrow_mut() = Some((d.filter.view.shown_lines().len(), d.filter.stats.is_some()));
+            }
+        })
+        .detach()
+    });
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+    append(&path, "b\n");
+    common::wait_until(cx, |_| after_reload.borrow().is_some());
+    assert_eq!(*after_reload.borrow(), Some((0, false)), "the old view and stats are gone as soon as the reload starts");
+}
+
+#[gpui_kit::test]
 fn a_replaced_file_is_reloaded(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "r.log", &["old", ""]);
