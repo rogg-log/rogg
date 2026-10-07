@@ -326,12 +326,20 @@ fn clip_spans(spans: &[Span], display: &str, cut: usize) -> Vec<Span> {
         .collect()
 }
 
-fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font, ui: &Font, wrap_width: Option<Pixels>, window: &mut Window) -> RowBody {
+/// Fonts a row is shaped with: the log text (regular and bold), the line-number gutter and the gap-row label.
+struct RowFonts {
+    log: Font,
+    log_bold: Font,
+    gutter: Font,
+    ui: Font,
+}
+
+fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, fonts: &RowFonts, wrap_width: Option<Pixels>, window: &mut Window) -> RowBody {
     let p = theme.palette;
     match rows.row(row) {
         LogRow::Gap { omitted } => {
             let label: SharedString = format!("··· {omitted} lines omitted").into();
-            let runs = [run(label.len(), ui, p.faint, None)];
+            let runs = [run(label.len(), &fonts.ui, p.faint, None)];
             RowBody::Gap(window.text_system().shape_line(label, px(9.), &runs, None))
         }
         LogRow::Line(line) => {
@@ -341,12 +349,12 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, mono: &Font
             let display: SharedString = display.into();
             let base = if line.context { p.muted } else { p.log_text };
             let segs: Vec<Segment> = segments(display.len(), &spans, base, &p);
-            let runs: Vec<TextRun> = segs.iter().map(|s| run(s.range.len(), mono, s.fg, None)).collect();
+            let runs: Vec<TextRun> = segs.iter().map(|s| run(s.range.len(), if s.bold { &fonts.log_bold } else { &fonts.log }, s.fg, None)).collect();
             let marks = merge_abutting(segs.iter().filter_map(|s| s.hit_bg.map(|bg| (s.range.clone(), bg))));
             let outlines =
                 merge_abutting(segs.iter().filter(|s| s.outline).map(|s| (s.range.clone(), ()))).into_iter().map(|(r, _)| r).collect();
             let number_text: SharedString = line.number.to_string().into();
-            let number_runs = [run(number_text.len(), mono, p.faint, None)];
+            let number_runs = [run(number_text.len(), &fonts.gutter, p.faint, None)];
             let number_line = window.text_system().shape_line(number_text, px(10.), &number_runs, None);
             let font_size = theme.metrics.log_font_size;
             let text = match wrap_width {
@@ -405,8 +413,8 @@ impl Element for LogViewElement {
         let text_left = bounds.left() + px(size::GUTTER_PIN_W + size::GUTTER_NUMBER_W);
         let text_right = bounds.right() - px(size::LINE_PAD_R);
         let text_w = f32::from(text_right - text_left).max(10.);
-        let mono = font(theme.fonts.mono.clone());
-        let ui = font(theme.fonts.ui.clone());
+        let log = font(theme.fonts.log.clone());
+        let fonts = RowFonts { log_bold: log.clone().bold(), log, gutter: font(theme.fonts.mono.clone()), ui: font(theme.fonts.ui.clone()) };
 
         self.state.update(cx, |s, _| s.begin_layout(bounds.size, text_w, f32::from(row_h)));
 
@@ -419,7 +427,7 @@ impl Element for LogViewElement {
             let mut measured = Vec::new();
             for (row, _) in visible {
                 if let Entry::Vacant(slot) = bodies.entry(row) {
-                    let body = shape_row(rows.as_ref(), row, &theme, &mono, &ui, wrap.then(|| px(text_w)), window);
+                    let body = shape_row(rows.as_ref(), row, &theme, &fonts, wrap.then(|| px(text_w)), window);
                     measured.push((row, body_height(&body, row_h)));
                     slot.insert(body);
                 }
@@ -431,7 +439,7 @@ impl Element for LogViewElement {
 
         // Horizontal extent for no-wrap scrolling: a displayed line holds at most MAX_DISPLAY_BYTES chars plus `…`.
         let longest = self.state.read(cx).rows().longest_line_chars().min(MAX_DISPLAY_BYTES + 1) as f32;
-        let font_id = window.text_system().resolve_font(&mono);
+        let font_id = window.text_system().resolve_font(&fonts.log);
         let advance = window.text_system().ch_advance(font_id, theme.metrics.log_font_size).map(f32::from).unwrap_or(7.);
         self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));
         let (max_x, wrap_now, scroll_x_now, hbar_shown) = {
@@ -461,7 +469,7 @@ impl Element for LogViewElement {
         for (row, y) in visible {
             let body = match bodies.remove(&row) {
                 Some(b) => b,
-                None => shape_row(rows_src.as_ref(), row, &theme, &mono, &ui, wrap.then(|| px(text_w)), window),
+                None => shape_row(rows_src.as_ref(), row, &theme, &fonts, wrap.then(|| px(text_w)), window),
             };
             let h = self.state.read(cx).height_of(row);
             let row_bounds = Bounds::new(point(bounds.left(), bounds.top() + px(y)), gsize(bounds.size.width, px(h)));
@@ -771,7 +779,7 @@ impl Element for LogViewElement {
                 RowBody::Gap(_) => None,
             })
             .collect();
-        let mono = font(pre.theme.fonts.mono.clone());
+        let mono = font(pre.theme.fonts.log.clone());
         let (font_size, wrap_width, text_color, text_left) = (m.log_font_size, pre.wrap_width, p.log_text, pre.text_left);
         let state = self.state.clone();
         let focus = self.focus.clone();

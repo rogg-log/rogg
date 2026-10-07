@@ -110,3 +110,13 @@ fn the_focus_line_sits_on_the_band_perimeter(cx: &mut TestAppContext) {
     let w = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(2)).focused(true).into_any_element());
     assert_eq!(common::bounds(cx, w, "band-focus"), common::bounds(cx, w, "filter-band"));
 }
+
+#[test]
+fn chip_colours_can_be_overridden_per_slot() {
+    use rogg_ui::filter::chip_color;
+    use rogg_ui::theme::{ChipColor, Color, Palette};
+    let p = Palette::dark();
+    assert_eq!(chip_color(5, None, &p), p.chips[1]);
+    let custom = vec![ChipColor { border: Color::rgb(0x111111), bg: Color::rgb(0x222222), term: Color::rgb(0x333333) }];
+    assert_eq!(chip_color(5, Some(&custom), &p), custom[0]);
+}

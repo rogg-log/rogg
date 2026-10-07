@@ -1,7 +1,7 @@
 use crate::controls::{CompactSelect, FlagButton, IconButton, TextButton};
 use crate::layout::BandDrag;
 use crate::icons::{IconName, icon};
-use crate::theme::{ActiveRoggTheme, Color, size};
+use crate::theme::{ActiveRoggTheme, ChipColor, Color, Palette, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
@@ -42,6 +42,14 @@ impl ChipState {
     }
 }
 
+/// The colours of chip `index`: the override list (a profile's palette) when given, else the theme's four slots.
+pub fn chip_color(index: usize, overrides: Option<&[ChipColor]>, p: &Palette) -> ChipColor {
+    match overrides {
+        Some(list) if !list.is_empty() => list[index % list.len()],
+        _ => p.chips[index % p.chips.len()],
+    }
+}
+
 /// `.token`: clickable state segment + monospace term; colored by slot, neutral when off, struck through when excluded.
 #[derive(IntoElement)]
 pub struct FilterChip {
@@ -49,11 +57,18 @@ pub struct FilterChip {
     text: SharedString,
     state: ChipState,
     on_cycle: Option<Callback>,
+    color: Option<ChipColor>,
 }
 
 impl FilterChip {
     pub fn new(index: usize, text: impl Into<SharedString>, state: ChipState) -> Self {
-        Self { index, text: text.into(), state, on_cycle: None }
+        Self { index, text: text.into(), state, on_cycle: None, color: None }
+    }
+
+    /// Overrides the theme's slot colours for this chip.
+    pub fn color(mut self, c: Option<ChipColor>) -> Self {
+        self.color = c;
+        self
     }
 
     pub fn on_cycle(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
@@ -66,7 +81,7 @@ impl RenderOnce for FilterChip {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.rogg().clone();
         let p = t.palette;
-        let slot = p.chips[self.index % p.chips.len()];
+        let slot = self.color.unwrap_or(p.chips[self.index % p.chips.len()]);
         let (border, bg, term) = match self.state {
             ChipState::Off => (p.border, Color::TRANSPARENT, p.faint),
             _ => (slot.border, slot.bg, slot.term),
@@ -131,6 +146,7 @@ pub struct FilterBand {
     context_selected: usize,
     summary: SharedString,
     hint: SharedString,
+    chip_colors: Option<Vec<ChipColor>>,
     on_cycle: Option<IndexCallback>,
     on_edit: Option<Callback>,
     on_apply: Option<Callback>,
@@ -153,6 +169,7 @@ impl FilterBand {
             context_selected: 0,
             summary: SharedString::default(),
             hint: "Click a state to cycle Include → Off → Exclude".into(),
+            chip_colors: None,
             on_cycle: None,
             on_edit: None,
             on_apply: None,
@@ -202,6 +219,12 @@ impl FilterBand {
 
     pub fn hint(mut self, hint: SharedString) -> Self {
         self.hint = hint;
+        self
+    }
+
+    /// Per-slot chip colours (the tab's highlighting palette); None uses the theme's.
+    pub fn chip_colors(mut self, colors: Option<Vec<ChipColor>>) -> Self {
+        self.chip_colors = colors;
         self
     }
 
@@ -307,7 +330,7 @@ impl RenderOnce for FilterBand {
                         row = row.child(div().flex_none().font_family(t.fonts.mono.clone()).text_size(px(11.)).text_color(p.faint).child("||"));
                     }
                     let on_cycle = self.on_cycle.clone();
-                    row = row.child(FilterChip::new(i, text, state).on_cycle(move |w, cx| {
+                    row = row.child(FilterChip::new(i, text, state).color(self.chip_colors.as_deref().map(|c| chip_color(i, Some(c), &p))).on_cycle(move |w, cx| {
                         if let Some(f) = &on_cycle {
                             f(i, w, cx)
                         }

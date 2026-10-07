@@ -25,6 +25,8 @@ pub enum Appearance {
 pub struct Fonts {
     pub ui: SharedString,
     pub mono: SharedString,
+    /// Log text in both panes; the line-number gutter keeps `mono`.
+    pub log: SharedString,
     pub ui_size: Pixels,
 }
 
@@ -50,8 +52,15 @@ impl RoggTheme {
             density,
             palette,
             metrics: density.metrics(),
-            fonts: Fonts { ui: UI_FONT.into(), mono: MONO_FONT.into(), ui_size: px(13.) },
+            fonts: Fonts { ui: UI_FONT.into(), mono: MONO_FONT.into(), log: MONO_FONT.into(), ui_size: px(13.) },
         }
+    }
+
+    /// The log font family and compact size from the settings (spec §6.2).
+    pub fn with_log_font(mut self, family: SharedString, compact_size: f32) -> Self {
+        self.fonts.log = family;
+        self.metrics = self.density.metrics_for(compact_size);
+        self
     }
 
     /// Makes this the active theme and mirrors it into gpui-kit. Call after `gpui_kit::init`.
@@ -82,5 +91,14 @@ mod tests {
         assert_eq!(t.palette, Palette::light());
         assert_eq!(t.metrics, Density::Comfortable.metrics());
         assert_eq!(t.fonts.mono.as_ref(), MONO_FONT);
+    }
+
+    #[test]
+    fn log_font_overrides_family_and_metrics_only() {
+        let t = RoggTheme::new(Appearance::Dark, Density::Compact).with_log_font("Menlo".into(), 14.);
+        assert_eq!(t.fonts.log.as_ref(), "Menlo");
+        assert_eq!(t.fonts.mono.as_ref(), MONO_FONT, "chips, dialogs and the gutter keep SF Mono");
+        assert_eq!(t.metrics, Density::Compact.metrics_for(14.));
+        assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).fonts.log.as_ref(), MONO_FONT);
     }
 }

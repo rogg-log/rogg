@@ -179,15 +179,22 @@ pub struct StatusBar {
     stats: Vec<StatPart>,
     selection: Option<SharedString>,
     progress: Option<Progress>,
+    on_stats: Option<Callback>,
 }
 
 impl StatusBar {
     pub fn new(note: SharedString) -> Self {
-        Self { note, stats: vec![], selection: None, progress: None }
+        Self { note, stats: vec![], selection: None, progress: None, on_stats: None }
     }
 
     pub fn stats(mut self, stats: Vec<StatPart>) -> Self {
         self.stats = stats;
+        self
+    }
+
+    /// Makes the statistics clickable (opens the statistics popover, spec 4.11).
+    pub fn on_stats(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_stats = Some(Rc::new(f));
         self
     }
 
@@ -220,10 +227,18 @@ impl RenderOnce for StatusBar {
             .text_size(px(10.))
             .text_color(p.muted)
             .whitespace_nowrap()
-            .child(div().flex().items_center().children(self.stats.into_iter().map(|part| match part {
-                StatPart::Strong(s) => div().font_weight(FontWeight::MEDIUM).text_color(p.text).child(s),
-                StatPart::Text(s) => div().child(s),
-            })))
+            .child(
+                div()
+                    .id("footer-stats")
+                    .test_support()
+                    .flex()
+                    .items_center()
+                    .when_some(self.on_stats, |d, f| d.cursor_pointer().on_click(move |_, window, cx| f(window, cx)))
+                    .children(self.stats.into_iter().map(|part| match part {
+                        StatPart::Strong(s) => div().font_weight(FontWeight::MEDIUM).text_color(p.text).child(s),
+                        StatPart::Text(s) => div().child(s),
+                    })),
+            )
             .when_some(self.selection, |d, s| d.child(div().child(s)))
             .child(
                 div()

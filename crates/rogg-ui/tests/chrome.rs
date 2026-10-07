@@ -107,3 +107,19 @@ fn toasts_stack_bottom_right_and_dismiss(cx: &mut gpui_kit::TestAppContext) {
     common::click(cx, w, "toast-close-7");
     assert_eq!(*dismissed.borrow(), vec![7]);
 }
+
+#[gpui_kit::test]
+fn the_statistics_area_is_clickable_only_with_a_handler(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let clicks = std::rc::Rc::new(std::cell::Cell::new(0));
+    let c = clicks.clone();
+    let w = common::open(cx, 900., 60., move |_, _| {
+        let c = c.clone();
+        StatusBar::new("UTF-8 · LF".into())
+            .stats(vec![StatPart::Strong("6".into()), StatPart::Text(" matches".into())])
+            .on_stats(move |_, _| c.set(c.get() + 1))
+            .into_any_element()
+    });
+    common::click(cx, w, "footer-stats");
+    assert_eq!(clicks.get(), 1);
+}

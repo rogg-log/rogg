@@ -11,6 +11,10 @@ pub enum SpanStyle {
     Fg(Color),
     /// Filter-match highlight using palette slot `n % 4`.
     Hit(usize),
+    /// A filter match with explicit colours (a highlighting profile's palette); drawn like `Hit`.
+    Mark { fg: Color, bg: Color },
+    /// Bold text (a profile rule's bold effect).
+    Bold,
     /// Per-panel search hit: accent outline.
     SearchHit,
 }

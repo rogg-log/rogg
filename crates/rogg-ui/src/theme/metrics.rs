@@ -18,11 +18,29 @@ pub struct Metrics {
 }
 
 impl Density {
-    pub fn metrics(self) -> Metrics {
+    /// The density's log font size in the reference (compact 12 px, comfortable 13 px).
+    pub fn base_font_size(self) -> f32 {
         match self {
-            Density::Compact => Metrics { row_height: px(23.), log_font_size: px(12.), pane_header_height: px(35.), pin_top: px(5.) },
-            Density::Comfortable => Metrics { row_height: px(29.), log_font_size: px(13.), pane_header_height: px(39.), pin_top: px(8.) },
+            Density::Compact => 12.,
+            Density::Comfortable => 13.,
         }
+    }
+
+    pub fn metrics(self) -> Metrics {
+        self.metrics_for(12.)
+    }
+
+    /// Metrics for the log font size setting `compact_size` (spec §6.2): comfortable adds 1 px, as the reference does;
+    /// the row height keeps the density's ratio to its font (23/12, 29/13) in whole pixels, and the pin glyph stays
+    /// centred. Pane headers keep their height.
+    pub fn metrics_for(self, compact_size: f32) -> Metrics {
+        let (base_row, header, base_pin) = match self {
+            Density::Compact => (23., 35., 5.),
+            Density::Comfortable => (29., 39., 8.),
+        };
+        let font = compact_size + (self.base_font_size() - 12.);
+        let row = (font * base_row / self.base_font_size()).round();
+        Metrics { row_height: px(row), log_font_size: px(font), pane_header_height: px(header), pin_top: px(base_pin + ((row - base_row) / 2.).round()) }
     }
 }
 
@@ -63,4 +81,22 @@ pub mod size {
     pub const SCROLL_THUMB_MIN_H: f32 = 24.;
     pub const DIALOG_W: f32 = 500.;
     pub const DIALOG_PAD: f32 = 22.;
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    #[test]
+    fn metrics_scale_with_the_log_font() {
+        assert_eq!(Density::Compact.metrics_for(12.), Density::Compact.metrics());
+        assert_eq!(Density::Comfortable.metrics_for(12.), Density::Comfortable.metrics());
+        let m = Density::Compact.metrics_for(14.);
+        assert_eq!((m.log_font_size, m.row_height, m.pin_top), (px(14.), px(27.), px(7.)));
+        let c = Density::Comfortable.metrics_for(14.);
+        assert_eq!((c.log_font_size, c.row_height), (px(15.), px(33.)));
+        assert_eq!(c.pane_header_height, px(39.), "headers keep their height");
+        let small = Density::Compact.metrics_for(9.);
+        assert_eq!((small.row_height, small.pin_top), (px(17.), px(2.)));
+    }
 }
