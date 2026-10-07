@@ -5,7 +5,9 @@ pub mod encoding;
 pub mod engine;
 pub mod error;
 pub mod filter;
+pub mod highlight;
 pub mod index;
+pub mod search;
 pub mod text;
 pub mod view;
 

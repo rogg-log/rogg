@@ -34,7 +34,7 @@ pub struct FilterResult {
 
 /// Splits `lines` into ascending, contiguous chunks of at most `chunk_lines` lines and at most
 /// `MAX_CHUNK_BYTES` bytes each (but never fewer than one line).
-fn chunk_ranges(text: &LogText, lines: Range<u64>, chunk_lines: u64) -> Vec<Range<u64>> {
+pub(crate) fn chunk_ranges(text: &LogText, lines: Range<u64>, chunk_lines: u64) -> Vec<Range<u64>> {
     let index = text.index();
     let offset = |line: u64| if line < index.line_count() { index.line_start(line) } else { index.data_len() };
     let mut ranges = Vec::new();
