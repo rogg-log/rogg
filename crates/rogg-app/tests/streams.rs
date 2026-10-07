@@ -47,3 +47,25 @@ fn fifos_are_read_as_streams(cx: &mut TestAppContext) {
     common::wait_until(cx, |cx| lines(&tab, cx) == 2);
     writer.join().unwrap();
 }
+
+#[gpui_kit::test]
+fn a_failed_stream_toasts_once_and_keeps_its_tab(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let tab = cx
+        .update_window(w, |_, window, cx| {
+            ws.update(cx, |ws, cx| ws.open_stream("broken", || Err::<std::fs::File, _>(std::io::Error::other("no writer")), window, cx))
+        })
+        .unwrap()
+        .expect("a stream tab");
+    let count = |cx: &mut TestAppContext| ws.read_with(cx, |ws, _| ws.toasts.iter().filter(|(_, m)| m.as_ref() == "Could not read broken: no writer").count());
+    common::wait_until(cx, |cx| count(cx) == 1);
+    // Several more timer ticks (still inside the toast's lifetime): no repeat.
+    for _ in 0..100 {
+        cx.executor().advance_clock(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+    }
+    assert_eq!(count(cx), 1, "the failure is reported once");
+    assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1);
+    assert_eq!(lines(&tab, cx), 0);
+}

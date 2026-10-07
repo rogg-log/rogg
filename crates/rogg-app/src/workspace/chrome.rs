@@ -36,6 +36,9 @@ pub fn recent_items(cx: &App) -> Vec<RecentItem> {
         .unwrap_or_default()
 }
 
+/// How often unfinished stream captures are checked for errors.
+const STREAM_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// What an opened or dropped path holds.
 enum PathKind {
     Folder,
@@ -110,7 +113,8 @@ impl Workspace {
         match rogg_core::stream::StreamCapture::start(open, &CacheStore::get(cx)) {
             Ok(capture) => {
                 let source = Source::Stream { name: name.to_string().into(), path: capture.path().to_path_buf() };
-                self.streams.push(capture);
+                self.streams.push((name.to_string().into(), capture));
+                self.ensure_stream_polling(window, cx);
                 Some(self.open_source(source, TabInit::default(), window, cx))
             }
             Err(e) => {
@@ -118,6 +122,44 @@ impl Workspace {
                 None
             }
         }
+    }
+
+    /// While any capture is unfinished, checks every 500 ms for ones that ended.
+    fn ensure_stream_polling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.streams_polling {
+            return;
+        }
+        self.streams_polling = true;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(STREAM_POLL).await;
+                match this.update_in(cx, |ws, _, cx| ws.poll_streams(cx)) {
+                    Ok(true) => continue,
+                    _ => break,
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Toasts the failure of each capture that has just finished (once: finished captures are dropped, the tab keeps
+    /// what was captured); returns whether any capture is still running.
+    fn poll_streams(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut failures = Vec::new();
+        self.streams.retain(|(name, capture)| {
+            if !capture.is_done() {
+                return true;
+            }
+            if let Some(error) = capture.error() {
+                failures.push(format!("Could not read {name}: {error}"));
+            }
+            false
+        });
+        for message in failures {
+            self.toast(message, cx);
+        }
+        self.streams_polling = !self.streams.is_empty();
+        self.streams_polling
     }
 
     fn open_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {

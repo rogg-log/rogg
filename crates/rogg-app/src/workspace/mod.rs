@@ -55,8 +55,9 @@ pub struct Workspace {
     pub(crate) collapsed: HashSet<SharedString>,
     pub(crate) fixed_sidebar: Option<FixedSidebar>,
     pub(crate) sources: crate::sources::SourcesState,
-    /// The captures of stdin and FIFOs opened in this window (their threads' state stays alive with them).
-    pub(crate) streams: Vec<rogg_core::stream::StreamCapture>,
+    /// Unfinished captures of stdin and FIFOs opened in this window, with their display names; polled for errors.
+    pub(crate) streams: Vec<(SharedString, rogg_core::stream::StreamCapture)>,
+    streams_polling: bool,
     stdin_opened: bool,
     pub(crate) theme: ThemeChoice,
     pub(crate) density: Density,
@@ -102,6 +103,7 @@ impl Workspace {
             fixed_sidebar: None,
             sources: Default::default(),
             streams: Vec::new(),
+            streams_polling: false,
             stdin_opened: false,
             theme: ThemeChoice::System,
             density: cx.rogg().density,
