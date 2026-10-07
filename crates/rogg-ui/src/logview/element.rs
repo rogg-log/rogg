@@ -752,19 +752,29 @@ impl Element for LogViewElement {
             })
             .collect();
         let mono = font(pre.theme.fonts.mono.clone());
-        let (font_size, wrap_width, text_color) = (m.log_font_size, pre.wrap_width, p.log_text);
+        let (font_size, wrap_width, text_color, text_left) = (m.log_font_size, pre.wrap_width, p.log_text, pre.text_left);
         let state = self.state.clone();
         let focus = self.focus.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Capture || e.button != MouseButton::Right {
                 return;
             }
-            let Some(t) = menu_targets.iter().find(|t| t.hitbox.is_hovered(window)) else { return };
-            let index = index_at(&t.display, e.position - t.origin, &mono, font_size, wrap_width, row_h, text_color, window);
-            let token = index.and_then(|i| token_at(&t.display, i));
             if let Some(f) = &focus {
                 f.focus(window, cx);
             }
+            let Some(t) = menu_targets.iter().find(|t| t.hitbox.is_hovered(window)) else {
+                // A gap row, padding or empty area: no line to act on, so drop the previous target.
+                state.update(cx, |s, cx| {
+                    s.context_target = None;
+                    cx.notify();
+                });
+                return;
+            };
+            // The gutter (pin and number) holds no word.
+            let index = (e.position.x >= text_left)
+                .then(|| index_at(&t.display, e.position - t.origin, &mono, font_size, wrap_width, row_h, text_color, window))
+                .flatten();
+            let token = index.and_then(|i| token_at(&t.display, i));
             let (row, number, pinned) = (t.row, t.number, t.pinned);
             state.update(cx, |s, cx| {
                 if !s.is_selected(number) {

@@ -45,6 +45,16 @@ fn emit(state: &Entity<LogViewState>, event: LogViewEvent, cx: &mut App) {
     state.update(cx, |_, cx| cx.emit(event));
 }
 
+/// Longest token shown in a menu label, in chars; longer tokens are cut and end with `…`.
+const MAX_LABEL_CHARS: usize = 40;
+
+fn label_token(token: &str) -> String {
+    match token.char_indices().nth(MAX_LABEL_CHARS) {
+        Some((cut, _)) => format!("{}…", &token[..cut]),
+        None => token.to_string(),
+    }
+}
+
 /// Spec §5.5 context menu, built from the target recorded by the right-click.
 fn context_menu(menu: PopupMenu, state: &Entity<LogViewState>, cx: &App) -> PopupMenu {
     let Some(target) = state.read(cx).context_target().cloned() else { return menu };
@@ -60,12 +70,13 @@ fn context_menu(menu: PopupMenu, state: &Entity<LogViewState>, cx: &App) -> Popu
         Some(token) => {
             let (include, exclude) = (token.clone(), token.clone());
             let (s4, s5) = (state.clone(), state.clone());
+            let label = label_token(&token);
             menu.item(
-                PopupMenuItem::new(format!("Filter on “{token}”"))
+                PopupMenuItem::new(format!("Filter on “{label}”"))
                     .on_click(move |_, _, cx| emit(&s4, LogViewEvent::AddTerm { text: include.clone(), exclude: false }, cx)),
             )
             .item(
-                PopupMenuItem::new(format!("Exclude “{token}”"))
+                PopupMenuItem::new(format!("Exclude “{label}”"))
                     .on_click(move |_, _, cx| emit(&s5, LogViewEvent::AddTerm { text: exclude.clone(), exclude: true }, cx)),
             )
         }
@@ -132,5 +143,18 @@ impl RenderOnce for LogView {
             .child(element)
             .when(focused, |d| d.child(div().absolute().inset_0().border_2().border_color(p.accent)))
             .context_menu(move |menu, _, cx| context_menu(menu, &menu_state, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::label_token;
+
+    #[test]
+    fn long_tokens_are_cut_on_a_char_boundary_for_labels() {
+        assert_eq!(label_token("short"), "short");
+        let exact = "é".repeat(40);
+        assert_eq!(label_token(&exact), exact, "40 chars fit");
+        assert_eq!(label_token(&format!("{exact}x")), format!("{exact}…"), "41 chars are cut after 40, not 40 bytes");
     }
 }

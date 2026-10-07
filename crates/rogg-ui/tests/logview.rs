@@ -465,6 +465,32 @@ fn clicking_focuses_and_keys_move_and_copy(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn right_click_outside_any_line_clears_the_context_target(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, MouseButton, MouseDownEvent, MouseMoveEvent};
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(3, None)));
+    let (w, focus) = open_focusable(cx, state.clone());
+    let right_click_at = |cx: &mut TestAppContext, position| {
+        cx.update_window(w, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.dispatch_event(MouseMoveEvent { position, pressed_button: None, modifiers: Default::default() }.to_platform_input(), cx);
+            window.render_frame(cx);
+            let down = MouseDownEvent { button: MouseButton::Right, position, modifiers: Default::default(), click_count: 1, first_mouse: false };
+            window.dispatch_event(down.to_platform_input(), cx);
+        })
+        .unwrap();
+    };
+    right_click_at(cx, point(px(300.), px(4. + 23. + 10.)));
+    assert_eq!(state.read_with(cx, |s, _| s.context_target().map(|t| t.number)), Some(1001));
+    // Below the last of 3 rows of a 238 px panel: no line, so no stale target.
+    cx.update_window(w, |_, window, cx| window.blur(cx)).unwrap();
+    right_click_at(cx, point(px(300.), px(200.)));
+    assert_eq!(state.read_with(cx, |s, _| s.context_target().cloned()), None);
+    cx.update_window(w, |_, window, _| assert!(focus.is_focused(window), "an empty-area right-click still focuses the panel")).unwrap();
+}
+
+#[gpui_kit::test]
 fn right_click_selects_and_records_the_context_target(cx: &mut TestAppContext) {
     common::setup(cx);
     let state = cx.new(|_| LogViewState::new(rows(20, None)));

@@ -134,6 +134,8 @@ fn right_click_takes_the_word_under_the_pointer(cx: &mut HeadlessAppContext) {
     for wrap in [false, true] {
         assert_eq!(right_click_token(cx, &text, wrap, left + 3.).as_deref(), Some("alpha"), "wrap={wrap}, first glyph");
         assert_eq!(right_click_token(cx, &text, wrap, left + 150.), None, "wrap={wrap}, inside the gap");
+        assert_eq!(right_click_token(cx, &text, wrap, GUTTER_PIN_W + 5.), None, "wrap={wrap}, number gutter");
+        assert_eq!(right_click_token(cx, &text, wrap, 4.), None, "wrap={wrap}, pin gutter");
     }
 }
 
