@@ -54,3 +54,29 @@ impl Drop for ExportJob {
         self.cancel.cancel();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn dropping_the_job_cancels_it_and_leaves_no_file() {
+        let n = 2_000_000u64;
+        let text = Arc::new(LogText::from_bytes("line\n".repeat(n as usize).into_bytes()));
+        let view = Arc::new(FilteredView::build(Arc::new((0..n).collect()), &BTreeSet::new(), 0, n, |_| false));
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("out.log");
+        let options = ExportOptions { context: true, gaps: true, numbers: true };
+        drop(ExportJob::spawn(text.clone(), view, 1, options, dst.clone()));
+        // The worker holds the other reference to the text until it has finished.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Arc::strong_count(&text) > 1 {
+            assert!(Instant::now() < deadline, "the export did not stop");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(left.is_empty(), "neither the destination nor a partial file remains: {left:?}");
+    }
+}

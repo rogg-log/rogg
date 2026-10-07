@@ -69,6 +69,42 @@ fn export_errors_toast_and_closing_cancels(cx: &mut TestAppContext) {
     assert!(leftovers.is_empty(), "closing the tab cancels its export and removes the partial file: {leftovers:?}");}
 
 #[gpui_kit::test]
+fn a_failure_after_the_partial_was_written_leaves_nothing_behind(cx: &mut TestAppContext) {
+    let (dir, _w, ws) = open_filtered(cx, &["error a"], "error");
+    // Renaming the finished partial onto an existing directory fails.
+    let taken = dir.path().join("taken");
+    std::fs::create_dir(&taken).unwrap();
+    ws.update(cx, |ws, cx| ws.export_lines_to(taken.clone(), cx));
+    common::wait_until(cx, |cx| toasted(&ws, cx, "Could not export"));
+    let partials: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".partial")).collect();
+    assert!(partials.is_empty(), "the partial file is removed: {partials:?}");
+    assert!(taken.is_dir() && std::fs::read_dir(&taken).unwrap().next().is_none(), "the directory is untouched");
+}
+
+#[gpui_kit::test]
+fn export_waits_for_the_filtered_view_to_be_built(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    // 100 matches: the context-free view is built at once, a ±2 view off the UI thread.
+    cx.update(|cx| cx.set_global(rogg_app::document::EngineConfig { view_sync_work: 150, ..Default::default() }));
+    let lines: Vec<&str> = (0..1000).map(|i| if i % 10 == 5 { "match here" } else { "filler" }).collect();
+    let log = common::write_log(dir.path(), "a.log", &lines);
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some()));
+    doc.update(cx, |d, cx| d.set_expression("match", cx)).unwrap();
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter_settled()));
+    let dst = dir.path().join("out.log");
+    ws.update(cx, |ws, cx| {
+        ws.active_tab().unwrap().read(cx).doc.clone().update(cx, |d, cx| d.set_context(2, cx));
+        ws.export_lines_to(dst.clone(), cx);
+    });
+    assert!(toasted(&ws, cx, "Filtering is still running — export when it finishes"), "the stale view is not exported");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter_settled()));
+    cx.run_until_parked();
+    assert!(!dst.exists(), "nothing was written");
+}
+
+#[gpui_kit::test]
 fn the_export_dialog_sets_options_and_copies_the_expression(cx: &mut TestAppContext) {
     let (_dir, w, ws) = open_filtered(cx, &["error a", "timeout"], "error || timeout");
     common::press(cx, w, "cmd-e");

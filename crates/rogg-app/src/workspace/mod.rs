@@ -366,18 +366,33 @@ impl Workspace {
         let Some(tab) = self.active_tab() else { return };
         let d = tab.read(cx).doc.read(cx);
         let dir = d.source.path().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(rogg_core::paths::home_dir);
-        let stem = d.title().split(['⟩', ' ']).next().unwrap_or("log").trim_end_matches(".log").to_string();
+        // `my app.log ⟩ filtered` suggests `my app-filtered.log`.
+        let title = d.title();
+        let name = title.split(" ⟩ ").next().unwrap_or_default();
+        let stem = name.strip_suffix(".log").unwrap_or(name).to_string();
         let rx = cx.prompt_for_new_path(&dir, Some(&format!("{stem}-filtered.log")));
+        // The tab the panel was opened for, even if another one is active when it returns (and nothing once it closed).
+        let tab = tab.downgrade();
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(path))) = rx.await {
-                this.update(cx, |ws, cx| ws.export_lines_to(path, cx)).ok();
+                this.update(cx, |ws, cx| {
+                    if let Some(tab) = tab.upgrade() {
+                        ws.export_tab_lines_to(&tab, path, cx);
+                    }
+                })
+                .ok();
             }
         })
         .detach();
     }
 
+    /// Exports the active tab's filtered lines to `dst`.
     pub fn export_lines_to(&mut self, dst: PathBuf, cx: &mut Context<Self>) {
         let Some(tab) = self.active_tab() else { return };
+        self.export_tab_lines_to(&tab, dst, cx);
+    }
+
+    pub(crate) fn export_tab_lines_to(&mut self, tab: &Entity<Tab>, dst: PathBuf, cx: &mut Context<Self>) {
         let options = self.export_options;
         let doc = tab.read(cx).doc.clone();
         match doc.update(cx, |d, cx| d.export_lines(options, dst, cx)) {

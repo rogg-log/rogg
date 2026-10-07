@@ -299,10 +299,11 @@ impl Document {
         self.filter.progress.map(|f| (format!("Filtering {:.0}%", f * 100.).into(), f))
     }
 
-    /// Spec §6.5: writes the filtered log to `dst` in the background; refused while a scan runs or nothing is shown.
+    /// Spec §6.5: writes the filtered log to `dst` in the background; refused until the filtered view is final (a scan
+    /// or a view build is running) or when nothing is shown.
     pub fn export_lines(&mut self, options: rogg_core::export::ExportOptions, dst: PathBuf, cx: &mut Context<Self>) -> Result<(), SharedString> {
         let Some(text) = self.text().cloned() else { return Err("The log is not loaded yet".into()) };
-        if self.filter.progress.is_some() {
+        if !self.filter_settled() {
             return Err("Filtering is still running — export when it finishes".into());
         }
         if self.filter.view.shown_lines().is_empty() {
