@@ -6,8 +6,11 @@ pub mod engine;
 pub mod error;
 pub mod filter;
 pub mod highlight;
+pub mod history;
 pub mod index;
+pub mod paths;
 pub mod search;
+pub mod stats;
 pub mod text;
 pub mod view;
 
