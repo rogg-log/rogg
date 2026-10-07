@@ -3,7 +3,7 @@
 pub mod chrome;
 pub mod keys;
 
-use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
+use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::Source;
 use crate::history::HistoryStore;
@@ -26,6 +26,7 @@ use rogg_ui::theme::size;
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -42,6 +43,7 @@ pub enum Dialog {
     FontPicker,
     Profiles(Entity<crate::dialogs::profiles::ProfileEditor>),
     Statistics,
+    Export,
 }
 
 pub struct Workspace {
@@ -78,6 +80,10 @@ pub struct Workspace {
     _session_subscriptions: Vec<Subscription>,
     /// Why the last session save failed; None after a successful one. A failure is toasted once, not every 30 s.
     pub session_error: Option<String>,
+    /// The Export dialog's line options (spec §6.5).
+    pub export_options: rogg_core::export::ExportOptions,
+    /// The Export dialog's session scope: all tabs, or only the active one.
+    pub export_all_tabs: bool,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -125,6 +131,8 @@ impl Workspace {
             last_window: None,
             _session_subscriptions: Vec::new(),
             session_error: None,
+            export_options: rogg_core::export::ExportOptions { context: true, gaps: true, numbers: false },
+            export_all_tabs: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
@@ -343,7 +351,74 @@ impl Workspace {
             TabEvent::ShowStatistics => self.open_dialog(Dialog::Statistics, cx),
             TabEvent::FocusCrumb(i) => self.focus_crumb(*i, window, cx),
             TabEvent::OpenAsTab => self.open_as_tab(window, cx),
+            TabEvent::ShowExport => self.open_export(cx),
         }
+    }
+
+    pub fn open_export(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().is_some() {
+            self.open_dialog(Dialog::Export, cx);
+        }
+    }
+
+    /// Export lines…: the save panel, then the background export.
+    pub(crate) fn prompt_export_lines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else { return };
+        let d = tab.read(cx).doc.read(cx);
+        let dir = d.source.path().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(rogg_core::paths::home_dir);
+        let stem = d.title().split(['⟩', ' ']).next().unwrap_or("log").trim_end_matches(".log").to_string();
+        let rx = cx.prompt_for_new_path(&dir, Some(&format!("{stem}-filtered.log")));
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(path))) = rx.await {
+                this.update(cx, |ws, cx| ws.export_lines_to(path, cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    pub fn export_lines_to(&mut self, dst: PathBuf, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else { return };
+        let options = self.export_options;
+        let doc = tab.read(cx).doc.clone();
+        match doc.update(cx, |d, cx| d.export_lines(options, dst, cx)) {
+            Ok(()) => self.close_dialog(cx),
+            Err(message) => self.toast(message, cx),
+        }
+    }
+
+    /// Save session…: this tab or all tabs as a `.rogg` file, written in the background.
+    pub(crate) fn prompt_export_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_new_path(&rogg_core::paths::home_dir(), Some("session.rogg"));
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(path))) = rx.await {
+                this.update(cx, |ws, cx| ws.export_session_to(path, cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    pub fn export_session_to(&mut self, dst: PathBuf, cx: &mut Context<Self>) {
+        let session = self.capture_session(self.export_all_tabs, cx);
+        let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let task = cx.background_executor().spawn(async move { session.save(&dst) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |ws, cx| match result {
+                Ok(()) => ws.toast(format!("Saved session to {name}"), cx),
+                Err(e) => ws.toast(format!("Could not save {name}: {e}"), cx),
+            })
+            .ok();
+        })
+        .detach();
+        self.close_dialog(cx);
+    }
+
+    /// Copy filter expression (spec §6.5).
+    pub fn copy_expression(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else { return };
+        let expression = tab.read(cx).doc.read(cx).filter.spec.expression();
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(expression));
+        self.toast("Filter expression copied", cx);
     }
 
     fn focus_crumb(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -550,6 +625,7 @@ impl Workspace {
                     .unwrap_or_else(|| crate::dialogs::stats::rows(None, None));
                 dialogs::statistics(&rows).description("Counts for the active tab's filter; they update as it runs.").on_close(close).into_any_element()
             }
+            Dialog::Export => crate::dialogs::export::render(self, this, cx).on_close(close).into_any_element(),
         }
     }
 
@@ -605,6 +681,7 @@ impl Workspace {
             .on_action(keys::unless_dialog(cx, |ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &OpenAsTab, window, cx| ws.open_as_tab(window, cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &Export, _, cx| ws.open_export(cx)))
             .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
             .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| {
                 let top = e.drag(cx).band_top(e.event.position.y);

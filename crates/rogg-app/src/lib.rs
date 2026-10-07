@@ -10,6 +10,7 @@ pub mod demo;
 pub mod derived;
 pub mod dialogs;
 pub mod document;
+pub mod export;
 pub mod format;
 pub mod history;
 pub mod menus;

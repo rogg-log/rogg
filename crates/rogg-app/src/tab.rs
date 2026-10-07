@@ -6,6 +6,7 @@ use crate::profiles::{ProfileStore, RowStyler};
 use crate::settings::SettingsStore;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
+use rogg_core::stats::{group_digits, noun};
 use rogg_ui::controls::FindField;
 use rogg_ui::layout::MainWindowParts;
 use rogg_ui::logview::{LogRowSource, LogViewEvent, LogViewState, ScrollTo, VecRows};
@@ -80,6 +81,8 @@ pub enum TabEvent {
     FocusCrumb(usize),
     /// The filtered pane's "Open as tab" button.
     OpenAsTab,
+    /// The info bar's Export button: open the Export dialog.
+    ShowExport,
 }
 
 /// Spec §4.5 reload toast.
@@ -255,6 +258,10 @@ impl Tab {
                 }
                 cx.notify();
             }
+            DocumentEvent::Exported(Ok((n, name))) => {
+                cx.emit(TabEvent::Toast(format!("Exported {} {} to {name}", group_digits(*n), noun(*n, "line", "lines")).into()))
+            }
+            DocumentEvent::Exported(Err(e)) => cx.emit(TabEvent::Toast(format!("Could not export: {e}").into())),
         }
     }
 

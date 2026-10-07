@@ -118,16 +118,6 @@ fn missing_file_shows_error_state_with_retry(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn not_yet_buttons_explain_themselves(cx: &mut TestAppContext) {
-    let (_dir, w, ws, tab) = open_one(cx);
-    tab.read_with(cx, |t, _| t.doc.clone()).update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
-    // "Open as tab" works now (tests/derived.rs); Export is still a placeholder until its task.
-    common::click(cx, w, "export");
-    assert_eq!(ws.read_with(cx, |ws, _| ws.toasts.len()), 1);
-    assert!(common::exists(cx, w, "toast-0"));
-}
-
-#[gpui_kit::test]
 fn a_selection_shown_after_a_background_scan_is_selected_in_the_filtered_pane(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));

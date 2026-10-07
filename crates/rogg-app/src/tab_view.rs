@@ -49,11 +49,6 @@ fn tab_act_ix(tab: &Entity<Tab>, f: impl Fn(&mut Tab, usize, &mut Window, &mut C
     move |i, window, cx| tab.update(cx, |t, cx| f(t, i, window, cx))
 }
 
-/// A button for a feature of a later milestone: says so in a toast.
-fn later(tab: &Entity<Tab>, message: &'static str) -> impl Fn(&mut Window, &mut App) + 'static {
-    tab_act(tab, move |_, _, cx| cx.emit(TabEvent::Toast(message.into())))
-}
-
 pub fn chip_state(state: TermState) -> ChipState {
     match state {
         TermState::Include => ChipState::Include,
@@ -92,7 +87,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
         .snapshot(snapshot)
         .on_crumb(tab_act_ix(tab, |_, i, _, cx| cx.emit(TabEvent::FocusCrumb(i))))
         .on_profile(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowProfiles)))
-        .on_export(later(tab, "Export arrives in a later version"))
+        .on_export(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowExport)))
         .into_any_element();
     let note = t.labels.note.clone().or_else(|| d.text().map(|text| SharedString::from(text.status_label()))).unwrap_or_default();
     let progress = d.job_progress().map(|(label, fraction)| Progress { label, fraction });

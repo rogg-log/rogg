@@ -31,6 +31,7 @@ gpui_kit::actions!(
         ToggleWrap,
         ShowShortcuts,
         OpenAsTab,
+        Export,
         OpenSettings,
         Dismiss,
         ThemeSystem,
@@ -75,7 +76,7 @@ macro_rules! shortcut {
     };
 }
 
-/// The keymap. Shortcuts for features that arrive in later tasks (export) are added with those features.
+/// The keymap.
 pub fn shortcuts() -> Vec<Shortcut> {
     const WS: Option<&str> = Some(WORKSPACE_CONTEXT);
     const LOG: Option<&str> = Some(log::KEY_CONTEXT);
@@ -117,6 +118,7 @@ pub fn shortcuts() -> Vec<Shortcut> {
         shortcut!("", "", "shift-tab", FocusPrev, WS),
         shortcut!("Toggle follow selection", "⇧ ⌘ F", "shift-cmd-f", ToggleFollow, WS),
         shortcut!("Open filtered as tab", "⇧ ⌘ T", "shift-cmd-t", OpenAsTab, WS),
+        shortcut!("Export", "⌘ E", "cmd-e", Export, WS),
         shortcut!("Toggle sidebar", "⌘ \\", "cmd-\\", ToggleSidebar, WS),
         shortcut!("Settings", "⌘ ,", "cmd-,", OpenSettings, None),
         shortcut!("Close dialog / cancel", "Esc", "escape", Dismiss, WS),
@@ -163,6 +165,14 @@ mod tests {
     fn minimize_is_bound_to_cmd_m() {
         let rows = shortcut_rows();
         assert!(rows.iter().any(|(label, keys)| label == "Minimize" && keys == "⌘ M"));
+    }
+
+    #[test]
+    fn export_settings_and_open_as_tab_are_listed() {
+        let rows = shortcut_rows();
+        for (label, keys) in [("Export", "⌘ E"), ("Settings", "⌘ ,"), ("Open filtered as tab", "⇧ ⌘ T")] {
+            assert!(rows.iter().any(|(l, k)| l == label && k == keys), "missing row {label} {keys}");
+        }
     }
 
     #[test]

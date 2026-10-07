@@ -25,6 +25,7 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
             MenuItem::action("Open…", OpenFile),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::submenu(Menu::new("Open Recent").items(recent_items)),
+            MenuItem::action("Export…", Export),
             MenuItem::separator(),
             MenuItem::action("Close Tab", CloseTab),
         ]),

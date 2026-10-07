@@ -159,6 +159,8 @@ pub enum DocumentEvent {
     Grew { lines: u64 },
     /// The file was truncated or replaced and is being reloaded (spec §4.5).
     Reloaded,
+    /// An export finished: the lines written and the file name, or why it failed (spec §6.5).
+    Exported(Result<(u64, String), String>),
 }
 
 pub struct Document {
@@ -174,6 +176,8 @@ pub struct Document {
     derived_job: Option<crate::derived::DerivedJob>,
     /// A derived tab's copy in the cache; deleted when the document drops.
     derived_file: Option<PathBuf>,
+    /// Writes the filtered lines to a file (spec §6.5); dropping it (the tab closing) cancels it.
+    export: Option<crate::export::ExportJob>,
     /// Cache entries the text reads (spec §4.2: never evicted while open).
     leases: Vec<CacheLease>,
     /// A `.gz` still decompressing into the text's file.
@@ -235,6 +239,7 @@ impl Document {
             open_job: None,
             derived_job: None,
             derived_file: None,
+            export: None,
             leases: Vec::new(),
             inflating: None,
             inflated_len: None,
@@ -282,13 +287,49 @@ impl Document {
         self.live
     }
 
-    /// The footer progress: a `.gz` decompressing, else a running background scan.
+    /// The footer progress: an export, a `.gz` decompressing, else a running background scan.
     pub fn job_progress(&self) -> Option<(SharedString, f32)> {
+        if let Some(job) = &self.export {
+            return Some((format!("Exporting {:.0}%", job.progress * 100.).into(), job.progress));
+        }
         if let Some(inflating) = &self.inflating {
             let f = inflating.fraction();
             return Some((format!("Decompressing {:.0}%", f * 100.).into(), f));
         }
         self.filter.progress.map(|f| (format!("Filtering {:.0}%", f * 100.).into(), f))
+    }
+
+    /// Spec §6.5: writes the filtered log to `dst` in the background; refused while a scan runs or nothing is shown.
+    pub fn export_lines(&mut self, options: rogg_core::export::ExportOptions, dst: PathBuf, cx: &mut Context<Self>) -> Result<(), SharedString> {
+        let Some(text) = self.text().cloned() else { return Err("The log is not loaded yet".into()) };
+        if self.filter.progress.is_some() {
+            return Err("Filtering is still running — export when it finishes".into());
+        }
+        if self.filter.view.shown_lines().is_empty() {
+            return Err("Nothing to export: the filtered log is empty".into());
+        }
+        self.export = Some(crate::export::ExportJob::spawn(text, self.filter.view.clone(), self.number_base, options, dst));
+        cx.notify();
+        self.ensure_polling(cx);
+        Ok(())
+    }
+
+    fn poll_export(&mut self, cx: &mut Context<Self>) {
+        let Some(job) = &mut self.export else { return };
+        let before = job.progress;
+        match job.poll() {
+            None => {
+                if job.progress != before {
+                    cx.notify();
+                }
+            }
+            Some(result) => {
+                let name = job.dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.export = None;
+                cx.emit(DocumentEvent::Exported(result.map(|n| (n, name))));
+                cx.notify();
+            }
+        }
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) {
@@ -421,6 +462,7 @@ impl Document {
         self.poll_filter(cx);
         self.poll_view(cx);
         self.poll_search(cx);
+        self.poll_export(cx);
         // A job started inside a poll (a reload's open, a tail scan) counts too.
         let active = self.has_jobs();
         if !active {
@@ -430,7 +472,7 @@ impl Document {
     }
 
     fn has_jobs(&self) -> bool {
-        self.open_job.is_some() || self.derived_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.filter.view_job.is_some() || self.search_running()
+        self.open_job.is_some() || self.derived_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.filter.view_job.is_some() || self.search_running() || self.export.is_some()
     }
 
     fn poll_open(&mut self, cx: &mut Context<Self>) -> bool {
