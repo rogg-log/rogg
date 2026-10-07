@@ -8,7 +8,7 @@ use crate::menus;
 use crate::recent::RecentStore;
 use crate::sidebar_model::{self, FixedSidebar, OpenFile, RowAction, SidebarEntry, SidebarGroup};
 use crate::sources::{TreeJob, TreeResult};
-use crate::tab::TabInit;
+use crate::tab::{Tab, TabInit};
 use gpui_kit::{AnyElement, App, BorrowAppContext, Context, Entity, EntityId, IntoElement, PathPromptOptions, Pixels, SharedString, Window, px};
 use rogg_core::archive::{ArchiveKind, Content, sniff};
 use rogg_core::folder::MAX_SCAN_FILES;
@@ -41,12 +41,18 @@ enum PathKind {
     Folder,
     Archive(ArchiveKind, u64),
     File,
+    /// A FIFO or socket: read as a stream, never mapped or sniffed.
+    Stream,
 }
 
 fn classify(path: &Path) -> PathKind {
     let Ok(meta) = std::fs::metadata(path) else { return PathKind::File };
     if meta.is_dir() {
         return PathKind::Folder;
+    }
+    // Before anything opens the file: opening a FIFO blocks until a writer appears.
+    if rogg_core::stream::is_stream_path(path) {
+        return PathKind::Stream;
     }
     match sniff(path) {
         Ok(Content::Archive(kind)) => PathKind::Archive(kind, meta.len()),
@@ -59,8 +65,13 @@ impl Workspace {
     /// already showing them). Opened files, folders and archives are recorded in Recent.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         for path in paths {
+            if path.as_os_str() == "-" {
+                self.open_stdin(window, cx);
+                continue;
+            }
             let path = path.canonicalize().unwrap_or(path);
             match classify(&path) {
+                PathKind::Stream => self.open_fifo(path, window, cx),
                 PathKind::Folder => self.open_folder(path, window, cx),
                 PathKind::Archive(kind, size) => self.open_archive(path, kind, size, true, window, cx),
                 PathKind::File => {
@@ -69,6 +80,42 @@ impl Workspace {
                     }
                     self.open_file(path, window, cx);
                 }
+            }
+        }
+    }
+
+    /// stdin (spec §4.1): captured into the cache as it arrives, in a live tab. Opened once per run.
+    pub fn open_stdin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.stdin_opened, true) {
+            return;
+        }
+        self.open_stream("stdin", || Ok(std::io::stdin()), window, cx);
+    }
+
+    /// A FIFO or socket (`mkfifo`, `<(cmd)`): read as a stream, never mapped. Opening it waits for a writer, which
+    /// happens on the capture thread.
+    pub fn open_fifo(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "pipe".into());
+        self.open_stream(&name, move || std::fs::File::open(&path), window, cx);
+    }
+
+    /// Starts copying `open`'s data into the cache and opens a live tab on the copy. Streams are not recent files.
+    pub fn open_stream<R: std::io::Read + Send + 'static>(
+        &mut self,
+        name: &str,
+        open: impl FnOnce() -> std::io::Result<R> + Send + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Tab>> {
+        match rogg_core::stream::StreamCapture::start(open, &CacheStore::get(cx)) {
+            Ok(capture) => {
+                let source = Source::Stream { name: name.to_string().into(), path: capture.path().to_path_buf() };
+                self.streams.push(capture);
+                Some(self.open_source(source, TabInit::default(), window, cx))
+            }
+            Err(e) => {
+                self.toast(format!("Could not read {name}: {e}"), cx);
+                None
             }
         }
     }
@@ -359,6 +406,7 @@ impl Workspace {
                     bytes: d.text().map(|text| text.bytes().len() as u64),
                     failed: matches!(d.load, LoadState::Failed { .. }),
                     source: d.source.source_ref(),
+                    stream: matches!(d.source, Source::Stream { .. }),
                 }
             })
             .collect()

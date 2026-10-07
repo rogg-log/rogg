@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub const USAGE: &str = "usage: rogg [--demo] [FILE...]";
+pub const USAGE: &str = "usage: rogg [--demo] [FILE...]   (FILE `-` reads stdin)";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Args {
@@ -21,6 +21,7 @@ impl Args {
             match arg.to_str() {
                 Some("--demo") => out.demo = true,
                 Some("-h" | "--help") => return Err(USAGE.to_string()),
+                Some("-") => out.paths.push(PathBuf::from("-")),
                 Some(flag) if flag.starts_with('-') => return Err(format!("unknown option `{flag}`\n{USAGE}")),
                 _ => out.paths.push(PathBuf::from(arg)),
             }
@@ -53,6 +54,12 @@ mod tests {
         let a = Args::parse([OsString::from("--demo"), odd.clone()]).unwrap();
         assert!(a.demo);
         assert_eq!(a.paths, [PathBuf::from(odd)]);
+    }
+
+    #[test]
+    fn a_dash_reads_stdin() {
+        assert_eq!(parse("- a.log").unwrap().paths, [PathBuf::from("-"), PathBuf::from("a.log")]);
+        assert!(parse("--x").is_err(), "other dashes are still unknown options");
     }
 
     #[test]

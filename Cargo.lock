@@ -5832,6 +5832,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "libc",
  "rogg-core",
  "rogg-genlog",
  "rogg-ui",
