@@ -186,6 +186,12 @@ fn needs_pipeline(path: &Path) -> bool {
     matches!(sniff_head(&head[..n]), Content::Gzip | Content::Archive(_))
 }
 
+/// Drops `follower` on a short-lived thread: dropping a watcher joins its notify thread, which the UI thread must
+/// not wait for.
+fn retire_follower(follower: Follower) {
+    let _ = std::thread::Builder::new().name("rogg-follow-retire".into()).spawn(move || drop(follower));
+}
+
 fn in_memory(text: LogText) -> OpenedSource {
     OpenedSource { text, leases: Vec::new(), inflating: None, watch: None }
 }
@@ -261,9 +267,15 @@ impl Document {
 
     fn stop_jobs(&mut self) {
         self.open_job = None;
-        self.follower = None;
+        self.stop_follower();
         self.inflating = None;
         self.inflated_len = None;
+    }
+
+    fn stop_follower(&mut self) {
+        if let Some(follower) = self.follower.take() {
+            retire_follower(follower);
+        }
     }
 
     fn start_load(&mut self, cx: &mut Context<Self>) {
@@ -272,11 +284,8 @@ impl Document {
         let cache = CacheStore::get(cx);
         match self.source.clone() {
             Source::Memory { bytes, .. } => self.finish_load(Ok(in_memory(LogText::from_bytes(bytes.to_vec()))), cx),
-            Source::Stream { path, .. } => {
-                let result = LogText::open(&path, cache.dir(), &CancelToken::new(), |_| {});
-                self.finish_load(result.map(|text| OpenedSource { text, leases: Vec::new(), inflating: None, watch: Some(path) }), cx);
-            }
-            Source::File(path) => match std::fs::metadata(&path) {
+            // A stream is a cache file that may already hold hundreds of MB: it opens like a plain file.
+            Source::File(path) | Source::Stream { path, .. } => match std::fs::metadata(&path) {
                 Err(source) => self.finish_load(Err(CoreError::Io { path, source }), cx),
                 Ok(meta) if meta.is_file() && meta.len() <= EngineConfig::get(cx).sync_bytes && !needs_pipeline(&path) => {
                     let result = open_source(&SourceRef::File(path), &cache, &CancelToken::new(), |_| {});
@@ -295,6 +304,10 @@ impl Document {
     }
 
     fn finish_load(&mut self, result: Result<OpenedSource, CoreError>, cx: &mut Context<Self>) {
+        if result.is_err() {
+            // A failed tab pins nothing.
+            self.leases.clear();
+        }
         self.load = match result {
             Ok(opened) => {
                 self.text_revision += 1;
@@ -395,6 +408,7 @@ impl Document {
             }
             InflatePoll::Done(Err(e)) => {
                 self.stop_jobs();
+                self.leases.clear();
                 self.load = LoadState::Failed { message: e.to_string().into() };
                 cx.notify();
                 false
@@ -420,13 +434,13 @@ impl Document {
             self.on_grew(text, cx);
         }
         if ended {
-            self.follower = None;
+            self.stop_follower();
         }
         // A finished decompression needs no watching once the text has caught up with the complete file.
         if let (Some(len), Some(text)) = (self.inflated_len, self.text())
             && text.mapped_len() >= len
         {
-            self.follower = None;
+            self.stop_follower();
             self.inflated_len = None;
         }
         self.follower.is_some()
@@ -448,6 +462,9 @@ impl Drop for Document {
     fn drop(&mut self) {
         if let Some(job) = self.filter.job.take() {
             filter::retire(job);
+        }
+        if let Some(follower) = self.follower.take() {
+            retire_follower(follower);
         }
     }
 }

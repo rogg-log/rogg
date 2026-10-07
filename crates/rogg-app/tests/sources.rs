@@ -1,7 +1,7 @@
 mod common;
 use gpui_kit::{AppContext, Entity, SharedString, TestAppContext};
 use rogg_app::cache::CacheStore;
-use rogg_app::document::{Document, DocumentInit, LoadState, Source};
+use rogg_app::document::{Document, DocumentInit, EngineConfig, LoadState, Source};
 use rogg_core::source::SourceRef;
 use rogg_genlog::bundle::{BundleKind, damage_zip_member, write_archive, write_gz, write_stored_zip};
 use std::path::Path;
@@ -117,4 +117,16 @@ fn small_utf16_files_lease_their_conversion(cx: &mut TestAppContext) {
     cx.update(|_| {});
     cx.run_until_parked();
     assert_eq!(cache.evict_to(0).removed, 1);
+}
+
+#[gpui_kit::test]
+fn streams_open_in_the_background_when_large(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
+    let path = dir.path().join("stream.log");
+    std::fs::write(&path, b"one\ntwo\nthree\n").unwrap();
+    let doc = open(cx, Source::Stream { name: "stdin".into(), path });
+    assert!(matches!(doc.read_with(cx, |d, _| d.load.clone()), LoadState::Loading { .. }), "big streams open off the UI thread");
+    common::wait_until(cx, |cx| lines(&doc, cx).is_some());
+    assert_eq!(lines(&doc, cx).unwrap(), ["one", "two", "three"]);
 }
