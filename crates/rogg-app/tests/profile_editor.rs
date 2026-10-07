@@ -143,3 +143,36 @@ fn a_rename_refuses_names_that_would_share_another_profiles_file(cx: &mut TestAp
     assert!(common::exists(cx, f.w, "profile-rename-error"), "OPS shares Ops's file");
     assert_eq!(f.editor.read_with(cx, |e, _| e.profile_name().to_string()), "new/profile");
 }
+
+#[gpui_kit::test]
+fn default_cannot_be_renamed(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    assert!(!common::exists(cx, f.w, "profile-rename"), "Default shows no Rename button");
+    cx.update_window(f.w, |_, window, cx| {
+        f.editor.update(cx, |e, cx| {
+            e.start_rename(window, cx);
+            e.apply_rename(window, cx);
+        })
+    })
+    .unwrap();
+    assert!(f.editor.read_with(cx, |e, _| e.rename_input()).is_none());
+    assert!(!common::exists(cx, f.w, "profile-name"));
+    assert!(names(cx).contains(&"Default".to_string()));
+    common::click(cx, f.w, "profile-new");
+    assert!(common::exists(cx, f.w, "profile-rename"), "other profiles can be renamed");
+}
+
+#[gpui_kit::test]
+fn the_rule_selection_follows_reordering(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-rule-2");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(2));
+    common::click(cx, f.w, "profile-rule-1-down");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(1), "the selected rule moved up into slot 1");
+    common::click(cx, f.w, "profile-rule-1-down");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(2), "the selected rule itself moved down");
+    common::click(cx, f.w, "profile-rule-2-up");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(1));
+    common::click(cx, f.w, "profile-rule-0-down");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(0), "moving the rule above it down moves the selection up");
+}

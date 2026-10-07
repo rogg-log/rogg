@@ -7,7 +7,7 @@ use crate::tab::Tab;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, BorrowAppContext, Context, Entity, EventEmitter, SharedString, Subscription, TestSupportExt, WeakEntity, Window, div, px};
-use rogg_core::profile::{DEFAULT_PROFILE, HitEntry, LineRule, Profile, names_collide};
+use rogg_core::profile::{DEFAULT_PROFILE, LineRule, Profile, default_palette, names_collide};
 use rogg_ui::controls::{ActionButton, CompactSelect};
 use rogg_ui::dialogs::DialogFrame;
 use rogg_ui::form::{EditableRuleRow, PaletteSlot, SectionLabel, TextField};
@@ -87,7 +87,7 @@ impl ProfileEditor {
     }
 
     pub fn new_profile(&mut self, cx: &mut Context<Self>) {
-        let name = cx.update_global::<ProfileStore, _>(|s, _| s.add(Profile { name: "New profile".into(), rules: Vec::new(), hit_palette: (0..4).map(HitEntry::slot).collect() }));
+        let name = cx.update_global::<ProfileStore, _>(|s, _| s.add(Profile { name: "New profile".into(), rules: Vec::new(), hit_palette: default_palette() }));
         cx.emit(ProfileEditorEvent::Changed);
         self.select_profile(&name, cx);
     }
@@ -111,7 +111,11 @@ impl ProfileEditor {
         true
     }
 
+    /// Opens the name field; Default cannot be renamed (it must always exist, like it cannot be deleted).
     pub fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.profile == DEFAULT_PROFILE {
+            return;
+        }
         let input = cx.new(|cx| InputState::new(window, cx).default_value(self.profile.clone()));
         input.update(cx, |i, cx| i.focus(window, cx));
         let sub = cx.subscribe_in(&input, window, |e, _, ev: &InputEvent, window, cx| {
@@ -124,9 +128,15 @@ impl ProfileEditor {
         cx.notify();
     }
 
-    /// Renames the shown profile to the input's text; an empty or taken name shows an error instead.
+    /// Renames the shown profile to the input's text; an empty or taken name shows an error instead. Default is never
+    /// renamed.
     pub fn apply_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some((input, _)) = &self.rename else { return };
+        if self.profile == DEFAULT_PROFILE {
+            self.rename = None;
+            cx.notify();
+            return;
+        }
         let to = input.read(cx).value().trim().to_string();
         let from = self.profile.clone();
         if to == from {
@@ -167,6 +177,8 @@ impl ProfileEditor {
         self.edit(cx, |p| p.rules.swap(i, j));
         if self.selected_rule == Some(i) {
             self.selected_rule = Some(j);
+        } else if self.selected_rule == Some(j) {
+            self.selected_rule = Some(i);
         }
     }
 
@@ -225,7 +237,9 @@ impl Render for ProfileEditor {
             }))
             .child(ActionButton::new("profile-new", "New").on_click(ed(&this, |e, _, cx| e.new_profile(cx))))
             .child(ActionButton::new("profile-duplicate", "Duplicate").on_click(ed(&this, |e, _, cx| e.duplicate(cx))))
-            .child(ActionButton::new("profile-rename", "Rename").on_click(ed(&this, |e, window, cx| e.start_rename(window, cx))))
+            .when(profile.name != DEFAULT_PROFILE, |d| {
+                d.child(ActionButton::new("profile-rename", "Rename").on_click(ed(&this, |e, window, cx| e.start_rename(window, cx))))
+            })
             .child(ActionButton::new("profile-delete", "Delete").on_click(ed(&this, |e, _, cx| {
                 e.delete(cx);
             })))

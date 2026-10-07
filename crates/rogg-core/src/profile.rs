@@ -227,7 +227,8 @@ impl Default for HitEntry {
     }
 }
 
-fn default_palette() -> Vec<HitEntry> {
+/// The four theme hit slots: the palette of a new profile, and of one whose palette is empty.
+pub fn default_palette() -> Vec<HitEntry> {
     (0..4).map(HitEntry::slot).collect()
 }
 

@@ -1,7 +1,7 @@
 //! Highlighting profiles (spec §6.1) as an app global, and their colours resolved for the active theme.
 
 use gpui_kit::{App, Global};
-use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, HitEntry, Profile, TINT_ALPHA, derive_light, names_collide, unique_name};
+use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, Profile, TINT_ALPHA, derive_light, names_collide, unique_name};
 use rogg_core::style::{CompiledProfile, RuleError};
 use rogg_ui::logview::{RowTint, Span, SpanStyle};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, ChipColor, Color, HitColor, Palette};
@@ -69,10 +69,10 @@ impl ProfileStore {
     }
 
     /// Replaces the profile `old_name` with `profile` (a rename moves its file), recompiles and saves it. An empty
-    /// filter-match palette is refilled with the four default slots (`RowStyler::hit` needs at least one).
+    /// filter-match palette is refilled with the default slots (`RowStyler::hit` needs at least one).
     pub fn put(&mut self, old_name: &str, mut profile: Profile) {
         if profile.hit_palette.is_empty() {
-            profile.hit_palette = (0..4).map(HitEntry::slot).collect();
+            profile.hit_palette = profile::default_palette();
         }
         let saved = profile::save(&self.dir, &profile);
         // A rename whose names share a file on the case-insensitive disk ("Ops" → "ops") was saved over the old file:
@@ -307,7 +307,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = ProfileStore::load(dir.path().to_path_buf());
         store.put("Bare", Profile { name: "Bare".into(), rules: vec![], hit_palette: vec![] });
-        assert_eq!(store.get("Bare").hit_palette, (0..4).map(HitEntry::slot).collect::<Vec<_>>());
+        assert_eq!(store.get("Bare").hit_palette, profile::default_palette());
         let styler = RowStyler::from_profile(store.get("Bare"), &Palette::dark(), Appearance::Dark);
         assert_eq!(styler.hit(5), SpanStyle::Mark { fg: Palette::dark().hits[1].fg, bg: Palette::dark().hits[1].bg });
     }
