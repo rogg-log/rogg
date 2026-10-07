@@ -57,6 +57,12 @@ pub struct PaneSearch {
     pub result: Option<SearchResult>,
     pub invalid: bool,
     job: Option<SearchJob>,
+    /// The text `result` is complete for.
+    covered: Option<Arc<LogText>>,
+    /// The text the running count reads.
+    job_text: Option<Arc<LogText>>,
+    /// Lines found before a running tail count's first line.
+    tail_base: Option<Vec<u64>>,
     /// Bumped when the query or its scope changes; rows outline the new query when it moves.
     pub revision: u64,
 }
@@ -119,12 +125,18 @@ impl Document {
         let s = &mut self.search.panes[pane.index()];
         s.job = None;
         s.result = None;
+        s.tail_base = None;
+        s.covered = None;
         s.revision += 1;
         let mut spawned = false;
         if let (Some(text), Some(search)) = (text, s.compiled.clone()) {
             if text.bytes().len() as u64 <= sync_bytes {
                 s.result = search.run(&text, &scope, DEFAULT_CHUNK_LINES, &CancelToken::new()).ok();
+                if s.result.is_some() {
+                    s.covered = Some(text.clone());
+                }
             } else {
+                s.job_text = Some(text.clone());
                 s.job = Some(SearchJob::spawn(text, search, scope));
                 spawned = true;
             }
@@ -150,21 +162,66 @@ impl Document {
             let Some(job) = &s.job else { continue };
             match job.rx.try_recv() {
                 Ok(result) => {
-                    s.result = result.ok();
+                    s.result = result.ok().map(|mut r| {
+                        if let Some(mut base) = s.tail_base.take() {
+                            base.extend(r.lines);
+                            r.lines = base;
+                        }
+                        r
+                    });
+                    s.covered = s.job_text.take();
                     s.job = None;
                     changed = true;
                 }
                 Err(TryRecvError::Empty) => active = true,
                 Err(TryRecvError::Disconnected) => {
                     s.job = None;
+                    s.job_text = None;
+                    s.tail_base = None;
                     changed = true;
                 }
             }
         }
         if changed {
+            self.grow_search(cx);
             cx.notify();
         }
         active
+    }
+
+    /// After growth: the full log's count runs on the appended lines only and is merged (the filtered pane re-counts
+    /// when its view changes). A running count continues on its snapshot; its end catches up.
+    pub(super) fn grow_search(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self.text().cloned() else { return };
+        let sync_bytes = EngineConfig::get(cx).sync_bytes;
+        let s = &mut self.search.panes[Pane::Full.index()];
+        if s.job.is_some() {
+            return;
+        }
+        let (Some(search), Some(prev), Some(result)) = (s.compiled.clone(), s.covered.clone(), s.result.as_ref()) else { return };
+        if text.mapped_len() <= prev.mapped_len() {
+            return;
+        }
+        let from = prev.stable_lines();
+        let mut base = result.lines.clone();
+        base.truncate(base.partition_point(|&l| l < from));
+        if text.mapped_len() - prev.mapped_len() <= sync_bytes {
+            if let Ok(tail) = search.run(&text, &SearchScope::From(from), DEFAULT_CHUNK_LINES, &CancelToken::new()) {
+                base.extend(tail.lines);
+                s.result = Some(SearchResult { lines: base });
+                s.covered = Some(text);
+            }
+            cx.notify();
+        } else {
+            s.tail_base = Some(base);
+            s.job_text = Some(text.clone());
+            s.job = Some(SearchJob::spawn(text, search, SearchScope::From(from)));
+            self.ensure_polling(cx);
+        }
+    }
+
+    pub(super) fn search_running(&self) -> bool {
+        self.search.panes.iter().any(|s| s.job.is_some())
     }
 
     /// The next (or previous) line with a hit after 0-based `from`, wrapping; the first hit when `from` is None.

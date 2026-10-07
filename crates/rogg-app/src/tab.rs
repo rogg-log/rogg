@@ -36,7 +36,9 @@ pub enum TabEvent {
 /// Document revisions already turned into rows.
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Applied {
+    load: u64,
     text: u64,
+    pins: u64,
     filter: u64,
     search: [u64; 2],
 }
@@ -123,24 +125,30 @@ impl Tab {
         self.selection.filter(|_| self.selection_announced)
     }
 
-    /// Rebuilds the row sources whose document data changed.
+    /// Rebuilds the row sources whose document data changed: the full log on text, pins or its search; the filtered log
+    /// on text, the filtered view or its search. When only the text grew, the full log's rows are extended (keeping
+    /// measured wrapped heights).
     pub fn sync_rows(&mut self, cx: &mut Context<Self>) {
         let (now, full_rows, filtered_rows) = {
             let doc = self.doc.read(cx);
             let now = Applied {
+                load: doc.load_revision(),
                 text: doc.text_revision(),
+                pins: doc.filter.pins_revision,
                 filter: doc.filter.revision,
                 search: [doc.search(Pane::Full).revision, doc.search(Pane::Filtered).revision],
             };
-            let base_changed = now.text != self.applied.text || now.filter != self.applied.filter;
-            let full = (base_changed || now.search[0] != self.applied.search[0]).then(|| doc.full_rows()).flatten();
-            let filtered = (base_changed || now.search[1] != self.applied.search[1]).then(|| doc.filtered_rows()).flatten();
-            (now, full, filtered)
+            let a = self.applied;
+            let full_changed = now.text != a.text || now.pins != a.pins || now.search[0] != a.search[0];
+            let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1];
+            (now, full_changed.then(|| doc.full_rows()).flatten(), filtered_changed.then(|| doc.filtered_rows()).flatten())
         };
-        let loaded = now.text != self.applied.text;
+        let before = self.applied;
+        let loaded = now.load != before.load;
+        let only_grew = !loaded && now.pins == before.pins && now.search[0] == before.search[0];
         self.applied = now;
         if let Some(rows) = full_rows {
-            self.full.update(cx, |s, cx| s.set_rows(rows, cx));
+            self.full.update(cx, |s, cx| if only_grew { s.extend_rows(rows, cx) } else { s.set_rows(rows, cx) });
         }
         if let Some(rows) = filtered_rows {
             self.filtered.update(cx, |s, cx| s.set_rows(rows, cx));

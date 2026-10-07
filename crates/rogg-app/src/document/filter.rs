@@ -6,10 +6,11 @@ use super::{Document, EngineConfig};
 use crate::history::HistoryStore;
 use gpui_kit::{BorrowAppContext, Context, SharedString};
 use rogg_core::CancelToken;
-use rogg_core::engine::{DEFAULT_CHUNK_LINES, FilterEvent, FilterJob, run_filter};
+use rogg_core::engine::{DEFAULT_CHUNK_LINES, FilterEvent, FilterJob, TailBase, run_filter, run_filter_lines};
 use rogg_core::filter::{CompiledFilter, FilterSpec, Term, TermState, literal_term};
 use rogg_core::highlight::Highlighter;
 use rogg_core::stats::FilterStats;
+use rogg_core::text::LogText;
 use rogg_core::view::FilteredView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -57,6 +58,16 @@ pub struct FilterState {
     pub scans: u64,
     /// Bumped whenever `view`, `matches` or `pins` change.
     pub revision: u64,
+    /// The text `matches` and `term_hits` are complete for; None before the first finished scan.
+    scanned: Option<Arc<LogText>>,
+    /// The text the running scan reads.
+    job_text: Option<Arc<LogText>>,
+    /// What the running tail scan adds to; None while a full scan runs.
+    tail_base: Option<TailBase>,
+    /// Tail scans started so far (tests check that appends never rescan the whole file).
+    pub tail_scans: u64,
+    /// Bumped when pins change: the full log rows depend on pins, not on the filtered view.
+    pub pins_revision: u64,
 }
 
 fn empty_view() -> FilteredView {
@@ -88,6 +99,11 @@ impl FilterState {
             progress: None,
             scans: 0,
             revision: 0,
+            scanned: None,
+            job_text: None,
+            tail_base: None,
+            tail_scans: 0,
+            pins_revision: 0,
         }
     }
 }
@@ -189,6 +205,7 @@ impl Document {
         if !self.filter.pins.remove(&line) {
             self.filter.pins.insert(line);
         }
+        self.filter.pins_revision += 1;
         self.rebuild_view(cx);
     }
 
@@ -204,6 +221,9 @@ impl Document {
         self.filter.term_hits.clear();
         self.filter.duration = Duration::ZERO;
         self.filter.progress = None;
+        self.filter.scanned = None;
+        self.filter.job_text = None;
+        self.filter.tail_base = None;
         let (Some(text), Some(filter)) = (self.text().cloned(), self.filter.compiled.clone()) else {
             self.filter.matches = Arc::new(Vec::new());
             self.rebuild_view(cx);
@@ -217,7 +237,7 @@ impl Document {
         self.filter.scans += 1;
         if text.bytes().len() as u64 <= EngineConfig::get(cx).sync_bytes {
             match run_filter(&text, &filter, DEFAULT_CHUNK_LINES, &CancelToken::new()) {
-                Ok(result) => self.finish_scan(result.matches, result.term_hits, result.duration, cx),
+                Ok(result) => self.finish_scan(result.matches, result.term_hits, result.duration, Some(text), cx),
                 Err(e) => {
                     self.filter.error = Some(e.to_string().into());
                     self.filter.matches = Arc::new(Vec::new());
@@ -227,6 +247,7 @@ impl Document {
         } else {
             self.filter.matches = Arc::new(Vec::new());
             self.filter.progress = Some(0.);
+            self.filter.job_text = Some(text.clone());
             self.filter.job = Some(FilterJob::spawn(text, filter, DEFAULT_CHUNK_LINES));
             self.rebuild_view(cx);
             self.ensure_polling(cx);
@@ -246,7 +267,9 @@ impl Document {
                     self.filter.partial.extend(matches);
                 }
                 Ok(FilterEvent::Progress { lines_done, total_lines }) => {
-                    self.filter.progress = Some(if total_lines == 0 { 1. } else { lines_done as f32 / total_lines as f32 });
+                    if self.filter.tail_base.is_none() {
+                        self.filter.progress = Some(if total_lines == 0 { 1. } else { lines_done as f32 / total_lines as f32 });
+                    }
                 }
                 Ok(FilterEvent::Finished { term_hits, duration, .. }) => {
                     finished = Some((term_hits, duration));
@@ -264,21 +287,33 @@ impl Document {
         if let Some((term_hits, duration)) = finished {
             // The worker has finished, so dropping the job joins at once.
             self.filter.job = None;
-            let matches = std::mem::take(&mut self.filter.partial);
-            self.finish_scan(matches, term_hits, duration, cx);
+            let text = self.filter.job_text.take();
+            let partial = std::mem::take(&mut self.filter.partial);
+            let (matches, hits, duration) = match self.filter.tail_base.take() {
+                Some(base) => {
+                    let (m, h) = base.merge(partial, &term_hits);
+                    (m, h, self.filter.duration)
+                }
+                None => (partial, term_hits, duration),
+            };
+            self.finish_scan(matches, hits, duration, text, cx);
             return false;
         }
         if died {
             if let Some(job) = self.filter.job.take() {
                 retire(job);
             }
+            self.filter.job_text = None;
+            self.filter.tail_base = None;
             self.filter.progress = None;
             self.filter.error = Some("Filtering stopped unexpectedly; showing partial results".into());
             self.filter.matches = Arc::new(std::mem::take(&mut self.filter.partial));
             self.rebuild_view(cx);
             return false;
         }
-        if publish_due(self.filter.dirty, self.filter.last_publish.map(|t| t.elapsed()), self.filter.last_rebuild) {
+        if self.filter.tail_base.is_none()
+            && publish_due(self.filter.dirty, self.filter.last_publish.map(|t| t.elapsed()), self.filter.last_rebuild)
+        {
             let started = Instant::now();
             self.filter.matches = Arc::new(self.filter.partial.clone());
             self.rebuild_view(cx);
@@ -291,14 +326,65 @@ impl Document {
         true
     }
 
-    fn finish_scan(&mut self, matches: Vec<u64>, term_hits: Vec<u64>, duration: Duration, cx: &mut Context<Self>) {
+    fn finish_scan(&mut self, matches: Vec<u64>, term_hits: Vec<u64>, duration: Duration, scanned: Option<Arc<LogText>>, cx: &mut Context<Self>) {
         self.filter.matches = Arc::new(matches);
         self.filter.term_hits = term_hits;
         self.filter.duration = duration;
         self.filter.progress = None;
         self.filter.last_publish = None;
         self.filter.dirty = false;
+        self.filter.scanned = scanned;
         self.rebuild_view(cx);
+        // Lines appended while the scan ran are scanned now (each appended line exactly once).
+        if self.grew_since_scan() {
+            self.scan_tail(cx);
+        }
+    }
+
+    /// Scans only the lines appended since the last finished scan (spec §4.5), re-scanning that text's unfinished last
+    /// line, and merges the result. Small appends are scanned here; large ones as a background tail job.
+    pub(super) fn scan_tail(&mut self, cx: &mut Context<Self>) {
+        let (Some(text), Some(filter)) = (self.text().cloned(), self.filter.compiled.clone()) else { return };
+        let Some(prev) = self.filter.scanned.clone() else {
+            self.start_filter(cx);
+            return;
+        };
+        if !filter.is_active() {
+            self.filter.scanned = Some(text);
+            self.rebuild_view(cx);
+            return;
+        }
+        let base = TailBase::new(&prev, &filter, &self.filter.matches, &self.filter.term_hits);
+        self.filter.tail_scans += 1;
+        if text.mapped_len().saturating_sub(prev.mapped_len()) <= EngineConfig::get(cx).sync_bytes {
+            match run_filter_lines(&text, &filter, base.from..text.line_count(), DEFAULT_CHUNK_LINES, &CancelToken::new()) {
+                Ok(result) => {
+                    let (matches, hits) = base.merge(result.matches, &result.term_hits);
+                    let duration = self.filter.duration;
+                    self.finish_scan(matches, hits, duration, Some(text), cx);
+                }
+                Err(e) => {
+                    self.filter.error = Some(e.to_string().into());
+                    cx.notify();
+                }
+            }
+        } else {
+            let from = base.from;
+            self.filter.partial.clear();
+            self.filter.dirty = false;
+            self.filter.tail_base = Some(base);
+            self.filter.job_text = Some(text.clone());
+            self.filter.job = Some(FilterJob::spawn_from(text, filter, from, DEFAULT_CHUNK_LINES));
+            self.ensure_polling(cx);
+        }
+    }
+
+    /// The text grew past what the last finished scan covered (more lines, or a longer unfinished last line).
+    fn grew_since_scan(&self) -> bool {
+        match (self.text(), &self.filter.scanned) {
+            (Some(text), Some(scanned)) => text.mapped_len() > scanned.mapped_len(),
+            _ => false,
+        }
     }
 
     /// Recomposes the filtered view and statistics from the current matches, pins and context. While a scan runs

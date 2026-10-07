@@ -3,6 +3,8 @@
 //! channels one task polls every `POLL_INTERVAL` (spec §3.3).
 
 mod filter;
+#[cfg(test)]
+mod follower_tests;
 mod load;
 mod search;
 
@@ -163,6 +165,8 @@ pub struct Document {
     inflated_len: Option<u64>,
     /// Watches the text's file for growth (live follow, a decompressing `.gz`).
     follower: Option<Follower>,
+    /// The text grows as data arrives (see `is_live`).
+    live: bool,
     polling: bool,
 }
 
@@ -211,6 +215,7 @@ impl Document {
             inflating: None,
             inflated_len: None,
             follower: None,
+            live: false,
             polling: false,
         };
         doc.start_load(cx);
@@ -240,6 +245,12 @@ impl Document {
     /// Bumped each time a text is loaded from scratch (open, retry, reload) — not when it grows.
     pub fn load_revision(&self) -> u64 {
         self.load_revision
+    }
+
+    /// Whether the text grows as data arrives: a stream, or a file seen growing (live follow, spec §4.5). A `.gz`
+    /// still decompressing is not live.
+    pub fn is_live(&self) -> bool {
+        self.live
     }
 
     /// The footer progress: a `.gz` decompressing, else a running background scan.
@@ -280,6 +291,7 @@ impl Document {
 
     fn start_load(&mut self, cx: &mut Context<Self>) {
         self.stop_jobs();
+        self.live = matches!(self.source, Source::Stream { .. });
         self.load = LoadState::Loading { fraction: 0., label: "Opening".into() };
         let cache = CacheStore::get(cx);
         match self.source.clone() {
@@ -360,11 +372,21 @@ impl Document {
 
     /// Drains every job channel once; returns whether any job is still running.
     fn poll_jobs(&mut self, cx: &mut Context<Self>) -> bool {
-        let active = self.poll_open(cx) | self.poll_inflate(cx) | self.poll_follow(cx) | self.poll_filter(cx) | self.poll_search(cx);
+        self.poll_open(cx);
+        self.poll_inflate(cx);
+        self.poll_follow(cx);
+        self.poll_filter(cx);
+        self.poll_search(cx);
+        // A job started inside a poll (a reload's open, a tail scan) counts too.
+        let active = self.has_jobs();
         if !active {
             self.polling = false;
         }
         active
+    }
+
+    fn has_jobs(&self) -> bool {
+        self.open_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.search_running()
     }
 
     fn poll_open(&mut self, cx: &mut Context<Self>) -> bool {
@@ -404,6 +426,10 @@ impl Document {
                 self.inflated_len = std::fs::metadata(inflating.dst()).ok().map(|m| m.len());
                 self.inflating = None;
                 cx.notify();
+                // Without a follower nobody delivers the rest of the file: load the complete entry.
+                if self.follower.is_none() {
+                    self.start_load(cx);
+                }
                 self.follower.is_some()
             }
             InflatePoll::Done(Err(e)) => {
@@ -419,22 +445,38 @@ impl Document {
     fn poll_follow(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(follower) = &self.follower else { return false };
         let mut grew = None;
+        let mut reload = false;
         let mut ended = false;
         loop {
             match follower.events().try_recv() {
                 Ok(FollowEvent::Grew(text)) => grew = Some(text),
-                Ok(FollowEvent::Truncated | FollowEvent::Replaced | FollowEvent::Failed(_)) | Err(TryRecvError::Disconnected) => {
+                Ok(FollowEvent::Truncated | FollowEvent::Replaced) => {
+                    reload = true;
+                    break;
+                }
+                Ok(FollowEvent::Failed(_)) | Err(TryRecvError::Disconnected) => {
                     ended = true;
                     break;
                 }
                 Err(TryRecvError::Empty) => break,
             }
         }
+        if reload {
+            self.reload(cx);
+            return true;
+        }
         if let Some(text) = grew {
             self.on_grew(text, cx);
         }
         if ended {
             self.stop_follower();
+            // A decompression that finished while the follower was still catching up leaves the text short.
+            if let (Some(len), Some(text)) = (self.inflated_len, self.text())
+                && text.mapped_len() < len
+            {
+                self.start_load(cx);
+                return true;
+            }
         }
         // A finished decompression needs no watching once the text has caught up with the complete file.
         if let (Some(len), Some(text)) = (self.inflated_len, self.text())
@@ -446,15 +488,29 @@ impl Document {
         self.follower.is_some()
     }
 
-    /// A grown snapshot of the text. Rescans for now; Task 11 scans only the appended lines.
+    /// A grown snapshot of the text: only the appended lines are scanned and counted (spec §4.5).
     fn on_grew(&mut self, text: Arc<LogText>, cx: &mut Context<Self>) {
         let added = text.line_count().saturating_sub(self.text().map_or(0, |t| t.line_count()));
+        if self.inflating.is_none() && self.inflated_len.is_none() {
+            self.live = true;
+        }
         self.load = LoadState::Ready(text);
         self.text_revision += 1;
-        self.start_filter(cx);
-        self.refresh_search(Pane::Full, cx);
+        // A running scan continues on its snapshot; when it finishes, it scans what was appended meanwhile.
+        if self.filter.job.is_none() {
+            self.scan_tail(cx);
+        }
+        self.grow_search(cx);
         cx.emit(DocumentEvent::Grew { lines: added });
         cx.notify();
+    }
+
+    /// Spec §4.5: a truncated or replaced file is re-read from scratch. Pins referred to the old content.
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        self.filter.pins.clear();
+        self.filter.pins_revision += 1;
+        cx.emit(DocumentEvent::Reloaded);
+        self.start_load(cx);
     }
 }
 
