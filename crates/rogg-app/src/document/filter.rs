@@ -134,6 +134,12 @@ pub(super) fn retire(job: FilterJob) {
 }
 
 impl Document {
+    /// The text is loaded and its filtered view is final: no full scan is publishing partial results and no view build
+    /// is in flight.
+    pub fn filter_settled(&self) -> bool {
+        self.text().is_some() && self.filter.stats.is_some() && self.filter.progress.is_none() && self.filter.view_job.is_none()
+    }
+
     /// Applies `spec`. Changed terms or flags rescan and record history; a context-only change rebuilds the view.
     /// An invalid spec is rejected: the previous filter and results stay and `filter.error` is set.
     pub fn apply_spec(&mut self, spec: FilterSpec, cx: &mut Context<Self>) -> Result<(), SharedString> {

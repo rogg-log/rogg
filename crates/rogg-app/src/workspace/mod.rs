@@ -72,6 +72,10 @@ pub struct Workspace {
     /// A dialog just closed: its input's focus handle outlives it until the frame is replaced, so check again after.
     refocus_after_dialog: bool,
     _appearance_subscription: Subscription,
+    /// The window's frame as last observed, for the session.
+    last_window: Option<rogg_core::session::WindowState>,
+    /// Frame changes and app quit (the session is saved on quit).
+    _session_subscriptions: Vec<Subscription>,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -116,6 +120,8 @@ impl Workspace {
             goto_subscription: None,
             dialog_subscription: None,
             refocus_after_dialog: false,
+            last_window: None,
+            _session_subscriptions: Vec::new(),
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
@@ -138,11 +144,126 @@ impl Workspace {
         for file in recovered {
             ws.toast(format!("Profile {file} was unreadable; the old file was kept as {file}.bak"), cx);
         }
+        ws._session_subscriptions = vec![
+            cx.observe_window_bounds(window, |ws, window, _| {
+                ws.last_window = Some(crate::session::window_state(window.window_bounds(), ws.sidebar_visible, ws.sidebar_width));
+            }),
+            cx.on_app_quit(|ws, cx| {
+                ws.save_session_now(cx);
+                async {}
+            }),
+        ];
+        // Closing the last window quits the app after the workspace is gone, too late for `on_app_quit`: save here.
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |ws, cx| ws.save_session_now(cx)).ok();
+            true
+        });
+        ws.last_window = Some(crate::session::window_state(window.window_bounds(), ws.sidebar_visible, ws.sidebar_width));
+        if !args.demo
+            && SettingsStore::get(cx).behavior.restore_session
+            && let Some(path) = cx.try_global::<crate::paths::AppPaths>().map(|p| p.session.clone())
+        {
+            match rogg_core::session::Session::load(&path) {
+                Ok((session, recovered)) => {
+                    if recovered {
+                        ws.toast("Session was unreadable and has been reset; the old file was kept as session.json.bak", cx);
+                    }
+                    ws.restore_session(session, window, cx);
+                }
+                Err(e) => ws.toast(format!("Could not restore the session: {e}"), cx),
+            }
+        }
+        ws.start_autosave(window, cx);
         ws.open_paths(args.paths, window, cx);
         if args.demo {
             crate::demo::open(&mut ws, window, cx);
         }
         ws
+    }
+
+    /// The window and its tabs (spec §6.4); with `all == false`, only the active tab (`.rogg` "this tab").
+    pub fn capture_session(&self, all: bool, cx: &App) -> rogg_core::session::Session {
+        let picked: Vec<&Entity<Tab>> = if all { self.tabs.iter().collect() } else { self.tabs.get(self.active).into_iter().collect() };
+        let mut active = 0;
+        let mut tabs = Vec::new();
+        for tab in picked {
+            if let Some(state) = crate::session::tab_state(tab.read(cx), cx) {
+                if all && self.tabs.get(self.active).is_some_and(|t| t.entity_id() == tab.entity_id()) {
+                    active = tabs.len();
+                }
+                tabs.push(state);
+            }
+        }
+        let window = self.last_window.clone().map(|mut w| {
+            w.sidebar_visible = self.sidebar_visible;
+            w.sidebar_width = Some(f32::from(self.sidebar_width));
+            w
+        });
+        rogg_core::session::Session { version: rogg_core::session::SESSION_VERSION, window, tabs, active }.sanitized()
+    }
+
+    /// Writes `session.json` (quit, every 30 s). The demo never overwrites the user's session.
+    pub fn save_session_now(&mut self, cx: &mut Context<Self>) {
+        if self.fixed_sidebar.is_some() {
+            return;
+        }
+        let Some(path) = cx.try_global::<crate::paths::AppPaths>().map(|p| p.session.clone()) else { return };
+        let _ = self.capture_session(true, cx).save(&path);
+    }
+
+    fn start_autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(crate::session::AUTOSAVE).await;
+                if this.update(cx, |ws, cx| ws.save_session_now(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Opens a stored session's tabs after the ones already open; returns how many were opened. Archive members put
+    /// their archive in the sidebar, as reopening from Recent does. A profile that no longer exists becomes Default.
+    pub fn restore_session(&mut self, session: rogg_core::session::Session, window: &mut Window, cx: &mut Context<Self>) -> usize {
+        if let Some(w) = &session.window {
+            self.sidebar_visible = w.sidebar_visible;
+            if let Some(width) = w.sidebar_width.filter(|v| v.is_finite()) {
+                self.drag_sidebar(px(width), cx);
+            }
+        }
+        let first = self.tabs.len();
+        let count = session.tabs.len();
+        for state in session.tabs {
+            if let rogg_core::session::SessionSource::Member { source } = &state.source {
+                self.show_archive_of(source, window, cx);
+            }
+            let (source, mut init) = crate::session::restore_tab(state);
+            let known = |name: &SharedString| cx.try_global::<crate::profiles::ProfileStore>().is_none_or(|s| s.contains(name));
+            if init.profile.as_ref().is_some_and(|p| !known(p)) {
+                init.profile = Some(rogg_core::profile::DEFAULT_PROFILE.into());
+            }
+            self.open_source(source, init, window, cx);
+        }
+        if count > 0 {
+            self.activate(first + session.active.min(count - 1), window, cx);
+        }
+        count
+    }
+
+    /// A `.rogg` file (spec §6.5): restores its tabs; a broken file is reported and left as it is. The window's frame
+    /// and sidebar stay as they are.
+    pub fn open_rogg(&mut self, path: &std::path::Path, window: &mut Window, cx: &mut Context<Self>) {
+        match rogg_core::session::Session::read_rogg(path) {
+            Ok(session) => {
+                self.restore_session(rogg_core::session::Session { window: None, ..session }, window, cx);
+            }
+            Err(e) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.toast(format!("Could not open {name}: {e}"), cx);
+            }
+        }
     }
 
     /// Rebuilds every tab's rows after a profile or the theme changed.

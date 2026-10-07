@@ -78,6 +78,10 @@ impl Workspace {
                 continue;
             }
             let path = path.canonicalize().unwrap_or(path);
+            if path.extension().is_some_and(|e| e == rogg_core::session::ROGG_EXT) {
+                self.open_rogg(&path, window, cx);
+                continue;
+            }
             match classify(&path) {
                 PathKind::Stream => self.open_fifo(path, window, cx),
                 PathKind::Folder => self.open_folder(path, window, cx),
@@ -217,6 +221,14 @@ impl Workspace {
         }
         self.start_listing(root, window, cx);
         cx.notify();
+    }
+
+    /// Puts the outermost archive of a restored member in the sidebar (listed, not opening its first member).
+    pub(crate) fn show_archive_of(&mut self, source: &SourceRef, window: &mut Window, cx: &mut Context<Self>) {
+        let root = source.root_path().to_path_buf();
+        if let PathKind::Archive(kind, size) = classify(&root) {
+            self.open_archive(root, kind, size, false, window, cx);
+        }
     }
 
     fn start_listing(&mut self, node: NodeId, window: &mut Window, cx: &mut Context<Self>) {

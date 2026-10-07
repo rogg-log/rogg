@@ -114,8 +114,18 @@ fn sanitize_source(source: &mut SessionSource) {
 
 impl Session {
     /// Values a hand-edited file may hold out of range are brought back in: the active index, context radii, splits.
+    /// A window frame with a non-finite value is dropped (JSON has no NaN: it would be written as `null` and make the
+    /// next load fail), and so is a non-finite sidebar width.
     pub fn sanitized(mut self) -> Self {
         self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        if self.window.as_ref().is_some_and(|w| ![w.x, w.y, w.width, w.height].iter().all(|v| v.is_finite())) {
+            self.window = None;
+        }
+        if let Some(w) = &mut self.window
+            && w.sidebar_width.is_some_and(|v| !v.is_finite())
+        {
+            w.sidebar_width = None;
+        }
         for tab in &mut self.tabs {
             sanitize_filter(&mut tab.filter);
             sanitize_source(&mut tab.source);
@@ -208,6 +218,19 @@ mod tests {
         assert!((0.05..=0.95).contains(&loaded.tabs[0].split));
         let empty = Session { active: 3, ..Session::default() }.sanitized();
         assert_eq!(empty.active, 0);
+    }
+
+    #[test]
+    fn non_finite_values_are_sanitized_away() {
+        let mut s = sample();
+        s.tabs[0].split = f32::NAN;
+        s.window.as_mut().unwrap().sidebar_width = Some(f32::INFINITY);
+        let clean = s.clone().sanitized();
+        assert!((clean.tabs[0].split - DEFAULT_SPLIT).abs() < 1e-6);
+        assert_eq!(clean.window.as_ref().unwrap().sidebar_width, None);
+        assert_eq!(clean.window.as_ref().unwrap().width, 1440.);
+        s.window.as_mut().unwrap().x = f32::NAN;
+        assert_eq!(s.sanitized().window, None, "a frame with a non-finite value is not kept");
     }
 
     #[test]

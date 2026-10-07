@@ -289,6 +289,25 @@ fn set_rows_keeps_the_top_line_in_place(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn top_number_is_the_first_line_in_view(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let empty = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(Vec::new()))));
+    assert_eq!(empty.read_with(cx, |s, _| s.top_number()), None);
+    // Row 2 is a gap; the line after it is 1002.
+    let state = cx.new(|_| LogViewState::new(rows(1000, Some(2))));
+    let w = open(cx, state.clone());
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| s.top_number()), Some(1000));
+    state.update(cx, |s, cx| s.scroll_to_row(2, ScrollTo::Top, cx));
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| s.top_number()), Some(1002), "a gap row at the top is skipped");
+    state.update(cx, |s, cx| s.scroll_to_row(501, ScrollTo::Top, cx));
+    assert_eq!(state.read_with(cx, |s, _| s.top_number()), Some(1500), "a requested top counts before the next layout");
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| s.top_number()), Some(1500));
+}
+
+#[gpui_kit::test]
 fn range_selection_copies_lines_with_and_without_numbers(cx: &mut TestAppContext) {
     common::setup(cx);
     // rows: 1000..1004, gap, 1005..1009

@@ -171,6 +171,16 @@ impl LogViewState {
         &self.rows
     }
 
+    /// Display number of the first line in view (skipping a gap row at the top); None when there are no rows. A
+    /// requested top row (`ScrollTo::Top`) counts before the layout that applies it.
+    pub fn top_number(&self) -> Option<u64> {
+        let top = match self.pending_scroll {
+            Some((row, ScrollTo::Top)) => row,
+            _ => self.anchor.row,
+        };
+        (0..3).find_map(|k| self.rows.number_at(top + k))
+    }
+
     /// Replaces the rows, keeping the line at the top of the viewport in place (a list scrolled to its top
     /// stays at its top), so filter changes don't make the view jump.
     pub fn set_rows(&mut self, rows: Rc<dyn LogRowSource>, cx: &mut Context<Self>) {

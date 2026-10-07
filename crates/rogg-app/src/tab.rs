@@ -310,6 +310,16 @@ impl Tab {
         self.selection
     }
 
+    /// The selection a session stores: a restored one not applied yet (the text is still loading or failed) counts.
+    pub fn session_selection(&self) -> Option<u64> {
+        self.pending_selection.or(self.selection)
+    }
+
+    /// The top line of each pane a session stores: a restored one not applied yet counts.
+    pub fn session_top(&self, cx: &App) -> [Option<u64>; 2] {
+        [Pane::Full, Pane::Filtered].map(|pane| self.pending_top[pane.index()].or_else(|| self.state(pane).read(cx).top_number()))
+    }
+
     /// The display number the user last selected in either pane (shown as `Line N`); none for an initial selection.
     pub fn announced_selection(&self) -> Option<u64> {
         self.selection.filter(|_| self.selection_announced)
@@ -355,12 +365,16 @@ impl Tab {
                 self.filtered.update(cx, |s, cx| s.set_selected(Some(number), cx));
             }
         }
-        if loaded {
-            for (pane, top) in [Pane::Full, Pane::Filtered].into_iter().zip(std::mem::take(&mut self.pending_top)) {
-                let state = self.state(pane).clone();
-                if let Some(row) = top.and_then(|n| state.read(cx).rows().nearest_row(n)) {
-                    state.update(cx, |s, cx| s.scroll_to_row(row, ScrollTo::Top, cx));
-                }
+        // A restored top line: the full log's rows are complete once the text loads; the filtered log's only once its
+        // filter has settled (a background scan may still be running at load, with no rows yet).
+        let ready = [loaded, self.doc.read(cx).filter_settled()];
+        for (pane, ready) in [Pane::Full, Pane::Filtered].into_iter().zip(ready) {
+            if !ready {
+                continue;
+            }
+            let state = self.state(pane).clone();
+            if let Some(row) = self.pending_top[pane.index()].take().and_then(|n| state.read(cx).rows().nearest_row(n)) {
+                state.update(cx, |s, cx| s.scroll_to_row(row, ScrollTo::Top, cx));
             }
         }
         if loaded && let Some(number) = self.pending_selection.take() {
