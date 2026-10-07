@@ -86,9 +86,10 @@ impl ScrollGeometry<'_> {
         self.clamp(self.normalize(ScrollAnchor { row, offset: -(self.viewport - h) / 2. }))
     }
 
-    /// Anchor with `row` at the top of the viewport (clamped at the end of the content).
+    /// Anchor with `row` at the top of the viewport (clamped at the end of the content). Row 0 keeps the list's
+    /// top padding, like `top()`.
     pub fn row_top(&self, row: usize) -> ScrollAnchor {
-        if self.row_count == 0 {
+        if self.row_count == 0 || row == 0 {
             return self.top();
         }
         self.clamp(ScrollAnchor { row: row.min(self.row_count - 1), offset: 0. })
@@ -267,6 +268,17 @@ mod tests {
         let g = geo(1000, 230., &h);
         assert_eq!(g.row_top(40), ScrollAnchor { row: 40, offset: 0. });
         assert_eq!(g.row_top(999), g.bottom());
+        assert_eq!(g.row_top(0), g.top(), "the first row keeps the top padding");
+    }
+
+    #[test]
+    fn ensure_visible_row_zero_returns_to_the_padded_top() {
+        let h = |_| 23.;
+        let g = geo(1000, 230., &h);
+        let scrolled = ScrollAnchor { row: 300, offset: 7. };
+        assert_eq!(g.ensure_visible(scrolled, 0), g.top());
+        let slightly = ScrollAnchor { row: 0, offset: 5. };
+        assert_eq!(g.ensure_visible(slightly, 0), g.top());
     }
 
     #[test]
