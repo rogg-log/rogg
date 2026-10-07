@@ -4,7 +4,7 @@ use rogg_app::args::Args;
 use rogg_app::cache::CacheStore;
 use rogg_app::settings::SettingsStore;
 use rogg_core::settings::{DensitySetting, ThemeSetting};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density};
 
 #[gpui_kit::test]
 fn appearance_settings_apply_live_and_persist(cx: &mut TestAppContext) {
@@ -103,4 +103,17 @@ fn unreadable_settings_toast_and_reset(cx: &mut TestAppContext) {
     let (_w, ws) = common::open_workspace(cx, Args::default());
     ws.read_with(cx, |ws, _| assert!(ws.toasts.iter().any(|(_, t)| t.contains("settings.toml.bak")), "{:?}", ws.toasts));
     assert!(dir.path().join("settings.toml.bak").exists());
+}
+
+#[gpui_kit::test]
+fn a_pinned_theme_keeps_its_density_and_is_never_saved(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.pin_theme(ThemeSetting::Dark, DensitySetting::Comfortable, window, cx))).unwrap();
+    cx.update(|cx| {
+        assert_eq!(cx.rogg().appearance, Appearance::Dark);
+        assert_eq!(cx.rogg().density, Density::Comfortable);
+        assert_eq!(SettingsStore::get(cx).appearance.density, DensitySetting::Compact, "the settings are untouched");
+    });
+    assert!(!dir.path().join("settings.toml").exists(), "a pin never writes the settings");
 }

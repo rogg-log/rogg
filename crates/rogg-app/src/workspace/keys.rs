@@ -103,12 +103,13 @@ impl Workspace {
     }
 
     pub fn set_density(&mut self, density: DensitySetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_override = None;
         self.change_settings(|s| s.appearance.density = density, window, cx);
     }
 
-    /// Pins light or dark without saving it (the gallery owns its theme).
-    pub fn pin_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
-        self.theme_override = Some(theme);
+    /// Pins light or dark and a density without saving them (the gallery owns its theme).
+    pub fn pin_theme(&mut self, theme: ThemeSetting, density: DensitySetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_override = Some((theme, density));
         self.apply_appearance(window, cx);
     }
 
@@ -126,8 +127,9 @@ impl Workspace {
 
     /// Installs the theme for the settings (or the pinned theme) under the window's appearance.
     pub fn apply_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let theme = self.theme_override.unwrap_or(SettingsStore::get(cx).appearance.theme);
-        crate::settings::apply_theme(theme, window.appearance(), cx);
+        let appearance = SettingsStore::get(cx).appearance;
+        let (theme, density) = self.theme_override.unwrap_or((appearance.theme, appearance.density));
+        crate::settings::apply_theme(theme, density, window.appearance(), cx);
         cx.notify();
     }
 }

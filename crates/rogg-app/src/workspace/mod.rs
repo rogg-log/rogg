@@ -21,7 +21,7 @@ use rogg_ui::dialogs::{self, ModalLayer};
 use rogg_ui::empty;
 use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, SidebarDrag, SingleParts};
 use crate::settings::SettingsStore;
-use rogg_core::settings::ThemeSetting;
+use rogg_core::settings::{DensitySetting, ThemeSetting};
 use rogg_ui::theme::size;
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
@@ -60,8 +60,8 @@ pub struct Workspace {
     pub(crate) streams: Vec<(SharedString, rogg_core::stream::StreamCapture)>,
     streams_polling: bool,
     stdin_opened: bool,
-    /// A theme pinned by the host (the gallery), not saved in the settings.
-    pub(crate) theme_override: Option<ThemeSetting>,
+    /// A theme and density pinned by the host (the gallery), not saved in the settings.
+    pub(crate) theme_override: Option<(ThemeSetting, DensitySetting)>,
     goto_subscription: Option<Subscription>,
     /// A dialog just closed: its input's focus handle outlives it until the frame is replaced, so check again after.
     refocus_after_dialog: bool,
@@ -110,7 +110,7 @@ impl Workspace {
             goto_subscription: None,
             refocus_after_dialog: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
-                if ws.theme_override.unwrap_or(SettingsStore::get(cx).appearance.theme) == ThemeSetting::System {
+                if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
                 }
             }),

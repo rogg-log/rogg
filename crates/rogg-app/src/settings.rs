@@ -82,22 +82,23 @@ pub fn available_log_fonts(cx: &App) -> Vec<String> {
     LOG_FONTS.iter().filter(|f| **f == DEFAULT_LOG_FONT || installed.iter().any(|n| n == *f)).map(|f| f.to_string()).collect()
 }
 
-/// The theme for `settings`, with `theme` choosing light or dark (the settings' choice, or a pinned one).
-pub fn theme_with(settings: &Settings, theme: ThemeSetting, window: WindowAppearance) -> RoggTheme {
+/// The theme for `settings`, with `theme` choosing light or dark and `density` the row density (the settings' choices,
+/// or a pinned pair).
+pub fn theme_with(settings: &Settings, theme: ThemeSetting, density: DensitySetting, window: WindowAppearance) -> RoggTheme {
     let a = &settings.appearance;
-    RoggTheme::new(appearance_for(theme, window), density_for(a.density))
+    RoggTheme::new(appearance_for(theme, window), density_for(density))
         .with_log_font(log_font_family(&a.log_font), a.log_font_size as f32)
         .with_ui_font_size(a.ui_font_size as f32)
 }
 
 pub fn theme_for(settings: &Settings, window: WindowAppearance) -> RoggTheme {
-    theme_with(settings, settings.appearance.theme, window)
+    theme_with(settings, settings.appearance.theme, settings.appearance.density, window)
 }
 
-/// Installs the theme for the current settings (with `theme` deciding light or dark) unless it is already active;
-/// returns whether it changed.
-pub fn apply_theme(theme: ThemeSetting, window: WindowAppearance, cx: &mut App) -> bool {
-    let next = theme_with(&SettingsStore::get(cx), theme, window);
+/// Installs the theme for the current settings (with `theme` deciding light or dark and `density` the density) unless
+/// it is already active; returns whether it changed.
+pub fn apply_theme(theme: ThemeSetting, density: DensitySetting, window: WindowAppearance, cx: &mut App) -> bool {
+    let next = theme_with(&SettingsStore::get(cx), theme, density, window);
     if cx.try_global::<RoggTheme>() == Some(&next) {
         return false;
     }
