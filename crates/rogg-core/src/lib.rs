@@ -19,6 +19,7 @@ pub mod recent;
 pub mod search;
 pub mod source;
 pub mod stats;
+pub mod stream;
 pub mod text;
 pub mod tree;
 pub mod view;
