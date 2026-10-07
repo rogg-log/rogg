@@ -5,6 +5,7 @@ use crate::error::CoreError;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Encoding {
@@ -104,14 +105,19 @@ pub fn status_label(encoding: Encoding, endings: LineEndings) -> String {
     format!("{} · {}", encoding.label(), endings.label())
 }
 
-pub(crate) fn partial_path(dst: &Path) -> PathBuf {
+/// A partial-file path unique to this writer (`<dst>.<pid>.<n>.partial`), so concurrent transcodes of
+/// the same file never share or delete each other's partial output.
+fn unique_partial_path(dst: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut name = dst.as_os_str().to_owned();
-    name.push(".partial");
+    name.push(format!(".{}.{}.partial", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed)));
     PathBuf::from(name)
 }
 
-/// Streams a UTF-16 file (BOM included) into UTF-8 at `dst`. Output goes to `<dst>.partial` and is renamed
-/// on success, so cancellation or a crash never leaves a truncated `dst` (spec §4.2 atomic writes).
+/// Streams a UTF-16 file (BOM included) into UTF-8 at `dst`. Output goes to a writer-unique
+/// `<dst>.<pid>.<n>.partial` and is renamed on success, so cancellation or a crash never leaves a truncated
+/// `dst` (spec §4.2 atomic writes). Concurrent calls for the same `dst` are safe: each renames its own
+/// complete output over `dst`.
 pub fn transcode_to_utf8(
     src: &Path,
     dst: &Path,
@@ -120,7 +126,7 @@ pub fn transcode_to_utf8(
     mut on_progress: impl FnMut(u64, u64),
 ) -> Result<(), CoreError> {
     let mut decoder = encoding.decoder().expect("transcode_to_utf8 requires a UTF-16 encoding");
-    let partial = partial_path(dst);
+    let partial = unique_partial_path(dst);
     let result = (|| -> Result<(), CoreError> {
         if cancel.is_cancelled() {
             return Err(CoreError::Cancelled);
@@ -178,6 +184,15 @@ mod tests {
         out
     }
 
+    fn assert_no_partials(dir: &Path) {
+        let leftovers: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".partial"))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover partial files: {leftovers:?}");
+    }
+
     #[test]
     fn detects_boms() {
         assert_eq!(Encoding::detect(b"\xEF\xBB\xBFabc"), Encoding::Utf8Bom);
@@ -219,7 +234,7 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&dst).unwrap(), "héllo\r\nwörld ✓\n");
             let total = std::fs::metadata(&src).unwrap().len();
             assert_eq!(last, (total, total));
-            assert!(!partial_path(&dst).exists());
+            assert_no_partials(dir.path());
         }
     }
 
@@ -245,7 +260,7 @@ mod tests {
         cancel.cancel();
         assert!(matches!(transcode_to_utf8(&src, &dst, Encoding::Utf16Le, &cancel, |_, _| {}), Err(CoreError::Cancelled)));
         assert!(!dst.exists());
-        assert!(!partial_path(&dst).exists());
+        assert_no_partials(dir.path());
     }
 
     #[test]
@@ -303,7 +318,7 @@ mod tests {
         let result = transcode_to_utf8(&src0, &dst0, Encoding::Utf16Le, &CancelToken::new(), |_, _| {});
         assert!(matches!(result, Err(CoreError::Io { .. })), "Expected Io error for 0-byte file");
         assert!(!dst0.exists(), "Destination should not exist after error");
-        assert!(!partial_path(&dst0).exists(), "Partial file should not exist after error");
+        assert_no_partials(dir.path());
 
         // Test with 1 byte
         let src1 = dir.path().join("one.log");
@@ -313,6 +328,27 @@ mod tests {
         let result = transcode_to_utf8(&src1, &dst1, Encoding::Utf16Le, &CancelToken::new(), |_, _| {});
         assert!(matches!(result, Err(CoreError::Io { .. })), "Expected Io error for 1-byte file");
         assert!(!dst1.exists(), "Destination should not exist after error");
-        assert!(!partial_path(&dst1).exists(), "Partial file should not exist after error");
+        assert_no_partials(dir.path());
+    }
+
+    #[test]
+    fn concurrent_transcodes_of_the_same_file_both_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("race.log");
+        let text = "line é ✓\r\n".repeat(50_000);
+        std::fs::write(&src, utf16(&text, true)).unwrap();
+        for round in 0..20 {
+            let dst = dir.path().join(format!("race{round}.utf8"));
+            std::thread::scope(|s| {
+                let handles: Vec<_> = (0..2)
+                    .map(|_| s.spawn(|| transcode_to_utf8(&src, &dst, Encoding::Utf16Le, &CancelToken::new(), |_, _| {})))
+                    .collect();
+                for h in handles {
+                    h.join().unwrap().unwrap();
+                }
+            });
+            assert_eq!(std::fs::read_to_string(&dst).unwrap(), text);
+        }
+        assert_no_partials(dir.path());
     }
 }
