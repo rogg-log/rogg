@@ -491,6 +491,54 @@ fn right_click_outside_any_line_clears_the_context_target(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn right_click_outside_the_panel_leaves_focus_and_target_alone(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, MouseButton, MouseDownEvent, MouseMoveEvent, div};
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None)));
+    let focus = cx.update(|cx| cx.focus_handle());
+    let (s, f) = (state.clone(), focus.clone());
+    // A 120 px log panel above a sibling that fills the rest of the 238 px window.
+    let w = common::open(cx, 800., 238., move |_, _| {
+        div()
+            .size_full()
+            .child(div().h(px(120.)).child(LogView::new("log-test", s.clone()).focus(f.clone())))
+            .child(div().id("sibling").h(px(118.)))
+            .into_any_element()
+    });
+    let right_click_at = |cx: &mut TestAppContext, position| {
+        cx.update_window(w, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.dispatch_event(MouseMoveEvent { position, pressed_button: None, modifiers: Default::default() }.to_platform_input(), cx);
+            window.render_frame(cx);
+            let down = MouseDownEvent { button: MouseButton::Right, position, modifiers: Default::default(), click_count: 1, first_mouse: false };
+            window.dispatch_event(down.to_platform_input(), cx);
+        })
+        .unwrap();
+    };
+    right_click_at(cx, point(px(300.), px(4. + 23. + 10.)));
+    let target = state.read_with(cx, |s, _| s.context_target().cloned());
+    assert_eq!(target.as_ref().map(|t| t.number), Some(1001));
+    // Close the menu the right-click opened, focus something else (as the rest of the app would), then
+    // right-click the sibling.
+    let other = cx.update(|cx| cx.focus_handle());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.press("escape", cx);
+        other.focus(window, cx);
+        assert!(other.is_focused(window) && !focus.is_focused(window));
+    })
+    .unwrap();
+    right_click_at(cx, point(px(300.), px(200.)));
+    assert_eq!(state.read_with(cx, |s, _| s.context_target().cloned()), target, "the target is untouched");
+    cx.update_window(w, |_, window, _| {
+        assert!(other.is_focused(window), "focus stays where it was");
+        assert!(!focus.is_focused(window), "the panel did not steal focus");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn right_click_selects_and_records_the_context_target(cx: &mut TestAppContext) {
     common::setup(cx);
     let state = cx.new(|_| LogViewState::new(rows(20, None)));

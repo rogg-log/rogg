@@ -755,8 +755,10 @@ impl Element for LogViewElement {
         let (font_size, wrap_width, text_color, text_left) = (m.log_font_size, pre.wrap_width, p.log_text, pre.text_left);
         let state = self.state.clone();
         let focus = self.focus.clone();
+        let panel = pre.hitbox.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-            if phase != DispatchPhase::Capture || e.button != MouseButton::Right {
+            // Mouse events reach every element in the window: only act on right-clicks inside the panel.
+            if phase != DispatchPhase::Capture || e.button != MouseButton::Right || !panel.is_hovered(window) {
                 return;
             }
             if let Some(f) = &focus {
