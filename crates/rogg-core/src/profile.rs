@@ -288,13 +288,19 @@ pub fn file_name(name: &str) -> String {
     format!("{}.toml", if stem.trim().is_empty() { "profile" } else { stem.as_str() })
 }
 
-/// `name`, or `name 2`, `name 3`… — the first one not in `taken`.
+/// Whether two profile names would share a file on a case-insensitive disk.
+pub fn names_collide(a: &str, b: &str) -> bool {
+    file_name(a).to_lowercase() == file_name(b).to_lowercase()
+}
+
+/// `name`, or `name 2`, `name 3`… — the first one that collides with none of `taken`.
 pub fn unique_name(name: &str, taken: &[String]) -> String {
     let name = if name.trim().is_empty() { "Profile" } else { name.trim() };
-    if !taken.iter().any(|t| t == name) {
+    let free = |candidate: &str| !taken.iter().any(|t| names_collide(t, candidate));
+    if free(name) {
         return name.to_string();
     }
-    (2..).map(|n| format!("{name} {n}")).find(|candidate| !taken.contains(candidate)).unwrap_or_default()
+    (2..).map(|n| format!("{name} {n}")).find(|candidate| free(candidate)).unwrap_or_default()
 }
 
 pub struct ProfilesLoad {
@@ -504,5 +510,13 @@ mod tests {
         assert_eq!(unique_name("New", &taken), "New");
         assert_eq!(file_name("a/b: c"), "a_b_ c.toml");
         delete(dir.path(), "nothing here").unwrap();
+    }
+
+    #[test]
+    fn names_that_share_a_file_are_not_unique() {
+        assert_eq!(unique_name("services", &["Services".into()]), "services 2");
+        assert_eq!(unique_name("a:b", &["a/b".into()]), "a:b 2");
+        assert!(names_collide("Ops", "ops"));
+        assert!(!names_collide("Ops", "Ops2"));
     }
 }
