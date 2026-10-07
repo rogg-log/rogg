@@ -5,7 +5,7 @@ use crate::document::{Document, DocumentEvent, DocumentInit, Pane, Source};
 use crate::profiles::{ProfileStore, RowStyler};
 use crate::settings::SettingsStore;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
+use gpui_kit::{App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
 use rogg_ui::controls::FindField;
 use rogg_ui::layout::MainWindowParts;
 use rogg_ui::logview::{LogRowSource, LogViewEvent, LogViewState, ScrollTo, VecRows};
@@ -40,11 +40,23 @@ pub struct TabInit {
     pub top: [Option<u64>; 2],
     /// The tab's highlighting profile; None takes the settings' default profile.
     pub profile: Option<SharedString>,
+    /// A derived tab's parent tabs, one per breadcrumb segment before its own (None where no tab is behind it).
+    pub crumb_tabs: Vec<Option<EntityId>>,
 }
 
 impl Default for TabInit {
     fn default() -> Self {
-        Self { doc: DocumentInit::default(), selection: None, labels: TabLabels::default(), wrap: [false, false], follow: true, split: None, top: [None, None], profile: None }
+        Self {
+            doc: DocumentInit::default(),
+            selection: None,
+            labels: TabLabels::default(),
+            wrap: [false, false],
+            follow: true,
+            split: None,
+            top: [None, None],
+            profile: None,
+            crumb_tabs: Vec::new(),
+        }
     }
 }
 
@@ -64,6 +76,10 @@ pub enum TabEvent {
     ShowProfiles,
     /// The footer's statistics area: open the statistics popover.
     ShowStatistics,
+    /// A breadcrumb segment was clicked: focus the tab behind it.
+    FocusCrumb(usize),
+    /// The filtered pane's "Open as tab" button.
+    OpenAsTab,
 }
 
 /// Spec §4.5 reload toast.
@@ -108,6 +124,9 @@ pub struct Tab {
     pub last_pane: Pane,
     /// The tab's highlighting profile (spec §6.1: each tab has one).
     pub profile: SharedString,
+    /// The tabs behind each breadcrumb segment except the last (a derived tab's parents).
+    pub crumb_tabs: Vec<Option<EntityId>>,
+    self_id: EntityId,
     styler: Option<Arc<RowStyler>>,
     /// What `styler` was built from: the profile store's revision, the theme and the profile name.
     style_key: Option<(u64, Appearance, SharedString)>,
@@ -155,6 +174,8 @@ impl Tab {
             labels: init.labels,
             last_pane: Pane::Full,
             profile: init.profile.unwrap_or_else(|| SettingsStore::get(cx).behavior.default_profile.into()),
+            crumb_tabs: init.crumb_tabs,
+            self_id: cx.entity_id(),
             styler: None,
             style_key: None,
             style_revision: 0,
@@ -257,6 +278,23 @@ impl Tab {
 
     pub fn title(&self, cx: &App) -> SharedString {
         self.doc.read(cx).title()
+    }
+
+    /// The info-bar breadcrumb: the demo's label when set, else the document's.
+    pub fn crumbs(&self, cx: &App) -> Vec<SharedString> {
+        self.labels.crumbs.clone().unwrap_or_else(|| self.doc.read(cx).source.crumbs())
+    }
+
+    /// The tab behind breadcrumb segment `i`: this tab for the last segment, the parent tabs of a derived tab before it.
+    pub fn crumb_tab(&self, i: usize, cx: &App) -> Option<EntityId> {
+        let last = self.crumbs(cx).len().saturating_sub(1);
+        if i == last { Some(self.self_id) } else { self.crumb_tabs.get(i).copied().flatten() }
+    }
+
+    /// Breadcrumb tabs for a tab derived from this one: one entry per segment of this tab's breadcrumb.
+    pub fn crumb_tabs_for_child(&self, cx: &App) -> Vec<Option<EntityId>> {
+        let n = self.crumbs(cx).len();
+        (0..n).map(|i| self.crumb_tab(i, cx)).collect()
     }
 
     pub fn state(&self, pane: Pane) -> &Entity<LogViewState> {

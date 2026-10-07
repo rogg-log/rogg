@@ -2,7 +2,7 @@
 //! placeholder (spec §5.3, §5.7).
 
 use crate::actions::FILTER_CONTEXT;
-use crate::document::{LoadState, Pane};
+use crate::document::{LoadState, Pane, Source};
 use crate::tab::{Tab, TabEvent};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Context, Entity, SharedString, Window, div};
@@ -84,8 +84,13 @@ fn stat_parts(stats: &FilterStats) -> Vec<StatPart> {
 pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
     let t = tab.read(cx);
     let d = t.doc.read(cx);
-    let crumbs = t.labels.crumbs.clone().unwrap_or_else(|| d.source.crumbs());
-    let info_bar = InfoBar::new(crumbs, t.labels.profile.clone().unwrap_or_else(|| t.profile.clone()))
+    let snapshot = match &d.source {
+        Source::Derived(s) => s.snapshot.as_ref().map(|hms| SharedString::from(format!("Snapshot · {hms}"))),
+        _ => None,
+    };
+    let info_bar = InfoBar::new(t.crumbs(cx), t.labels.profile.clone().unwrap_or_else(|| t.profile.clone()))
+        .snapshot(snapshot)
+        .on_crumb(tab_act_ix(tab, |_, i, _, cx| cx.emit(TabEvent::FocusCrumb(i))))
         .on_profile(tab_act(tab, |_, _, cx| cx.emit(TabEvent::ShowProfiles)))
         .on_export(later(tab, "Export arrives in a later version"))
         .into_any_element();
@@ -125,7 +130,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                 .into_any_element();
             let bottom_header = PaneHeader::new("pane-bottom-head", "Filtered log", format!("{} shown", group_digits(shown)))
                 .find(FindField::new("find-bottom", t.find[1].clone()).count(d.search(Pane::Filtered).label()))
-                .tool(ToolButton::new("tool-open-tab", IconName::OpenTab, "Open as tab").on_click(later(tab, "Open as tab arrives in a later version")))
+                .tool(ToolButton::new("tool-open-tab", IconName::OpenTab, "Open as tab").on_click(tab_act(tab, |_, _, cx| cx.emit(TabEvent::OpenAsTab))))
                 .tool(ToolButton::new("tool-follow", IconName::Follow, "Follow selection").pressed(t.follow).on_click(tab_act(tab, |t, _, cx| t.toggle_follow(cx))))
                 .tool(
                     ToolButton::new("tool-wrap-bottom", IconName::Wrap, "Wrap")

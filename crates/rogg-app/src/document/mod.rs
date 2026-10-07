@@ -67,6 +67,8 @@ pub enum Source {
     Stream { name: SharedString, path: PathBuf },
     /// In-memory text (the demo and tests); `name` is the tab title.
     Memory { name: SharedString, bytes: Arc<Vec<u8>> },
+    /// Another tab's filtered rows frozen into a text of their own (spec §4.9).
+    Derived(Arc<crate::derived::DerivedSource>),
 }
 
 impl Source {
@@ -75,6 +77,7 @@ impl Source {
             Source::File(path) => SourceRef::File(path.clone()).name().into(),
             Source::Member(source) => source.name().into(),
             Source::Stream { name, .. } | Source::Memory { name, .. } => name.clone(),
+            Source::Derived(d) => d.title.clone(),
         }
     }
 
@@ -97,6 +100,9 @@ impl Source {
 
     /// The info-bar breadcrumb (`incident.zip › logs › api.log`).
     pub fn crumbs(&self) -> Vec<SharedString> {
+        if let Source::Derived(d) = self {
+            return d.crumbs.clone();
+        }
         match self.source_ref() {
             Some(source) => source.crumbs().into_iter().map(SharedString::from).collect(),
             None => vec![self.title()],
@@ -105,6 +111,9 @@ impl Source {
 
     /// The tab tooltip: a file's path, `api.log · incident.zip` for a member.
     pub fn tooltip(&self) -> SharedString {
+        if let Source::Derived(d) = self {
+            return d.tooltip.clone();
+        }
         self.source_ref().map(|s| SharedString::from(s.tooltip())).unwrap_or_else(|| self.title())
     }
 
@@ -115,6 +124,7 @@ impl Source {
             Source::Member(source) => source.crumbs().join(" › ").into(),
             Source::Stream { name, .. } => name.clone(),
             Source::Memory { .. } => SharedString::default(),
+            Source::Derived(d) => d.title.clone(),
         }
     }
 }
@@ -160,6 +170,10 @@ pub struct Document {
     text_revision: u64,
     load_revision: u64,
     open_job: Option<OpenJob>,
+    /// Builds a derived tab's copy (spec §4.9).
+    derived_job: Option<crate::derived::DerivedJob>,
+    /// A derived tab's copy in the cache; deleted when the document drops.
+    derived_file: Option<PathBuf>,
     /// Cache entries the text reads (spec §4.2: never evicted while open).
     leases: Vec<CacheLease>,
     /// A `.gz` still decompressing into the text's file.
@@ -214,6 +228,8 @@ impl Document {
             text_revision: 0,
             load_revision: 0,
             open_job: None,
+            derived_job: None,
+            derived_file: None,
             leases: Vec::new(),
             inflating: None,
             inflated_len: None,
@@ -227,6 +243,11 @@ impl Document {
 
     pub fn title(&self) -> SharedString {
         self.source.title()
+    }
+
+    /// A derived tab's copy of its lines (deleted when the document drops).
+    pub fn derived_file(&self) -> Option<&Path> {
+        self.derived_file.as_deref()
     }
 
     pub fn number_base(&self) -> u64 {
@@ -276,11 +297,16 @@ impl Document {
             job.cancel();
             self.load = LoadState::Failed { message: "Opening cancelled".into() };
             cx.notify();
+        } else if self.derived_job.take().is_some() {
+            // Dropping the job cancels it.
+            self.load = LoadState::Failed { message: "Opening cancelled".into() };
+            cx.notify();
         }
     }
 
     fn stop_jobs(&mut self) {
         self.open_job = None;
+        self.derived_job = None;
         self.stop_follower();
         self.inflating = None;
         self.inflated_len = None;
@@ -311,6 +337,12 @@ impl Document {
                 Ok(_) => self.spawn_open(SourceRef::File(path), cx),
             },
             Source::Member(source) => self.spawn_open(source, cx),
+            Source::Derived(source) => {
+                self.derived_job = Some(crate::derived::DerivedJob::spawn(source, CacheStore::get(cx)));
+                self.load = LoadState::Loading { fraction: 0., label: "Building tab".into() };
+                cx.notify();
+                self.ensure_polling(cx);
+            }
         }
     }
 
@@ -378,6 +410,7 @@ impl Document {
     /// Drains every job channel once; returns whether any job is still running.
     fn poll_jobs(&mut self, cx: &mut Context<Self>) -> bool {
         self.poll_open(cx);
+        self.poll_derived(cx);
         self.poll_inflate(cx);
         self.poll_follow(cx);
         self.poll_filter(cx);
@@ -392,7 +425,7 @@ impl Document {
     }
 
     fn has_jobs(&self) -> bool {
-        self.open_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.filter.view_job.is_some() || self.search_running()
+        self.open_job.is_some() || self.derived_job.is_some() || self.inflating.is_some() || self.follower.is_some() || self.filter.job.is_some() || self.filter.view_job.is_some() || self.search_running()
     }
 
     fn poll_open(&mut self, cx: &mut Context<Self>) -> bool {
@@ -414,6 +447,35 @@ impl Document {
                 self.load = LoadState::Failed { message: "Opening stopped unexpectedly".into() };
                 cx.notify();
                 false
+            }
+        }
+    }
+
+    fn poll_derived(&mut self, cx: &mut Context<Self>) {
+        let Some(job) = &self.derived_job else { return };
+        match job.poll() {
+            crate::derived::DerivedPoll::Pending(Some(f)) => {
+                self.load = LoadState::Loading { fraction: f, label: "Building tab".into() };
+                cx.notify();
+            }
+            crate::derived::DerivedPoll::Pending(None) => {}
+            crate::derived::DerivedPoll::Done(result) => {
+                self.derived_job = None;
+                match *result {
+                    Ok((derived, leases)) => {
+                        if let Some(old) = self.derived_file.replace(derived.path.clone()) {
+                            let _ = std::fs::remove_file(old);
+                        }
+                        // A derived text never grows: no watch, no follower.
+                        self.finish_load(Ok(OpenedSource { text: derived.text, leases, inflating: None, watch: None }), cx);
+                    }
+                    Err(e) => self.finish_load(Err(e), cx),
+                }
+            }
+            crate::derived::DerivedPoll::Died => {
+                self.derived_job = None;
+                self.load = LoadState::Failed { message: "Building the tab stopped unexpectedly".into() };
+                cx.notify();
             }
         }
     }
@@ -527,6 +589,9 @@ impl Drop for Document {
         }
         if let Some(follower) = self.follower.take() {
             retire_follower(follower);
+        }
+        if let Some(path) = self.derived_file.take() {
+            let _ = std::fs::remove_file(path);
         }
     }
 }

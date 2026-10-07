@@ -36,6 +36,7 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Sidebar", ToggleSidebar),
             MenuItem::action("Wrap", ToggleWrap),
+            MenuItem::action("Open Filtered as Tab", OpenAsTab),
             MenuItem::submenu(Menu::new("Theme").items([
                 MenuItem::action("System", ThemeSystem),
                 MenuItem::action("Light", ThemeLight),

@@ -3,7 +3,7 @@
 pub mod chrome;
 pub mod keys;
 
-use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
+use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::Source;
 use crate::history::HistoryStore;
@@ -209,7 +209,60 @@ impl Workspace {
             TabEvent::ShowHistory => self.open_dialog(Dialog::History, cx),
             TabEvent::ShowProfiles => self.open_profile_editor(window, cx),
             TabEvent::ShowStatistics => self.open_dialog(Dialog::Statistics, cx),
+            TabEvent::FocusCrumb(i) => self.focus_crumb(*i, window, cx),
+            TabEvent::OpenAsTab => self.open_as_tab(window, cx),
         }
+    }
+
+    fn focus_crumb(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else { return };
+        let Some(id) = tab.read(cx).crumb_tab(i, cx) else { return };
+        if let Some(index) = self.tabs.iter().position(|t| t.entity_id() == id) {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// ⇧⌘T (spec §4.9, §5.6): the active tab's filtered rows, frozen into a new tab numbered from 1.
+    pub fn open_as_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else { return };
+        let (source, init) = {
+            let t = tab.read(cx);
+            let d = t.doc.read(cx);
+            let Some(text) = d.text().cloned() else { return };
+            if d.filter.progress.is_some() {
+                self.toast("Filtering is still running — open as tab when it finishes", cx);
+                return;
+            }
+            let lines = d.filter.view.shown_lines().clone();
+            if lines.is_empty() {
+                self.toast("No lines to open: the filtered log is empty", cx);
+                return;
+            }
+            let live = d.is_live() || matches!(d.source, Source::Stream { .. });
+            let snapshot = live.then(|| rogg_core::clock::local_hms(std::time::SystemTime::now()));
+            let spec = crate::session::session_source(&d.source).map(|parent| rogg_core::session::DerivedSpec {
+                parent,
+                filter: d.filter.spec.clone(),
+                pins: d.filter.pins.iter().copied().collect(),
+                lines: live.then(|| lines.to_vec()),
+                snapshot: snapshot.clone(),
+            });
+            let mut crumbs = t.crumbs(cx);
+            crumbs.push("filtered".into());
+            let source = crate::derived::DerivedSource {
+                title: format!("{} ⟩ filtered", d.title()).into(),
+                crumbs,
+                tooltip: crate::derived::expression_label(&d.filter.spec),
+                snapshot,
+                spec,
+                origin: crate::derived::DerivedOrigin::Lines { parent: text, lines },
+            };
+            let mut init = TabInit::from_settings(&SettingsStore::get(cx));
+            init.profile = Some(t.profile.clone());
+            init.crumb_tabs = t.crumb_tabs_for_child(cx);
+            (Source::Derived(std::sync::Arc::new(source)), init)
+        };
+        self.open_source(source, init, window, cx);
     }
 
     /// Draw the traffic lights ourselves (headless captures have no native ones).
@@ -419,6 +472,7 @@ impl Workspace {
             .on_action(keys::unless_dialog(cx, |ws, _: &PrevTab, window, cx| ws.cycle_tab(false, window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, action: &ActivateTab, window, cx| ws.activate(action.index, window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
+            .on_action(keys::unless_dialog(cx, |ws, _: &OpenAsTab, window, cx| ws.open_as_tab(window, cx)))
             .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
             .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| {
                 let top = e.drag(cx).band_top(e.event.position.y);

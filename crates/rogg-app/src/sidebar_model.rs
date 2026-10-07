@@ -66,6 +66,8 @@ pub struct OpenFile {
     pub source: Option<SourceRef>,
     /// A stream tab (stdin, a FIFO): grouped under `Streams`.
     pub stream: bool,
+    /// A derived tab ("Open filtered as tab"): grouped under `Filtered tabs`.
+    pub derived: bool,
 }
 
 /// Groups open files by their folder (full path; the label is the folder's name), in tab order; in-memory sources go
@@ -74,6 +76,7 @@ pub fn group_open_files(files: &[OpenFile]) -> Vec<SidebarGroup> {
     let mut groups: Vec<SidebarGroup> = Vec::new();
     for f in files {
         let (key, label): (SharedString, SharedString) = match f.path.as_ref().and_then(|p| p.parent()) {
+            _ if f.derived => ("Filtered".into(), "Filtered tabs".into()),
             _ if f.stream => ("Streams".into(), "Streams".into()),
             Some(dir) => (
                 dir.display().to_string().into(),
@@ -184,9 +187,9 @@ mod tests {
         let b = EntityId::from(2u64);
         let c = EntityId::from(3u64);
         let files = [
-            OpenFile { tab: a, title: "a.log".into(), path: Some("/var/log/a.log".into()), bytes: Some(14_200), failed: false, source: None, stream: false },
-            OpenFile { tab: b, title: "mem".into(), path: None, bytes: None, failed: false, source: None, stream: false },
-            OpenFile { tab: c, title: "c.log".into(), path: Some("/var/log/c.log".into()), bytes: None, failed: true, source: None, stream: false },
+            OpenFile { tab: a, title: "a.log".into(), path: Some("/var/log/a.log".into()), bytes: Some(14_200), failed: false, source: None, stream: false, derived: false },
+            OpenFile { tab: b, title: "mem".into(), path: None, bytes: None, failed: false, source: None, stream: false, derived: false },
+            OpenFile { tab: c, title: "c.log".into(), path: Some("/var/log/c.log".into()), bytes: None, failed: true, source: None, stream: false, derived: false },
         ];
         let groups = group_open_files(&files);
         assert_eq!(groups.iter().map(|g| g.label.as_ref()).collect::<Vec<_>>(), ["log", "In memory"]);
@@ -205,8 +208,8 @@ mod tests {
     fn same_named_folders_in_different_places_are_separate_groups() {
         let (a, b) = (EntityId::from(1u64), EntityId::from(2u64));
         let files = [
-            OpenFile { tab: a, title: "x.log".into(), path: Some("/a/logs/x.log".into()), bytes: None, failed: false, source: None, stream: false },
-            OpenFile { tab: b, title: "y.log".into(), path: Some("/b/logs/y.log".into()), bytes: None, failed: false, source: None, stream: false },
+            OpenFile { tab: a, title: "x.log".into(), path: Some("/a/logs/x.log".into()), bytes: None, failed: false, source: None, stream: false, derived: false },
+            OpenFile { tab: b, title: "y.log".into(), path: Some("/b/logs/y.log".into()), bytes: None, failed: false, source: None, stream: false, derived: false },
         ];
         let groups = group_open_files(&files);
         assert_eq!(groups.iter().map(|g| g.label.as_ref()).collect::<Vec<_>>(), ["logs", "logs"]);
@@ -221,9 +224,21 @@ mod tests {
     #[test]
     fn streams_are_grouped_apart() {
         let s = EntityId::from(9u64);
-        let files = [OpenFile { tab: s, title: "stdin".into(), path: None, bytes: None, failed: false, source: None, stream: true }];
+        let files = [OpenFile { tab: s, title: "stdin".into(), path: None, bytes: None, failed: false, source: None, stream: true, derived: false }];
         let groups = group_open_files(&files);
         assert_eq!((groups[0].key.as_ref(), groups[0].label.as_ref()), ("Streams", "Streams"));
+    }
+
+    #[test]
+    fn derived_tabs_are_grouped_as_filtered_tabs() {
+        let (a, d) = (EntityId::from(1u64), EntityId::from(2u64));
+        let files = [
+            OpenFile { tab: a, title: "a.log".into(), path: Some("/var/log/a.log".into()), bytes: None, failed: false, source: None, stream: false, derived: false },
+            OpenFile { tab: d, title: "a.log ⟩ filtered".into(), path: None, bytes: None, failed: false, source: None, stream: false, derived: true },
+        ];
+        let groups = group_open_files(&files);
+        assert_eq!(groups.iter().map(|g| g.label.as_ref()).collect::<Vec<_>>(), ["log", "Filtered tabs"]);
+        assert_eq!(groups[1].entries[0].tab, Some(d));
     }
 
     #[test]
@@ -238,7 +253,7 @@ mod tests {
         tree.insert_listing(zip, &[ArchiveEntry { path: "a.log".into(), size: 1200 }]);
         let tab = EntityId::from(7u64);
         let a = SourceRef::member(SourceRef::File("/b/x.zip".into()), "a.log");
-        let files = [OpenFile { tab, title: "a.log".into(), path: None, bytes: None, failed: true, source: Some(a), stream: false }];
+        let files = [OpenFile { tab, title: "a.log".into(), path: None, bytes: None, failed: true, source: Some(a), stream: false, derived: false }];
         let (rows, actions) = tree_rows(&tree, &expanded, &files, Some(tab));
         assert!(matches!(&rows[1], TreeRow::File { active: true, failed: true, depth: 1, .. }));
         assert!(matches!(actions[1], RowAction::OpenNode(_)));

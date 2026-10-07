@@ -470,6 +470,7 @@ impl Workspace {
                     failed: matches!(d.load, LoadState::Failed { .. }),
                     source: d.source.source_ref(),
                     stream: matches!(d.source, Source::Stream { .. }),
+                    derived: matches!(d.source, Source::Derived(_)),
                 }
             })
             .collect()

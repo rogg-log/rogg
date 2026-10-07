@@ -30,6 +30,7 @@ gpui_kit::actions!(
         ToggleSidebar,
         ToggleWrap,
         ShowShortcuts,
+        OpenAsTab,
         OpenSettings,
         Dismiss,
         ThemeSystem,
@@ -74,8 +75,7 @@ macro_rules! shortcut {
     };
 }
 
-/// The keymap. Shortcuts for features that arrive in later milestones (open as tab, export, live
-/// follow pause) are added with those features.
+/// The keymap. Shortcuts for features that arrive in later tasks (export) are added with those features.
 pub fn shortcuts() -> Vec<Shortcut> {
     const WS: Option<&str> = Some(WORKSPACE_CONTEXT);
     const LOG: Option<&str> = Some(log::KEY_CONTEXT);
@@ -116,6 +116,7 @@ pub fn shortcuts() -> Vec<Shortcut> {
         shortcut!("Cycle focus", "Tab / ⇧ Tab", "tab", FocusNext, WS),
         shortcut!("", "", "shift-tab", FocusPrev, WS),
         shortcut!("Toggle follow selection", "⇧ ⌘ F", "shift-cmd-f", ToggleFollow, WS),
+        shortcut!("Open filtered as tab", "⇧ ⌘ T", "shift-cmd-t", OpenAsTab, WS),
         shortcut!("Toggle sidebar", "⌘ \\", "cmd-\\", ToggleSidebar, WS),
         shortcut!("Settings", "⌘ ,", "cmd-,", OpenSettings, None),
         shortcut!("Close dialog / cancel", "Esc", "escape", Dismiss, WS),

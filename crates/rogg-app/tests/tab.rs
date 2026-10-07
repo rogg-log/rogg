@@ -121,7 +121,8 @@ fn missing_file_shows_error_state_with_retry(cx: &mut TestAppContext) {
 fn not_yet_buttons_explain_themselves(cx: &mut TestAppContext) {
     let (_dir, w, ws, tab) = open_one(cx);
     tab.read_with(cx, |t, _| t.doc.clone()).update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
-    common::click(cx, w, "tool-open-tab");
+    // "Open as tab" works now (tests/derived.rs); Export is still a placeholder until its task.
+    common::click(cx, w, "export");
     assert_eq!(ws.read_with(cx, |ws, _| ws.toasts.len()), 1);
     assert!(common::exists(cx, w, "toast-0"));
 }
