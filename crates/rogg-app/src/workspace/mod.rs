@@ -1,6 +1,7 @@
 //! The main window view: title bar, tabs, sidebar, dialogs, toasts and the app's actions.
 
 pub mod chrome;
+pub mod keys;
 
 use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenFile, OpenFolder, OpenRecent, PrevTab, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
@@ -10,6 +11,7 @@ use crate::recent::RecentStore;
 use crate::sidebar_model::FixedSidebar;
 use crate::tab::{Tab, TabEvent, TabInit};
 use crate::tab_view::{self, TabBody};
+use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, ExternalPaths, FocusHandle, Pixels, ScrollHandle, SharedString, Stateful, Subscription,
@@ -18,7 +20,8 @@ use gpui_kit::{
 use rogg_ui::dialogs::{self, ModalLayer};
 use rogg_ui::empty;
 use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, SidebarDrag, SingleParts};
-use rogg_ui::theme::size;
+use keys::ThemeChoice;
+use rogg_ui::theme::{ActiveRoggTheme, Density, size};
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
 use std::collections::{HashMap, HashSet};
@@ -33,6 +36,7 @@ pub enum Dialog {
     Shortcuts,
     AllTabs,
     History,
+    GoToLine(Entity<InputState>),
 }
 
 pub struct Workspace {
@@ -50,6 +54,10 @@ pub struct Workspace {
     pub(crate) tab_scroll: ScrollHandle,
     pub(crate) collapsed: HashSet<SharedString>,
     pub(crate) fixed_sidebar: Option<FixedSidebar>,
+    pub(crate) theme: ThemeChoice,
+    pub(crate) density: Density,
+    goto_subscription: Option<Subscription>,
+    _appearance_subscription: Subscription,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -86,6 +94,14 @@ impl Workspace {
             tab_scroll: ScrollHandle::new(),
             collapsed: HashSet::new(),
             fixed_sidebar: None,
+            theme: ThemeChoice::System,
+            density: cx.rogg().density,
+            goto_subscription: None,
+            _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
+                if ws.theme == ThemeChoice::System {
+                    ws.apply_theme(window, cx);
+                }
+            }),
         };
         if cx.try_global::<HistoryStore>().is_some_and(|h| h.recovered) {
             ws.toast("Filter history was unreadable and has been reset; the old file was kept as history.json.bak", cx);
@@ -167,6 +183,7 @@ impl Workspace {
 
     pub fn close_dialog(&mut self, cx: &mut Context<Self>) {
         self.dialog = None;
+        self.goto_subscription = None;
         cx.notify();
     }
 
@@ -232,6 +249,7 @@ impl Workspace {
                     .on_close(close)
                     .into_any_element()
             }
+            Dialog::GoToLine(input) => dialogs::go_to_line(input.clone()).description("Selects the line in the full log.").on_close(close).into_any_element(),
         }
     }
 
@@ -266,7 +284,8 @@ impl Workspace {
     }
 
     fn root(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
+        keys::bind(
+            div()
             .id("root")
             .size_full()
             .key_context(actions::WORKSPACE_CONTEXT)
@@ -286,7 +305,9 @@ impl Workspace {
             .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| ws.toggle_sidebar(cx)))
             .on_drop(cx.listener(|ws, paths: &ExternalPaths, window, cx| ws.open_paths(paths.paths().to_vec(), window, cx)))
             .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<BandDrag>, _, cx| ws.drag_band(e.event.position.y, cx)))
-            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| ws.drag_sidebar(e.event.position.x, cx)))
+            .on_drag_move(cx.listener(|ws, e: &DragMoveEvent<SidebarDrag>, _, cx| ws.drag_sidebar(e.event.position.x, cx))),
+            cx,
+        )
     }
 }
 

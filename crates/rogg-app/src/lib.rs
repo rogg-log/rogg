@@ -21,7 +21,7 @@ pub mod workspace;
 
 use gpui_kit::{App, QuitMode};
 use paths::AppPaths;
-use rogg_ui::theme::{Appearance, Density, RoggTheme};
+use rogg_ui::theme::{Density, RoggTheme};
 
 /// Runs the app until its last window closes.
 pub fn run(args: args::Args) {
@@ -39,7 +39,8 @@ pub fn run(args: args::Args) {
 /// Full initialisation: gpui-kit, the default theme, app globals and key bindings, menus.
 pub fn init_with(cx: &mut App, paths: AppPaths) {
     gpui_kit::init(cx);
-    RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
+    let appearance = workspace::keys::appearance_for(workspace::keys::ThemeChoice::System, cx.window_appearance());
+    RoggTheme::new(appearance, Density::Compact).install(cx);
     install_globals(cx, paths);
     let recent = cx.global::<recent::RecentStore>().entries().to_vec();
     cx.set_menus(menus::app_menus(&recent));

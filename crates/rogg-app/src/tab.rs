@@ -246,6 +246,35 @@ impl Tab {
         cx.notify();
     }
 
+    /// ⌘F: focuses the find field of the pane used last.
+    pub fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.find[self.last_pane.index()].clone();
+        input.update(cx, |i, cx| i.focus(window, cx));
+    }
+
+    /// Tab / ⇧Tab: full log → filter line → filtered log (spec §5.9). The filtered log is skipped while its pane
+    /// shows the no-matches state, where its focus handle is attached to nothing.
+    pub fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let doc = self.doc.read(cx);
+        let filtered_focusable = !doc.filter.view.shown_lines().is_empty() || doc.filter.progress.is_some();
+        let current = self.focus.iter().position(|f| f.contains_focused(window, cx));
+        let mut next = match current {
+            None => 0,
+            Some(i) if forward => (i + 1) % 3,
+            Some(i) => (i + 2) % 3,
+        };
+        if next == 2 && !filtered_focusable {
+            next = if forward { 0 } else { 1 };
+        }
+        self.focus[next].focus(window, cx);
+        match next {
+            0 => self.last_pane = Pane::Full,
+            2 => self.last_pane = Pane::Filtered,
+            _ => {}
+        }
+        cx.notify();
+    }
+
     pub fn toggle_follow(&mut self, cx: &mut Context<Self>) {
         self.follow = !self.follow;
         cx.notify();
