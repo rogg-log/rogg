@@ -99,8 +99,17 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
             let lines = text.line_count();
             let full_count = t.labels.full_count.clone().unwrap_or_else(|| format!("{} {}", group_digits(lines), noun(lines, "line", "lines")).into());
             let shown = d.filter.view.shown_lines().len() as u64;
-            let top_header = PaneHeader::new("pane-top-head", "Full log", full_count)
-                .find(FindField::new("find-top", t.find[0].clone()).count(d.search(Pane::Full).label()))
+            let mut top_header = PaneHeader::new("pane-top-head", "Full log", full_count).find(FindField::new("find-top", t.find[0].clone()).count(d.search(Pane::Full).label()));
+            if d.is_live() {
+                let paused = !t.live.following;
+                top_header = top_header.tool(
+                    ToolButton::new("tool-live", IconName::Pause, if paused { "Paused" } else { "Pause" })
+                        .pressed(paused)
+                        .badge((paused && t.live.new_lines > 0).then(|| SharedString::from(format!("+{}", group_digits(t.live.new_lines)))))
+                        .on_click(tab_act(tab, |t, _, cx| t.toggle_live(cx))),
+                );
+            }
+            let top_header = top_header
                 .tool(ToolButton::new("tool-wrap-top", IconName::Wrap, "Wrap").pressed(t.full.read(cx).wrap()).on_click(tab_act(tab, |t, _, cx| t.toggle_wrap(Pane::Full, cx))))
                 .into_any_element();
             let bottom_header = PaneHeader::new("pane-bottom-head", "Filtered log", format!("{} shown", group_digits(shown)))

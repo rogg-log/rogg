@@ -1,7 +1,7 @@
 //! One open log in the window: its document, the two log panes with their find fields, selection, follow and
 //! the expression editor (spec §5.6).
 
-use crate::document::{Document, DocumentInit, Pane, Source};
+use crate::document::{Document, DocumentEvent, DocumentInit, Pane, Source};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
 use rogg_ui::controls::FindField;
@@ -33,6 +33,17 @@ pub enum TabEvent {
     ShowHistory,
 }
 
+/// Spec §4.5 reload toast.
+pub const RELOADED_TOAST: &str = "File was truncated or replaced — reloaded.";
+
+/// Live follow (spec §4.5): following keeps both panes at their end as lines arrive; paused counts what arrived.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LiveFollow {
+    pub following: bool,
+    /// Lines that arrived since following was paused (`+1,204` on the control).
+    pub new_lines: u64,
+}
+
 /// Document revisions already turned into rows.
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Applied {
@@ -52,6 +63,8 @@ pub struct Tab {
     pub find: [Entity<InputState>; 2],
     pub editing: Option<Entity<InputState>>,
     pub follow: bool,
+    pub live: LiveFollow,
+    live_started: bool,
     pub split: f32,
     pub labels: TabLabels,
     /// The pane ⌘F, ⌘G and Wrap act on.
@@ -76,6 +89,7 @@ impl Tab {
         let find = [FindField::state("Find in full log", window, cx), FindField::state("Find in results", window, cx)];
         let subscriptions = vec![
             cx.observe(&doc, |tab, _, cx| tab.sync_rows(cx)),
+            cx.subscribe(&doc, |tab, _, ev: &DocumentEvent, cx| tab.on_doc_event(ev, cx)),
             cx.subscribe(&full, |tab, _, ev: &LogViewEvent, cx| tab.on_log_event(Pane::Full, ev, cx)),
             cx.subscribe(&filtered, |tab, _, ev: &LogViewEvent, cx| tab.on_log_event(Pane::Filtered, ev, cx)),
             cx.subscribe_in(&find[0], window, |tab, input, ev: &InputEvent, _, cx| tab.on_find_event(Pane::Full, input, ev, cx)),
@@ -89,6 +103,8 @@ impl Tab {
             find,
             editing: None,
             follow: true,
+            live: LiveFollow::default(),
+            live_started: false,
             split: MainWindowParts::DEFAULT_SPLIT,
             labels: init.labels,
             last_pane: Pane::Full,
@@ -99,8 +115,53 @@ impl Tab {
             edit_subscription: None,
             _subscriptions: subscriptions,
         };
+        if matches!(tab.doc.read(cx).source, Source::Stream { .. }) {
+            tab.live_started = true;
+            tab.set_following(true, cx);
+        }
         tab.sync_rows(cx);
         tab
+    }
+
+    fn on_doc_event(&mut self, ev: &DocumentEvent, cx: &mut Context<Self>) {
+        match ev {
+            DocumentEvent::Reloaded => cx.emit(TabEvent::Toast(RELOADED_TOAST.into())),
+            DocumentEvent::Grew { lines } => {
+                if !self.doc.read(cx).is_live() {
+                    return;
+                }
+                if !self.live_started {
+                    // A file that starts growing follows when its end was in view (`tail -f`); else it waits, counting.
+                    self.live_started = true;
+                    let following = self.full.read(cx).at_bottom();
+                    self.set_following(following, cx);
+                    if !following {
+                        self.live.new_lines = *lines;
+                    }
+                } else if !self.live.following {
+                    self.live.new_lines += lines;
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    fn set_following(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.live.following = on;
+        if on {
+            self.live.new_lines = 0;
+        }
+        self.full.update(cx, |s, cx| s.set_tail(on, cx));
+        self.filtered.update(cx, |s, cx| s.set_tail(on, cx));
+        cx.notify();
+    }
+
+    /// Space / the live control: pause or resume following (live documents only).
+    pub fn toggle_live(&mut self, cx: &mut Context<Self>) {
+        if self.doc.read(cx).is_live() {
+            let on = !self.live.following;
+            self.set_following(on, cx);
+        }
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
@@ -185,7 +246,13 @@ impl Tab {
                 let (text, exclude) = (text.clone(), *exclude);
                 self.doc.update(cx, |d, cx| d.add_term(&text, exclude, cx));
             }
-            LogViewEvent::TailLeft => {}
+            LogViewEvent::TailLeft => {
+                if pane == Pane::Full && self.live.following {
+                    self.live.following = false;
+                    self.filtered.update(cx, |s, cx| s.set_tail(false, cx));
+                    cx.notify();
+                }
+            }
         }
     }
 

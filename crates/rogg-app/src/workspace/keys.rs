@@ -52,6 +52,7 @@ pub(super) fn bind(root: Stateful<Div>, cx: &mut Context<Workspace>) -> Stateful
         .on_action(unless_dialog(cx, |ws, _: &TogglePin, _, cx| ws.with_tab(cx, |t, cx| t.pin_selected(cx))))
         .on_action(unless_dialog(cx, |ws, _: &RevealInFullLog, _, cx| ws.with_tab(cx, |t, cx| t.reveal_selected(cx))))
         .on_action(unless_dialog(cx, |ws, _: &ToggleFollow, _, cx| ws.with_tab(cx, |t, cx| t.toggle_follow(cx))))
+        .on_action(unless_dialog(cx, |ws, _: &ToggleLive, _, cx| ws.with_tab(cx, |t, cx| t.toggle_live(cx))))
         .on_action(unless_dialog(cx, |ws, _: &ToggleWrap, _, cx| {
             ws.with_tab(cx, |t, cx| {
                 let pane = t.last_pane;
