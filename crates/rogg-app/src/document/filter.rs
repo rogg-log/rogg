@@ -209,6 +209,19 @@ impl Document {
         self.rebuild_view(cx);
     }
 
+    /// Drops the running scan and what it was building (a reload supersedes it: its progress must not reach the UI).
+    pub(super) fn stop_filter(&mut self) {
+        if let Some(job) = self.filter.job.take() {
+            retire(job);
+        }
+        self.filter.partial.clear();
+        self.filter.dirty = false;
+        self.filter.progress = None;
+        self.filter.scanned = None;
+        self.filter.job_text = None;
+        self.filter.tail_base = None;
+    }
+
     /// Scans the loaded text with the compiled filter, replacing any running scan.
     pub(super) fn start_filter(&mut self, cx: &mut Context<Self>) {
         if let Some(old) = self.filter.job.take() {
@@ -304,10 +317,19 @@ impl Document {
                 retire(job);
             }
             self.filter.job_text = None;
-            self.filter.tail_base = None;
             self.filter.progress = None;
             self.filter.error = Some("Filtering stopped unexpectedly; showing partial results".into());
-            self.filter.matches = Arc::new(std::mem::take(&mut self.filter.partial));
+            let partial = std::mem::take(&mut self.filter.partial);
+            match self.filter.tail_base.take() {
+                // A dead tail scan keeps everything found before its range; the next growth rescans in full.
+                Some(base) => {
+                    let (matches, hits) = base.merge(partial, &[]);
+                    self.filter.matches = Arc::new(matches);
+                    self.filter.term_hits = hits;
+                    self.filter.scanned = None;
+                }
+                None => self.filter.matches = Arc::new(partial),
+            }
             self.rebuild_view(cx);
             return false;
         }

@@ -220,6 +220,15 @@ impl Document {
         }
     }
 
+    /// Drops the running counts and their tail state (a reload supersedes them).
+    pub(super) fn stop_searches(&mut self) {
+        for s in &mut self.search.panes {
+            s.job = None;
+            s.job_text = None;
+            s.tail_base = None;
+        }
+    }
+
     pub(super) fn search_running(&self) -> bool {
         self.search.panes.iter().any(|s| s.job.is_some())
     }

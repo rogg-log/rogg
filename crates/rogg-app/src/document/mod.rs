@@ -281,6 +281,8 @@ impl Document {
         self.stop_follower();
         self.inflating = None;
         self.inflated_len = None;
+        self.stop_filter();
+        self.stop_searches();
     }
 
     fn stop_follower(&mut self) {

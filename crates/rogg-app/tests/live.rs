@@ -66,22 +66,41 @@ fn an_unfinished_last_line_is_rescanned_when_completed(cx: &mut TestAppContext) 
 
 #[gpui_kit::test]
 fn appends_during_a_running_scan_are_scanned_once(cx: &mut TestAppContext) {
+    // 3M lines take about a second to scan in a debug build, far longer than the follower needs to report growth
+    // (debounce plus file-system latency), so the growth always lands while the first scan still runs.
+    const BASE: u64 = 3_000_000;
     let dir = common::setup(cx);
     cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0 }));
-    let body: String = (0..200_000).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
+    let mut body: String = (0..BASE).map(|i| if i % 2 == 0 { "alpha\n" } else { "beta\n" }).collect();
+    // An unfinished last line the append completes: it must be scanned again and match on its full text.
+    body.push_str("alp");
     let path = dir.path().join("big.log");
     std::fs::write(&path, body).unwrap();
     let doc = doc_for(cx, &path, "alpha");
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_some()));
-    append(&path, &"alpha tail\n".repeat(1000));
+    append(&path, &format!("ha tail\n{}", "alpha tail\n".repeat(1000)));
+    let mut scan_running_at_growth = None;
     common::wait_until(cx, |cx| {
-        doc.read_with(cx, |d, _| d.filter.progress.is_none() && d.filter.matches.len() == 101_000 && d.text().is_some_and(|t| t.line_count() == 201_000))
+        doc.read_with(cx, |d, _| {
+            let grown = d.text().is_some_and(|t| t.line_count() > BASE + 1);
+            if grown {
+                scan_running_at_growth = Some(d.filter.progress.is_some());
+            }
+            grown
+        })
     });
-    let found = matched(&doc, cx);
-    assert!(found.windows(2).all(|w| w[0] < w[1]), "sorted and unique");
-    assert_eq!(*found.last().unwrap(), 200_999);
+    assert_eq!(scan_running_at_growth, Some(true), "the growth must arrive while the first scan runs");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none() && d.filter.matches.len() == 1_501_001));
+    let expected: Vec<u64> = (0..BASE).step_by(2).chain(BASE..=BASE + 1000).collect();
+    assert!(matched(&doc, cx) == expected, "exact matches: the even lines, the completed line and the appended ones");
     let hits = doc.read_with(cx, |d, _| d.filter.stats.as_ref().unwrap().term_hits[0].lines);
-    assert_eq!(hits, 101_000);
+    assert_eq!(hits, 1_501_001);
+    assert_eq!(line_count(&doc, cx), BASE + 1001);
+    assert_eq!(
+        doc.read_with(cx, |d, _| (d.filter.scans, d.filter.tail_scans)),
+        (1, 1),
+        "one full scan, then one tail scan of the appended lines"
+    );
 }
 
 #[gpui_kit::test]
