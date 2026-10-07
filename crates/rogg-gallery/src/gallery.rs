@@ -105,6 +105,7 @@ impl GalleryView {
         log_compact.update(cx, |s, cx| {
             s.set_selected(Some(120492), cx);
             s.force_hover_row(Some(1), cx);
+            s.force_hbar(true, cx);
         });
         let log_wrapped = cx.new(|_| LogViewState::new(rows));
         log_wrapped.update(cx, |s, cx| s.set_wrap(true, cx));

@@ -29,10 +29,10 @@ The plan's "Deferred from M3" list holds the same limits in short form.
 - Stream tabs are never restored by session restore (M4) and are not recent files.
 
 ## Sidebar
-- Rows are not virtualized (R12): a large folder or archive level (e.g. 10,000 files or 50,000 flat members) builds every row. Virtualizing changes the shared `rogg-ui` `Sidebar` that the replica goldens capture, so it waits for the R3 decision.
+- Rows are not virtualized (R12): a large folder or archive level (e.g. 10,000 files or 50,000 flat members) builds every row. Virtualizing changes the shared `rogg-ui` `Sidebar` that the replica goldens capture, so it must keep the replica pixel-identical (or be re-approved with the user).
 - Reopening an archive overwrites its remembered member in Recent; one archive that is both a folder child and a root maps to the first node; `insert_folder` / `insert_listing` are not idempotent (a re-list duplicates children); non-UTF-8 directory names that collapse to the same lossy name merge into one node; `summary()` walks the subtree on each call.
 - `same_file` canonicalizes every open tab's path per open, on the UI thread.
-- R3 (pending with the user, from M2): the horizontal scrollbar thumb and its hit zone over the bottom row. The replica goldens are not re-approved until it is decided; `just visual-check` fails only on the 9 replica captures.
+- R3 resolved at the M2 gate (2026-10-07): the horizontal thumb shows only on hover over its strip, while dragged and briefly after a horizontal scroll, and is not clickable while hidden; the focus line of the panes and the filter band is 1 px on their perimeter. `just visual-check` passes again (0.000% on all 9 replica captures).
 
 ## Tests / tooling
 - An app-level test that truncates a multi-page file mid-scan and renders is missing: Review Focus 1 is covered at the core level only (`truncation_under_a_mapping_reads_zeros_and_slots_are_released`) and by a small-file app test.

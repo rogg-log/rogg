@@ -5,11 +5,17 @@ use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size, px};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::rc::Rc;
+use std::time::Duration;
 
 /// Wrapped-row heights kept; when a measurement would exceed this, the cache is cleared first.
 const MAX_CACHED_HEIGHTS: usize = 20_000;
 /// A copied range holds at most this many rows (a shift-click across millions of lines copies its start).
 pub const MAX_COPY_ROWS: usize = 100_000;
+/// The horizontal scrollbar stays visible this long after a horizontal scroll (it is otherwise shown only on hover).
+pub const HBAR_LINGER: Duration = Duration::from_millis(1200);
+/// The horizontal scrollbar shows while the pointer is within this distance of the panel's bottom edge: its own strip
+/// (the 6 px thumb, its 2 px margin and the 3 px of slack its click area allows), so rows above stay clickable.
+pub const HBAR_HOVER_ZONE: f32 = size::SCROLL_THUMB_W + 5.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowGeometry {
@@ -78,6 +84,14 @@ pub struct LogViewState {
     pub(crate) last_rows: Vec<RowGeometry>,
     pub(crate) drag: Option<Drag>,
     pub(crate) context_target: Option<ContextTarget>,
+    /// The pointer is over the horizontal scrollbar's zone at the bottom edge.
+    pub(crate) hbar_hover: bool,
+    /// A horizontal scroll happened within the last `HBAR_LINGER`.
+    pub(crate) hbar_scrolled: bool,
+    /// Bumped on each horizontal scroll, so only the newest linger timer hides the bar.
+    hbar_generation: u64,
+    /// Always show the horizontal scrollbar (gallery specimens).
+    pub(crate) force_hbar: bool,
     initialized: bool,
 }
 
@@ -104,8 +118,49 @@ impl LogViewState {
             last_rows: Vec::new(),
             drag: None,
             context_target: None,
+            hbar_hover: false,
+            hbar_scrolled: false,
+            hbar_generation: 0,
+            force_hbar: false,
             initialized: false,
         }
+    }
+
+    /// Whether the horizontal scrollbar is shown: only while the pointer is near the bottom edge, while its thumb is
+    /// dragged, and briefly after a horizontal scroll (the vertical thumb is always shown).
+    pub fn hbar_visible(&self) -> bool {
+        self.force_hbar || self.hbar_hover || self.hbar_scrolled || matches!(self.drag, Some(Drag::HThumb { .. }))
+    }
+
+    /// Always show the horizontal scrollbar (gallery specimens).
+    pub fn force_hbar(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.force_hbar = on;
+        cx.notify();
+    }
+
+    pub(crate) fn set_hbar_hover(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.hbar_hover != on {
+            self.hbar_hover = on;
+            cx.notify();
+        }
+    }
+
+    /// Shows the horizontal scrollbar for `HBAR_LINGER` after a horizontal scroll.
+    pub(crate) fn note_horizontal_scroll(&mut self, cx: &mut Context<Self>) {
+        self.hbar_scrolled = true;
+        self.hbar_generation += 1;
+        let generation = self.hbar_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HBAR_LINGER).await;
+            let _ = this.update(cx, |s, cx| {
+                if s.hbar_generation == generation {
+                    s.hbar_scrolled = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub fn context_target(&self) -> Option<&ContextTarget> {

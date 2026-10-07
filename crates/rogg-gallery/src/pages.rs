@@ -212,7 +212,7 @@ fn filter(view: &GalleryView, p: &Palette) -> AnyElement {
 
 fn logview(view: &GalleryView, p: &Palette) -> AnyElement {
     div()
-        .child(section("No wrap: hover (row 2), selected, pinned, context, gap, hits, search, error tint, long line", frame(1100., 300., p, LogView::new("log-compact", view.log_compact.clone())), p))
+        .child(section("No wrap: hover (row 2), selected, pinned, context, gap, hits, search, error tint, long line, horizontal bar (shown on hover)", frame(1100., 300., p, LogView::new("log-compact", view.log_compact.clone())), p))
         .child(section("Wrap on (700px)", frame(700., 420., p, LogView::new("log-wrapped", view.log_wrapped.clone())), p))
         .into_any_element()
 }

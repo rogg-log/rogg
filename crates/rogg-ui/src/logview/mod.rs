@@ -7,7 +7,7 @@ pub mod text;
 
 pub use element::LogViewElement;
 pub use model::{LogLine, LogRow, LogRowSource, RowTint, Span, SpanStyle, VecRows};
-pub use state::{ContextTarget, LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
+pub use state::{ContextTarget, HBAR_HOVER_ZONE, HBAR_LINGER, LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
 
 use crate::theme::ActiveRoggTheme;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
@@ -28,7 +28,7 @@ impl LogView {
     }
 
     /// Makes the panel focusable: mouse presses focus it, its keyboard actions dispatch in
-    /// `actions::KEY_CONTEXT`, and a 2 px accent ring shows while it has focus.
+    /// `actions::KEY_CONTEXT`, and a 1 px accent line on the panel's perimeter shows while it has focus.
     pub fn focus(mut self, handle: FocusHandle) -> Self {
         self.focus = Some(handle);
         self
@@ -141,7 +141,7 @@ impl RenderOnce for LogView {
             })
             .on_action(move |_: &actions::CopySelectionWithNumbers, _, cx| copy(&s, true, cx))
             .child(element)
-            .when(focused, |d| d.child(div().absolute().inset_0().border_2().border_color(p.accent)))
+            .when(focused, |d| d.child(div().id("log-focus").test_support().absolute().inset_0().border_1().border_color(p.accent)))
             .context_menu(move |menu, _, cx| context_menu(menu, &menu_state, cx))
     }
 }

@@ -1,5 +1,5 @@
 use super::model::{LogRow, LogRowSource, Span};
-use super::state::{ContextTarget, Drag, LogViewEvent, LogViewState, RowGeometry};
+use super::state::{ContextTarget, Drag, HBAR_HOVER_ZONE, LogViewEvent, LogViewState, RowGeometry};
 use super::text::{MAX_DISPLAY_BYTES, MAX_DISPLAY_TEXT_BYTES, Segment, display_text, segments, token_at};
 use crate::icons::IconName;
 use crate::theme::{ActiveRoggTheme, Color, RoggTheme, size};
@@ -298,6 +298,8 @@ pub struct LogViewPrepaint {
     rows: Vec<PaintRow>,
     thumb: Option<Bounds<Pixels>>,
     hbar: Option<HBar>,
+    /// The horizontal bar is drawn and clickable only while shown (hover near the bottom edge, drag, recent scroll).
+    hbar_shown: bool,
     theme: RoggTheme,
     selection: Option<(u64, u64)>,
     force_hover_row: Option<usize>,
@@ -432,9 +434,9 @@ impl Element for LogViewElement {
         let font_id = window.text_system().resolve_font(&mono);
         let advance = window.text_system().ch_advance(font_id, theme.metrics.log_font_size).map(f32::from).unwrap_or(7.);
         self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));
-        let (max_x, wrap_now, scroll_x_now) = {
+        let (max_x, wrap_now, scroll_x_now, hbar_shown) = {
             let s = self.state.read(cx);
-            (s.max_scroll_x, s.wrap(), s.scroll_x)
+            (s.max_scroll_x, s.wrap(), s.scroll_x, s.hbar_visible())
         };
         let hbar = (!wrap_now && max_x > 0.).then(|| {
             let track_left = f32::from(text_left);
@@ -479,7 +481,7 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, hbar, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x), wrap_width: wrap.then(|| px(text_w)) }
+        LogViewPrepaint { hitbox, rows, thumb, hbar, hbar_shown, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x), wrap_width: wrap.then(|| px(text_w)) }
     }
 
     fn paint(
@@ -577,7 +579,7 @@ impl Element for LogViewElement {
             if let Some(thumb) = pre.thumb {
                 window.paint_quad(fill(thumb, p.scrollbar_thumb).corner_radii(Corners::all(px(3.))));
             }
-            if let Some(bar) = pre.hbar {
+            if let Some(bar) = pre.hbar.filter(|_| pre.hbar_shown) {
                 window.paint_quad(fill(bar.thumb, p.scrollbar_thumb).corner_radii(Corners::all(px(3.))));
             }
         });
@@ -590,7 +592,11 @@ impl Element for LogViewElement {
             }
             let delta = e.delta.pixel_delta(row_h);
             state.update(cx, |s, cx| {
+                let before = s.scroll_x;
                 s.scroll_by_px(-f32::from(delta.y), -f32::from(delta.x));
+                if s.scroll_x != before {
+                    s.note_horizontal_scroll(cx);
+                }
                 s.user_scrolled(cx);
                 cx.notify();
             });
@@ -607,6 +613,8 @@ impl Element for LogViewElement {
             .collect();
         let vthumb = pre.thumb;
         let hbar = pre.hbar;
+        // A hidden horizontal bar has no click area: the bottom row stays fully clickable.
+        let shown_hbar = pre.hbar.filter(|_| pre.hbar_shown);
         let track_top = bounds.top();
         let track_bottom = bounds.bottom();
         let track_h = f32::from(bounds.size.height);
@@ -636,7 +644,7 @@ impl Element for LogViewElement {
                 cx.stop_propagation();
                 return;
             }
-            if let Some(bar) = hbar
+            if let Some(bar) = shown_hbar
                 && e.position.y >= bar.thumb.top() - px(3.)
                 && f32::from(e.position.x) >= bar.track_left
                 && f32::from(e.position.x) <= bar.track_left + bar.travel + f32::from(bar.thumb.size.width)
@@ -674,6 +682,8 @@ impl Element for LogViewElement {
         let row_hitboxes: Vec<(usize, Hitbox)> = pre.rows.iter().map(|r| (r.row, r.hitbox.clone())).collect();
         let hovered_now = row_hitboxes.iter().find(|(_, h)| h.is_hovered(window)).map(|(r, _)| *r);
         let state = self.state.clone();
+        let panel = pre.hitbox.clone();
+        let has_hbar = pre.hbar.is_some();
         window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -722,6 +732,10 @@ impl Element for LogViewElement {
                 // The button was released outside the window.
                 state.update(cx, |s, _| s.drag = None);
             }
+            let near_bottom = has_hbar && panel.is_hovered(window) && e.position.y >= track_bottom - px(HBAR_HOVER_ZONE);
+            if state.read(cx).hbar_hover != near_bottom {
+                state.update(cx, |s, cx| s.set_hbar_hover(near_bottom, cx));
+            }
             let now = row_hitboxes.iter().find(|(_, h)| h.is_hovered(window)).map(|(r, _)| *r);
             if now != hovered_now {
                 window.refresh();
@@ -732,8 +746,11 @@ impl Element for LogViewElement {
         window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble && e.button == MouseButton::Left {
                 state.update(cx, |s, cx| {
-                    if s.drag.take().is_some() {
-                        cx.notify();
+                    match s.drag.take() {
+                        // Releasing the horizontal thumb keeps the bar up briefly, like after a scroll.
+                        Some(Drag::HThumb { .. }) => s.note_horizontal_scroll(cx),
+                        Some(_) => cx.notify(),
+                        None => {}
                     }
                 });
             }

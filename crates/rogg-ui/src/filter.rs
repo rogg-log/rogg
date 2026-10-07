@@ -183,7 +183,7 @@ impl FilterBand {
         self
     }
 
-    /// Draw the 2 px accent focus ring (the filter line is a Tab stop, spec §5.9).
+    /// Draw the 1 px accent focus line on the band's perimeter (the filter line is a Tab stop, spec §5.9).
     pub fn focused(mut self, on: bool) -> Self {
         self.focused = on;
         self
@@ -409,7 +409,8 @@ impl RenderOnce for FilterBand {
             })
             .child(bottom)
             .when(self.focused, |d| {
-                d.child(div().absolute().top(px(2.)).bottom(px(2.)).left(px(2.)).right(px(2.)).rounded(px(5.)).border_2().border_color(p.accent))
+                // On the band's outer edge, over its own 1 px top and bottom lines (they sit outside the padding box).
+                d.child(div().id("band-focus").test_support().absolute().top(px(-1.)).bottom(px(-1.)).left_0().right_0().border_1().border_color(p.accent))
             })
     }
 }

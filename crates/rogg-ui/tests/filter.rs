@@ -103,3 +103,10 @@ fn clicking_state_reports_chip_index(cx: &mut TestAppContext) {
     common::click(cx, w, "token-state-1");
     assert_eq!(hit.get(), 1);
 }
+
+#[gpui_kit::test]
+fn the_focus_line_sits_on_the_band_perimeter(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let w = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(2)).focused(true).into_any_element());
+    assert_eq!(common::bounds(cx, w, "band-focus"), common::bounds(cx, w, "filter-band"));
+}

@@ -709,3 +709,67 @@ fn a_wheel_event_right_after_extend_rows_keeps_tail_mode(cx: &mut TestAppContext
     render(cx, w);
     assert_eq!(last_visible(cx, &state), 299);
 }
+
+fn wide_rows(n: usize) -> Rc<VecRows> {
+    let v = (0..n)
+        .map(|i| LogRow::Line(LogLine { number: 1000 + i as u64, text: "x".repeat(500).into(), spans: vec![], pinned: false, context: false, tint: None }))
+        .collect();
+    Rc::new(VecRows::new(v))
+}
+
+fn move_mouse(cx: &mut TestAppContext, w: gpui_kit::AnyWindowHandle, to: gpui_kit::Point<gpui_kit::Pixels>) {
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        window.simulate_mouse_move(to, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn the_horizontal_bar_shows_only_on_its_strip_or_after_a_horizontal_scroll(cx: &mut TestAppContext) {
+    use rogg_ui::logview::{HBAR_HOVER_ZONE, HBAR_LINGER};
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(wide_rows(50)));
+    let w = open(cx, state.clone());
+    render(cx, w);
+    let visible = |cx: &mut TestAppContext| state.read_with(cx, |s, _| s.hbar_visible());
+    assert!(!visible(cx), "hidden by default");
+    let b = common::bounds(cx, w, "log-test");
+    move_mouse(cx, w, point(b.left() + px(300.), b.bottom() - px(HBAR_HOVER_ZONE - 1.)));
+    assert!(visible(cx), "shown while the pointer is on the bar's strip");
+    move_mouse(cx, w, point(b.left() + px(300.), b.bottom() - px(HBAR_HOVER_ZONE + 2.)));
+    assert!(!visible(cx), "the bottom row above the strip does not show it");
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(0.), px(-50.))), cx);
+    })
+    .unwrap();
+    assert!(!visible(cx), "a vertical scroll does not show it");
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(-100.), px(0.))), cx);
+    })
+    .unwrap();
+    assert!(visible(cx), "shown right after a horizontal scroll");
+    cx.executor().advance_clock(HBAR_LINGER / 2);
+    cx.run_until_parked();
+    assert!(visible(cx), "still shown within the linger time");
+    cx.executor().advance_clock(HBAR_LINGER);
+    cx.run_until_parked();
+    assert!(!visible(cx), "hidden again after the linger time");
+}
+
+#[gpui_kit::test]
+fn the_focus_line_is_on_the_panel_perimeter(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None)));
+    let (w, _focus) = open_focusable(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.click_at("log-test", point(px(300.), px(4. + 23. + 10.)), cx);
+    })
+    .unwrap();
+    assert_eq!(common::bounds(cx, w, "log-focus"), common::bounds(cx, w, "log-test"), "drawn on the panel's edge, not inset");
+}
