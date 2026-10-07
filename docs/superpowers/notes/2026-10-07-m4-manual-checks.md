@@ -36,3 +36,12 @@ Release build: `export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH
     and relaunch: everything is back, including the window frame (also when it was maximised).
 21. Move a restored file away and relaunch: its tab shows the error state with Retry; the others are fine.
 22. Settings → Restore session off: relaunch opens empty.
+
+## Statistics, history, defaults and carry-over fixes
+23. Click the footer statistics: `Filtered log statistics` opens; on a 1 GB file, its rows update while the filter runs.
+24. The filter history popover: each entry shows its term states plus `regex` / `case` / `±N` when set; clicking one
+    restores the expression, states, flags and context.
+25. Settings behaviour defaults (wrap, follow selection, context lines, regex and case for new tabs, line spacing,
+    default highlighting profile): open a new file and it starts with exactly those.
+26. An idle live tab still shows appended lines within about 0.1 s (`just live`); a `.gz` with trailing junk after the
+    stream opens fully.
