@@ -156,6 +156,11 @@ impl FilteredView {
         Some(row)
     }
 
+    /// A matched or pinned line (shown for itself, not as context).
+    pub fn is_anchor(&self, line: u64) -> bool {
+        self.matches.binary_search(&line).is_ok() || self.pins.contains(&line)
+    }
+
     pub fn shown_lines(&self) -> &Arc<Vec<u64>> {
         &self.shown
     }
@@ -258,5 +263,12 @@ mod tests {
             assert_eq!(r, (k as u64) * 2);
             assert_eq!(line(v.row(r)), m);
         }
+    }
+
+    #[test]
+    fn anchors_are_matches_and_pins() {
+        let v = reference(1);
+        assert!(v.is_anchor(12) && v.is_anchor(7));
+        assert!(!v.is_anchor(8), "a context line");
     }
 }

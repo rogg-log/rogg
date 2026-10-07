@@ -61,9 +61,9 @@ fn partial_owner(name: &str) -> Option<i32> {
     parts.next().map(|_| pid)
 }
 
-/// The writer of a `stream-<pid>-<n>.log` capture.
+/// The writer of a `stream-<pid>-<n>.log` capture or a `derived-<pid>-<n>.log` tab text.
 fn stream_owner(name: &str) -> Option<i32> {
-    name.strip_prefix("stream-")?.split('-').next()?.parse().ok()
+    name.strip_prefix("stream-").or_else(|| name.strip_prefix("derived-"))?.split('-').next()?.parse().ok()
 }
 
 fn process_alive(pid: i32) -> bool {
@@ -92,7 +92,7 @@ pub struct Evicted {
 
 pub struct Cache {
     dir: PathBuf,
-    limit: u64,
+    limit: AtomicU64,
     leases: Mutex<HashMap<PathBuf, usize>>,
 }
 
@@ -122,7 +122,7 @@ impl Drop for CacheLease {
 
 impl Cache {
     pub fn new(dir: impl Into<PathBuf>, limit: u64) -> Arc<Cache> {
-        Arc::new(Cache { dir: dir.into(), limit, leases: Mutex::new(HashMap::new()) })
+        Arc::new(Cache { dir: dir.into(), limit: AtomicU64::new(limit), leases: Mutex::new(HashMap::new()) })
     }
 
     pub fn dir(&self) -> &Path {
@@ -130,7 +130,12 @@ impl Cache {
     }
 
     pub fn limit(&self) -> u64 {
-        self.limit
+        self.limit.load(Ordering::Relaxed)
+    }
+
+    /// Changes the size limit (settings, spec §6.2); the next `evict` trims to it.
+    pub fn set_limit(&self, bytes: u64) {
+        self.limit.store(bytes, Ordering::Relaxed);
     }
 
     /// `<dir>/<key as 16 hex digits>.<ext>`.
@@ -140,6 +145,14 @@ impl Cache {
 
     pub fn streams_dir(&self) -> PathBuf {
         self.dir.join(STREAMS_DIR)
+    }
+
+    /// A fresh path for a derived tab's text (spec §4.9): `streams/derived-<pid>-<n>.log`. Like stream captures it is
+    /// never evicted while the app runs, deleted when its tab closes, and swept once its process is gone.
+    pub fn derived_path(&self) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        self.streams_dir().join(format!("derived-{}-{n}.log", std::process::id()))
     }
 
     /// Marks `path` in use until the lease drops (eviction skips it) and refreshes its LRU time. An entry may be
@@ -183,7 +196,7 @@ impl Cache {
     /// Deletes least-recently-used entries until the directory holds at most the limit. Leased entries, partial files
     /// and the streams folder are never removed.
     pub fn evict(&self) -> Evicted {
-        self.evict_to(self.limit)
+        self.evict_to(self.limit())
     }
 
     pub fn evict_to(&self, limit: u64) -> Evicted {
@@ -392,5 +405,25 @@ mod tests {
         assert!(cache.write_entry(&dst, |f| f.write_all(b"x").map_err(CoreError::io(&dst))).is_err());
         let names: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert!(names.iter().all(|n| !n.ends_with(".partial")), "{names:?}");
+    }
+
+    #[test]
+    fn the_limit_can_change_and_derived_files_are_swept_like_streams() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path(), 10);
+        cache.set_limit(1 << 30);
+        assert_eq!(cache.limit(), 1 << 30);
+        let a = cache.derived_path();
+        let b = cache.derived_path();
+        assert_ne!(a, b);
+        assert!(a.starts_with(cache.streams_dir()));
+        assert!(a.file_name().unwrap().to_string_lossy().starts_with(&format!("derived-{}-", std::process::id())));
+        std::fs::create_dir_all(cache.streams_dir()).unwrap();
+        let dead = dead_pid();
+        std::fs::write(cache.streams_dir().join(format!("derived-{dead}-0.log")), "x").unwrap();
+        std::fs::write(&a, "x").unwrap();
+        assert_eq!(cache.sweep_streams(), 1);
+        assert!(a.exists());
+        assert_eq!(stream_owner("derived-42-7.log"), Some(42));
     }
 }
