@@ -21,6 +21,8 @@ pub struct SidebarEntry {
 
 #[derive(Clone, Debug)]
 pub struct SidebarGroup {
+    /// Identifies the group (collapsed state): the folder's full path, "In memory", or a fixed group's label.
+    pub key: SharedString,
     pub label: SharedString,
     pub entries: Vec<SidebarEntry>,
 }
@@ -38,6 +40,7 @@ pub struct FixedSidebar {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RowAction {
+    /// Toggles the collapsed state of the group with this `SidebarGroup::key`.
     ToggleGroup(SharedString),
     Activate(EntityId),
     Open(Source, TabInit),
@@ -54,18 +57,22 @@ pub struct OpenFile {
     pub failed: bool,
 }
 
-/// Groups open files by their folder's name, in tab order; in-memory sources go under "In memory".
+/// Groups open files by their folder (full path; the label is the folder's name), in tab order; in-memory sources go
+/// under "In memory".
 pub fn group_open_files(files: &[OpenFile]) -> Vec<SidebarGroup> {
     let mut groups: Vec<SidebarGroup> = Vec::new();
     for f in files {
-        let label: SharedString = match f.path.as_ref().and_then(|p| p.parent()) {
-            Some(dir) => dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string()).into(),
-            None => "In memory".into(),
+        let (key, label): (SharedString, SharedString) = match f.path.as_ref().and_then(|p| p.parent()) {
+            Some(dir) => (
+                dir.display().to_string().into(),
+                dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string()).into(),
+            ),
+            None => ("In memory".into(), "In memory".into()),
         };
         let entry = SidebarEntry { label: f.title.clone(), size: f.bytes.map(format_size).unwrap_or_default().into(), tab: Some(f.tab), open: None };
-        match groups.iter_mut().find(|g| g.label == label) {
+        match groups.iter_mut().find(|g| g.key == key) {
             Some(group) => group.entries.push(entry),
-            None => groups.push(SidebarGroup { label, entries: vec![entry] }),
+            None => groups.push(SidebarGroup { key, label, entries: vec![entry] }),
         }
     }
     groups
@@ -86,9 +93,9 @@ pub fn rows_with_failures(
     let mut rows = Vec::new();
     let mut actions = Vec::new();
     for group in groups {
-        let expanded = !collapsed.contains(&group.label);
+        let expanded = !collapsed.contains(&group.key);
         rows.push(TreeRow::Folder { label: group.label.clone(), expanded, depth: 0 });
-        actions.push(RowAction::ToggleGroup(group.label.clone()));
+        actions.push(RowAction::ToggleGroup(group.key.clone()));
         if !expanded {
             continue;
         }
@@ -132,8 +139,25 @@ mod tests {
         assert_eq!(rows.len(), 5);
         assert!(matches!(&rows[2], TreeRow::File { active: true, failed: true, .. }));
         assert!(matches!(actions[1], RowAction::Activate(t) if t == a));
-        let collapsed = HashSet::from([SharedString::from("log")]);
+        let collapsed = HashSet::from([SharedString::from("/var/log")]);
         let (rows, _) = super::rows(&groups, None, &collapsed);
         assert_eq!(rows.len(), 3, "collapsed folder hides its two files");
+    }
+
+    #[test]
+    fn same_named_folders_in_different_places_are_separate_groups() {
+        let (a, b) = (EntityId::from(1u64), EntityId::from(2u64));
+        let files = [
+            OpenFile { tab: a, title: "x.log".into(), path: Some("/a/logs/x.log".into()), bytes: None, failed: false },
+            OpenFile { tab: b, title: "y.log".into(), path: Some("/b/logs/y.log".into()), bytes: None, failed: false },
+        ];
+        let groups = group_open_files(&files);
+        assert_eq!(groups.iter().map(|g| g.label.as_ref()).collect::<Vec<_>>(), ["logs", "logs"]);
+        assert_eq!(groups.iter().map(|g| g.key.as_ref()).collect::<Vec<_>>(), ["/a/logs", "/b/logs"]);
+        let collapsed = HashSet::from([groups[0].key.clone()]);
+        let (rows, actions) = super::rows(&groups, None, &collapsed);
+        assert_eq!(rows.len(), 3, "collapsing one `logs` folder leaves the other open");
+        assert!(matches!(&actions[0], RowAction::ToggleGroup(k) if k.as_ref() == "/a/logs"));
+        assert!(matches!(&actions[2], RowAction::Activate(t) if *t == b));
     }
 }

@@ -130,6 +130,7 @@ pub fn init(name: &str) -> TabInit {
 pub fn sidebar() -> FixedSidebar {
     FixedSidebar {
         groups: vec![SidebarGroup {
+            key: BUNDLE.into(),
             label: BUNDLE.into(),
             entries: FILES.iter().map(|(name, size)| SidebarEntry { label: (*name).into(), size: (*size).into(), tab: None, open: Some((source(name), init(name))) }).collect(),
         }],

@@ -231,6 +231,7 @@ impl Workspace {
                 .groups
                 .iter()
                 .map(|g| SidebarGroup {
+                    key: g.key.clone(),
                     label: g.label.clone(),
                     entries: g.entries.iter().map(|e| SidebarEntry { tab: files.iter().find(|f| f.title == e.label).map(|f| f.tab), ..e.clone() }).collect(),
                 })
@@ -284,9 +285,9 @@ impl Workspace {
 
     fn sidebar_action(&mut self, action: RowAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            RowAction::ToggleGroup(label) => {
-                if !self.collapsed.remove(&label) {
-                    self.collapsed.insert(label);
+            RowAction::ToggleGroup(key) => {
+                if !self.collapsed.remove(&key) {
+                    self.collapsed.insert(key);
                 }
                 cx.notify();
             }
