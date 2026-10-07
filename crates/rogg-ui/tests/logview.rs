@@ -362,10 +362,12 @@ fn clicking_the_scrollbar_track_centres_the_thumb_on_the_pointer(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-fn dragging_below_the_panel_scrolls_and_keeps_extending(cx: &mut TestAppContext) {
+fn dragging_below_the_panel_scrolls_and_extends_past_the_visible_rows(cx: &mut TestAppContext) {
     common::setup(cx);
     let state = cx.new(|_| LogViewState::new(rows(100, None)));
     let w = open(cx, state.clone());
+    render(cx, w);
+    let last_visible = state.read_with(cx, |s, _| s.last_rows().last().unwrap().row);
     cx.update_window(w, |_, window, cx| {
         use gpui_kit::test::TestWindowExt;
         window.drag(point(px(300.), px(4. + 10.)), point(px(300.), px(600.)), cx);
@@ -373,4 +375,47 @@ fn dragging_below_the_panel_scrolls_and_keeps_extending(cx: &mut TestAppContext)
     .unwrap();
     let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
     assert!(first > 0, "pointer below the panel auto-scrolls");
+    let (lo, hi) = state.read_with(cx, |s, _| s.selection_range()).unwrap();
+    assert_eq!(lo, 1000);
+    assert!(hi > 1000 + last_visible as u64, "range reaches past the rows visible before the drag: {hi}");
+}
+
+#[gpui_kit::test]
+fn dragging_above_the_panel_extends_up_past_the_visible_rows(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let w = open(cx, state.clone());
+    state.update(cx, |s, cx| s.scroll_to_row(50, ScrollTo::Top, cx));
+    render(cx, w);
+    let first_before = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.drag(point(px(300.), px(4. + 23. * 3. + 10.)), point(px(300.), px(-100.)), cx);
+    })
+    .unwrap();
+    let first = state.read_with(cx, |s, _| s.last_rows()[0].row);
+    let (lo, hi) = state.read_with(cx, |s, _| s.selection_range()).unwrap();
+    assert_eq!(hi, 1000 + first_before as u64 + 3);
+    assert!(first < first_before, "pointer above the panel auto-scrolls up");
+    assert!(lo < 1000 + first_before as u64, "range reaches above the rows visible before the drag: {lo}");
+}
+
+#[gpui_kit::test]
+fn the_bottom_right_corner_outside_the_horizontal_track_selects_rows(cx: &mut TestAppContext) {
+    common::setup(cx);
+    // Ten long lines fill the panel exactly: a horizontal thumb but no vertical one.
+    let lines: Vec<LogRow> = (0..10)
+        .map(|i| LogRow::Line(LogLine { number: 1000 + i, text: "x".repeat(500).into(), spans: vec![], pinned: false, context: false, tint: None }))
+        .collect();
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(lines))));
+    let w = open(cx, state.clone());
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.render_frame(cx);
+        // Row 9 spans y 211..234; the thumb zone starts at y 227, but x 795 is right of the track (ends at 788).
+        window.click_at("log-test", point(px(795.), px(229.)), cx);
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1009));
+    assert_eq!(state.read_with(cx, |s, _| s.scroll_x()), px(0.));
 }

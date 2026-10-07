@@ -593,6 +593,7 @@ impl Element for LogViewElement {
             if let Some(bar) = hbar
                 && e.position.y >= bar.thumb.top() - px(3.)
                 && f32::from(e.position.x) >= bar.track_left
+                && f32::from(e.position.x) <= bar.track_left + bar.travel + f32::from(bar.thumb.size.width)
             {
                 let grab = if bar.thumb.contains(&e.position) { f32::from(e.position.x - bar.thumb.left()) } else { f32::from(bar.thumb.size.width) / 2. };
                 state.update(cx, |s, cx| {
@@ -662,16 +663,9 @@ impl Element for LogViewElement {
                                     cx.emit(LogViewEvent::Selected { row, number });
                                 }
                             });
-                        } else if e.position.y < track_top {
-                            state.update(cx, |s, cx| {
-                                s.scroll_by_px(-s.row_h, 0.);
-                                cx.notify();
-                            });
-                        } else if e.position.y > track_bottom {
-                            state.update(cx, |s, cx| {
-                                s.scroll_by_px(s.row_h, 0.);
-                                cx.notify();
-                            });
+                        } else if e.position.y < track_top || e.position.y > track_bottom {
+                            let down = e.position.y > track_bottom;
+                            state.update(cx, |s, cx| s.autoscroll_select(down, cx));
                         }
                     }
                 }

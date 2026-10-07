@@ -344,6 +344,24 @@ impl LogViewState {
         }
     }
 
+    /// Drag-select with the pointer above (`down` false) or below the panel: scrolls one row and moves the
+    /// selection head to the first or last visible line row (gap rows skipped), emitting `Selected` on change.
+    pub(crate) fn autoscroll_select(&mut self, down: bool, cx: &mut Context<Self>) {
+        let dy = if down { self.row_h } else { -self.row_h };
+        self.scroll_by_px(dy, 0.);
+        let visible = self.visible_rows();
+        let mut lines = visible.iter().map(|&(row, _)| row).filter(|&row| !self.rows.is_gap(row));
+        let edge = if down { lines.next_back() } else { lines.next() };
+        if let Some(row) = edge
+            && let Some(number) = self.rows.number_at(row)
+            && self.selected != Some(number)
+        {
+            self.extend_selection(number, cx);
+            cx.emit(LogViewEvent::Selected { row, number });
+        }
+        cx.notify();
+    }
+
     /// Scrolls so the vertical thumb's top sits `thumb_top` px below the track top (thumb of `thumb_h` px in a
     /// track of `track` px), using the same mapping the element uses to place the thumb.
     pub(crate) fn drag_vthumb(&mut self, thumb_top: f32, track: f32, thumb_h: f32) {
