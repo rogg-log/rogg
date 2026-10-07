@@ -57,8 +57,15 @@ fn map_file(file: &File, path: &Path) -> Result<Data, CoreError> {
     SafeMap::map(file).map(Data::Mapped).map_err(CoreError::io(path))
 }
 
-/// Where the UTF-8 conversion of the UTF-16 file at `path` lives in the cache (spec §4.2 key).
+/// Where the UTF-8 conversion of the UTF-16 file at `path` lives in the cache (spec §4.2 key). A cache entry is
+/// immutable and already origin-keyed (leasing touches its mtime, which would change an `origin_key`), so its
+/// conversion is keyed by its file stem.
 fn transcoded_path(cache_dir: &Path, path: &Path) -> Result<PathBuf, CoreError> {
+    if path.starts_with(cache_dir)
+        && let Some(stem) = path.file_stem()
+    {
+        return Ok(cache_dir.join(format!("{}.utf8", stem.to_string_lossy())));
+    }
     let key = crate::cache::origin_key(path, &[], "utf8").map_err(CoreError::io(path))?;
     Ok(cache_dir.join(format!("{key:016x}.utf8")))
 }

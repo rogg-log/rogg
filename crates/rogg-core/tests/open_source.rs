@@ -150,3 +150,27 @@ fn errors_name_what_failed() {
     assert!(matches!(open_source(&SourceRef::member(SourceRef::File(zip2), "a.log"), &cache, &cancel, |_| {}), Err(CoreError::Cancelled)));
     assert!(matches!(open_source(&SourceRef::File(dir.path().join("missing.log")), &cache, &CancelToken::new(), |_| {}), Err(CoreError::Io { .. })));
 }
+
+#[test]
+fn utf16_members_are_converted_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut utf16 = vec![0xFF, 0xFE];
+    for u in "héllo\r\nwörld\n".encode_utf16() {
+        utf16.extend(u.to_le_bytes());
+    }
+    let zip = dir.path().join("u.zip");
+    write_archive(&zip, BundleKind::Zip, &[("w.log", &utf16)]).unwrap();
+    let cache = cache(dir.path());
+    let member = SourceRef::member(SourceRef::File(zip), "w.log");
+    let mut first_stages = Vec::new();
+    let first = open_source(&member, &cache, &CancelToken::new(), |u| first_stages.push(u.stage)).unwrap();
+    assert!(first_stages.contains(&OpenStage::Transcoding), "{first_stages:?}");
+    assert_eq!(lines(&first.text), ["héllo", "wörld"]);
+    drop(first);
+    let mut stages = Vec::new();
+    let second = open_source(&member, &cache, &CancelToken::new(), |u| stages.push(u.stage)).unwrap();
+    assert!(!stages.contains(&OpenStage::Transcoding), "the converted entry is reused: {stages:?}");
+    assert_eq!(lines(&second.text), ["héllo", "wörld"]);
+    let converted = std::fs::read_dir(cache.dir()).unwrap().filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "utf8")).count();
+    assert_eq!(converted, 1, "exactly one .utf8 copy");
+}

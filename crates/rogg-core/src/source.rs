@@ -254,12 +254,18 @@ impl Inflating {
     fn start(src: PathBuf, dst: PathBuf) -> Result<Inflating, CoreError> {
         let partial = partial_path(&dst);
         let mut writer = File::create(&partial).map_err(CoreError::io(&partial))?;
-        let reader = File::open(&partial).map_err(CoreError::io(&partial))?;
+        let reader = match File::open(&partial) {
+            Ok(reader) => reader,
+            Err(source) => {
+                let _ = std::fs::remove_file(&partial);
+                return Err(CoreError::Io { path: partial, source });
+            }
+        };
         let cancel = CancelToken::new();
         let token = cancel.clone();
         let (tx, rx) = mpsc::channel();
         let (thread_partial, thread_dst) = (partial.clone(), dst.clone());
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("rogg-gunzip".into())
             .spawn(move || {
                 let sender = tx.clone();
@@ -271,8 +277,11 @@ impl Inflating {
                     let _ = std::fs::remove_file(&thread_partial);
                 }
                 let _ = tx.send(InflateMsg::Done(result));
-            })
-            .map_err(|source| CoreError::Io { path: dst.clone(), source })?;
+            });
+        if let Err(source) = spawned {
+            let _ = std::fs::remove_file(&partial);
+            return Err(CoreError::Io { path: dst, source });
+        }
         Ok(Inflating { cancel, rx, reader: Some(reader), partial, dst, progress: (0, 0), finished: false })
     }
 
