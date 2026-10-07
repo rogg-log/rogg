@@ -7,11 +7,14 @@ use crate::tab::Tab;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, BorrowAppContext, Context, Entity, EventEmitter, SharedString, Subscription, TestSupportExt, WeakEntity, Window, div, px};
-use rogg_core::profile::{DEFAULT_PROFILE, LineRule, Profile, default_palette, names_collide};
-use rogg_ui::controls::{ActionButton, CompactSelect};
+use rogg_core::profile::{
+    ColorSpec, ColorValue, DEFAULT_PROFILE, EXPORT_EXT, HitEntry, LineRule, MAX_PALETTE, Panes, Profile, default_palette, derive_light, names_collide,
+};
+use rogg_ui::controls::{ActionButton, CompactSelect, FlagButton, Segmented};
 use rogg_ui::dialogs::DialogFrame;
-use rogg_ui::form::{EditableRuleRow, PaletteSlot, SectionLabel, TextField};
+use rogg_ui::form::{EditableRuleRow, PaletteSlot, SectionLabel, Swatch, TextField};
 use rogg_ui::theme::ActiveRoggTheme;
+use std::path::Path;
 
 pub enum ProfileEditorEvent {
     Close,
@@ -29,6 +32,11 @@ pub struct ProfileEditor {
     selected_slot: Option<usize>,
     rename: Option<(Entity<InputState>, Subscription)>,
     rename_error: Option<SharedString>,
+    /// Pattern, colour and light-colour inputs of the selected rule, with their subscriptions.
+    rule_inputs: Option<([Entity<InputState>; 3], Vec<Subscription>)>,
+    /// Foreground, background and their light overrides of the selected palette slot.
+    slot_inputs: Option<([Entity<InputState>; 4], Vec<Subscription>)>,
+    color_error: bool,
 }
 
 impl EventEmitter<ProfileEditorEvent> for ProfileEditor {}
@@ -41,7 +49,7 @@ fn ed(this: &Entity<ProfileEditor>, f: impl Fn(&mut ProfileEditor, &mut Window, 
 
 impl ProfileEditor {
     pub fn new(tab: Option<WeakEntity<Tab>>, profile: String) -> Self {
-        Self { tab, profile, selected_rule: None, selected_slot: None, rename: None, rename_error: None }
+        Self { tab, profile, selected_rule: None, selected_slot: None, rename: None, rename_error: None, rule_inputs: None, slot_inputs: None, color_error: false }
     }
 
     pub fn profile_name(&self) -> &str {
@@ -79,6 +87,9 @@ impl ProfileEditor {
         self.selected_slot = None;
         self.rename = None;
         self.rename_error = None;
+        self.rule_inputs = None;
+        self.slot_inputs = None;
+        self.color_error = false;
         if let Some(tab) = self.tab.as_ref().and_then(WeakEntity::upgrade) {
             let name = SharedString::from(name.to_string());
             tab.update(cx, |t, cx| t.set_profile(name, cx));
@@ -197,15 +208,127 @@ impl ProfileEditor {
         self.select_rule(None, window, cx);
     }
 
-    /// Selects rule `i` (its editing form opens below it in Task 14).
-    pub fn select_rule(&mut self, i: Option<usize>, _window: &mut Window, cx: &mut Context<Self>) {
+    /// Selects rule `i` and opens its editing form below it (with fresh inputs showing its values).
+    pub fn select_rule(&mut self, i: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_rule = i;
+        self.color_error = false;
+        self.rule_inputs = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()).map(|rule| {
+            let pattern = cx.new(|cx| InputState::new(window, cx).default_value(rule.pattern.clone()).placeholder("Text or pattern"));
+            let color = cx.new(|cx| InputState::new(window, cx).default_value(rule.color.0.clone()).placeholder("#rrggbb or token"));
+            let light = cx.new(|cx| InputState::new(window, cx).default_value(rule.light.map(|l| l.0).unwrap_or_default()).placeholder("auto"));
+            // The subscriptions read `selected_rule` at event time: a reorder moves the selection without new inputs.
+            let subs = vec![
+                cx.subscribe_in(&pattern, window, |e, input, ev: &InputEvent, _, cx| {
+                    if let (InputEvent::Change, Some(i)) = (ev, e.selected_rule) {
+                        let text = input.read(cx).value().to_string();
+                        e.edit(cx, |p| {
+                            if let Some(r) = p.rules.get_mut(i) {
+                                r.pattern = text;
+                            }
+                        });
+                    }
+                }),
+                cx.subscribe_in(&color, window, |e, input, ev: &InputEvent, _, cx| {
+                    if let (InputEvent::Change, Some(i)) = (ev, e.selected_rule) {
+                        let spec = ColorSpec(input.read(cx).value().trim().to_string());
+                        e.color_error = spec.parse().is_none();
+                        if !e.color_error {
+                            e.edit(cx, |p| {
+                                if let Some(r) = p.rules.get_mut(i) {
+                                    r.color = spec;
+                                }
+                            });
+                        }
+                        cx.notify();
+                    }
+                }),
+                cx.subscribe_in(&light, window, |e, input, ev: &InputEvent, _, cx| {
+                    if let (InputEvent::Change, Some(i)) = (ev, e.selected_rule) {
+                        let text = input.read(cx).value().trim().to_string();
+                        let spec = (!text.is_empty()).then_some(ColorSpec(text));
+                        if spec.as_ref().is_none_or(|s| s.parse().is_some()) {
+                            e.edit(cx, |p| {
+                                if let Some(r) = p.rules.get_mut(i) {
+                                    r.light = spec;
+                                }
+                            });
+                        }
+                    }
+                }),
+            ];
+            ([pattern, color, light], subs)
+        });
         cx.notify();
     }
 
-    pub fn select_slot(&mut self, i: Option<usize>, _window: &mut Window, cx: &mut Context<Self>) {
+    /// Selects palette slot `i` and opens its colour form (with fresh inputs showing its values).
+    pub fn select_slot(&mut self, i: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_slot = i;
+        self.slot_inputs = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()).map(|h| {
+            let make = |text: String, placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+                cx.new(|cx| InputState::new(window, cx).default_value(text).placeholder(placeholder))
+            };
+            let inputs = [
+                make(h.fg.0.clone(), "text colour", window, cx),
+                make(h.bg.0.clone(), "background", window, cx),
+                make(h.light_fg.map(|c| c.0).unwrap_or_default(), "auto", window, cx),
+                make(h.light_bg.map(|c| c.0).unwrap_or_default(), "auto", window, cx),
+            ];
+            let subs = inputs
+                .iter()
+                .enumerate()
+                .map(|(field, input)| {
+                    cx.subscribe_in(input, window, move |e, input, ev: &InputEvent, _, cx| {
+                        let (InputEvent::Change, Some(slot)) = (ev, e.selected_slot) else { return };
+                        let text = input.read(cx).value().trim().to_string();
+                        let spec = ColorSpec(text.clone());
+                        let optional = field >= 2;
+                        if !(spec.parse().is_some() || (optional && text.is_empty())) {
+                            return;
+                        }
+                        e.edit(cx, |p| {
+                            let Some(h) = p.hit_palette.get_mut(slot) else { return };
+                            match field {
+                                0 => h.fg = spec,
+                                1 => h.bg = spec,
+                                2 => h.light_fg = (!text.is_empty()).then_some(spec),
+                                _ => h.light_bg = (!text.is_empty()).then_some(spec),
+                            }
+                        });
+                    })
+                })
+                .collect();
+            (inputs, subs)
+        });
         cx.notify();
+    }
+
+    pub fn rule_inputs(&self) -> Option<(Entity<InputState>, Entity<InputState>, Entity<InputState>)> {
+        self.rule_inputs.as_ref().map(|([p, c, l], _)| (p.clone(), c.clone(), l.clone()))
+    }
+
+    pub fn slot_inputs(&self) -> Option<[Entity<InputState>; 4]> {
+        self.slot_inputs.as_ref().map(|(inputs, _)| inputs.clone())
+    }
+
+    /// Whether the rule's colour field holds something that is neither a token nor a hex colour.
+    pub fn color_error(&self) -> bool {
+        self.color_error
+    }
+
+    /// A swatch click: the token becomes the rule colour (its light override is dropped) and the colour field shows it.
+    fn set_token(&mut self, i: usize, token: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit(cx, |p| {
+            if let Some(r) = p.rules.get_mut(i) {
+                r.color = ColorSpec::token(token);
+                r.light = None;
+            }
+        });
+        self.color_error = false;
+        if let Some(([_, color, light], _)) = &self.rule_inputs {
+            color.update(cx, |c, cx| c.set_value(token, window, cx));
+            light.update(cx, |l, cx| l.set_value("", window, cx));
+        }
     }
 }
 
@@ -298,20 +421,182 @@ impl Render for ProfileEditor {
     }
 }
 
-/// Extension points for Task 14 (the rule form, the palette slot form, import and export). They are intentionally
-/// empty here: the forms render nothing and import and export do nothing until Task 14 fills them in.
+const SWATCH_TOKENS: [&str; 10] = ["text", "muted", "faint", "accent", "error", "amber", "hit-0", "hit-1", "hit-2", "hit-3"];
+
+/// A labelled line of the rule and slot forms.
+fn form_line(label: &'static str, cx: &App) -> gpui_kit::Div {
+    let s = cx.rogg().text_scale();
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(div().w(px(74.)).flex_none().text_size(s.px(11.)).text_color(cx.rogg().palette.muted).child(label))
+}
+
 impl ProfileEditor {
-    fn rule_form(&self, _i: usize, _rule: &LineRule, _this: &Entity<Self>, _cx: &App) -> gpui_kit::AnyElement {
-        div().into_any_element()
+    fn rule_form(&self, i: usize, rule: &LineRule, this: &Entity<Self>, cx: &App) -> gpui_kit::AnyElement {
+        let Some(([pattern, color, light], _)) = &self.rule_inputs else { return div().into_any_element() };
+        let p = cx.rogg().palette;
+        let has_error = cx.global::<ProfileStore>().errors(&self.profile).iter().any(|e| e.rule == i);
+        let flag = |id: &'static str, label: &'static str, on: bool, f: fn(&mut LineRule)| {
+            FlagButton::new(id, label).pressed(on).on_click(ed(this, move |e, _, cx| {
+                e.edit(cx, |p| {
+                    if let Some(r) = p.rules.get_mut(i) {
+                        f(r)
+                    }
+                })
+            }))
+        };
+        let derived = match rule.color.parse() {
+            Some(ColorValue::Rgba(v)) => format!("auto · {}", ColorSpec::hex(derive_light(v, false)).0),
+            _ => "follows the theme".to_string(),
+        };
+        let panes = [Panes::Full, Panes::Filtered, Panes::Both];
+        div()
+            .id("rule-form")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .pl(px(37.))
+            .pr(px(4.))
+            .pb(px(12.))
+            .child(
+                form_line("Pattern", cx)
+                    .child(TextField::new("rule-pattern", pattern.clone()).mono(true).width(240.).error(has_error))
+                    .child(flag("rule-regex", ".*", rule.regex, |r| r.regex = !r.regex))
+                    .child(flag("rule-case", "Aa", rule.case_sensitive, |r| r.case_sensitive = !r.case_sensitive)),
+            )
+            .child(
+                form_line("Effects", cx)
+                    .child(flag("rule-effect-match", "Match text", rule.match_color, |r| r.match_color = !r.match_color))
+                    .child(flag("rule-effect-line", "Line text", rule.line_color, |r| r.line_color = !r.line_color))
+                    .child(flag("rule-effect-tint", "Row tint", rule.row_tint, |r| r.row_tint = !r.row_tint))
+                    .child(flag("rule-effect-bold", "Bold", rule.bold, |r| r.bold = !r.bold)),
+            )
+            .child(form_line("Panels", cx).child(
+                Segmented::new("rule-panes", vec!["Full log".into(), "Filtered log".into(), "Both".into()], panes.iter().position(|x| *x == rule.panes).unwrap_or(2)).on_select({
+                    let this = this.clone();
+                    move |k, _, cx| {
+                        this.update(cx, |e, cx| {
+                            e.edit(cx, |p| {
+                                if let Some(r) = p.rules.get_mut(i) {
+                                    r.panes = panes[k.min(2)];
+                                }
+                            })
+                        })
+                    }
+                }),
+            ))
+            .child(
+                form_line("Colour", cx)
+                    .children(SWATCH_TOKENS.iter().map(|token| {
+                        let color = crate::profiles::resolve_color(&ColorSpec::token(token), None, false, &p, cx.rogg().appearance);
+                        Swatch::new(SharedString::from(format!("rule-swatch-{token}")), color)
+                            .selected(rule.color == ColorSpec::token(token))
+                            .on_click(ed(this, move |e, window, cx| e.set_token(i, token, window, cx)))
+                    }))
+                    .child(TextField::new("rule-color", color.clone()).mono(true).width(96.).error(self.color_error)),
+            )
+            .child(
+                form_line("Light theme", cx)
+                    .child(TextField::new("rule-light", light.clone()).mono(true).width(96.))
+                    .child(div().text_size(cx.rogg().text_scale().px(10.)).text_color(p.faint).child(derived)),
+            )
+            .child(div().flex().child(ActionButton::new("rule-delete", "Delete rule").on_click(ed(this, move |e, window, cx| e.delete_rule(i, window, cx)))))
+            .into_any_element()
     }
 
-    fn slot_form(&self, _slot: usize, _profile: &Profile, _this: &Entity<Self>, _cx: &App) -> gpui_kit::AnyElement {
-        div().into_any_element()
+    fn slot_form(&self, slot: usize, profile: &Profile, this: &Entity<Self>, cx: &App) -> gpui_kit::AnyElement {
+        let Some(([fg, bg, light_fg, light_bg], _)) = &self.slot_inputs else { return div().into_any_element() };
+        let len = profile.hit_palette.len();
+        div()
+            .id("slot-form")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .pt(px(10.))
+            .child(form_line("Colours", cx).child(TextField::new("slot-fg", fg.clone()).mono(true).width(96.)).child(TextField::new("slot-bg", bg.clone()).mono(true).width(96.)))
+            .child(
+                form_line("Light theme", cx)
+                    .child(TextField::new("slot-light-fg", light_fg.clone()).mono(true).width(96.))
+                    .child(TextField::new("slot-light-bg", light_bg.clone()).mono(true).width(96.)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .when(len < MAX_PALETTE, |d| {
+                        d.child(ActionButton::new("slot-add", "Add colour").on_click(ed(this, move |e, window, cx| {
+                            e.edit(cx, |p| p.hit_palette.push(HitEntry::slot(p.hit_palette.len())));
+                            let last = cx.global::<ProfileStore>().get(&e.profile).hit_palette.len() - 1;
+                            e.select_slot(Some(last), window, cx);
+                        })))
+                    })
+                    .when(len > 1, |d| {
+                        d.child(ActionButton::new("slot-remove", "Remove colour").on_click(ed(this, move |e, window, cx| {
+                            e.edit(cx, |p| {
+                                if slot < p.hit_palette.len() && p.hit_palette.len() > 1 {
+                                    p.hit_palette.remove(slot);
+                                }
+                            });
+                            e.select_slot(None, window, cx);
+                        })))
+                    }),
+            )
+            .into_any_element()
     }
 
-    /// Task 14 opens the file panel here.
-    pub fn import(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    /// Import… (spec §6.1 `.roggprofile`): a taken name gets a number; a broken file is reported, never renamed.
+    pub fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui_kit::PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Import".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = rx.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                this.update(cx, |e, cx| e.import_profile_from(&path, cx)).ok();
+            }
+        })
+        .detach();
+    }
 
-    /// Task 14 opens the save panel here.
-    pub fn export(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    pub fn import_profile_from(&mut self, path: &Path, cx: &mut Context<Self>) {
+        match rogg_core::profile::import(path) {
+            Ok(profile) => {
+                let name = cx.update_global::<ProfileStore, _>(|s, _| s.add(profile));
+                cx.emit(ProfileEditorEvent::Changed);
+                cx.emit(ProfileEditorEvent::Toast(format!("Imported profile {name}").into()));
+                self.select_profile(&name, cx);
+            }
+            Err(e) => cx.emit(ProfileEditorEvent::Toast(format!("Could not import {}: {e}", file_label(path)).into())),
+        }
+    }
+
+    /// Export…: the shown profile as `<name>.roggprofile`.
+    pub fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let suggested = format!("{}.{EXPORT_EXT}", self.profile);
+        let rx = cx.prompt_for_new_path(&rogg_core::paths::home_dir(), Some(&suggested));
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(path))) = rx.await {
+                this.update(cx, |e, cx| e.export_profile_to(&path, cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    pub fn export_profile_to(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let profile = cx.global::<ProfileStore>().get(&self.profile).clone();
+        let file = file_label(path);
+        let message = match rogg_core::profile::export(path, &profile) {
+            Ok(()) => format!("Exported profile to {file}"),
+            Err(e) => format!("Could not export {file}: {e}"),
+        };
+        cx.emit(ProfileEditorEvent::Toast(message.into()));
+    }
+}
+
+/// The file name shown in toasts.
+fn file_label(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }

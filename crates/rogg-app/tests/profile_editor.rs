@@ -176,3 +176,111 @@ fn the_rule_selection_follows_reordering(cx: &mut TestAppContext) {
     common::click(cx, f.w, "profile-rule-0-down");
     assert_eq!(f.editor.read_with(cx, |e, _| e.selected_rule()), Some(0), "moving the rule above it down moves the selection up");
 }
+
+fn select_rule(f: &Fixture, cx: &mut TestAppContext, i: usize) {
+    cx.update_window(f.w, |_, window, cx| f.editor.update(cx, |e, cx| e.select_rule(Some(i), window, cx))).unwrap();
+}
+
+/// Replaces an input's text the way typing does (`replace_all` emits `InputEvent::Change`).
+fn type_into(f: &Fixture, cx: &mut TestAppContext, input: &gpui_kit::Entity<gpui_kit::component::input::InputState>, text: &str) {
+    let text = text.to_string();
+    cx.update_window(f.w, |_, window, cx| input.update(cx, |i, cx| i.replace_all(text, window, cx))).unwrap();
+    cx.run_until_parked();
+}
+
+fn rule(cx: &mut TestAppContext, i: usize) -> rogg_core::profile::LineRule {
+    cx.update(|cx| cx.global::<ProfileStore>().get("Default").rules[i].clone())
+}
+
+#[gpui_kit::test]
+fn rule_form_edits_apply_immediately(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    select_rule(&f, cx, 0);
+    assert!(common::exists(cx, f.w, "rule-form"));
+    let (pattern, _, _) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    type_into(&f, cx, &pattern, "disk");
+    common::click(cx, f.w, "rule-effect-bold");
+    common::click(cx, f.w, "rule-panes-1");
+    common::click(cx, f.w, "rule-swatch-amber");
+    common::click(cx, f.w, "rule-regex");
+    let r = rule(cx, 0);
+    assert_eq!(r.pattern, "disk");
+    assert!(r.bold && !r.regex, "the timestamp rule was a regex; the flag toggled it off");
+    assert_eq!(r.panes, rogg_core::profile::Panes::Filtered);
+    assert_eq!(r.color, rogg_core::profile::ColorSpec::token("amber"));
+    let saved = std::fs::read_to_string(f.dir.path().join("profiles/Default.toml")).unwrap();
+    assert!(saved.contains("pattern = \"disk\""), "{saved}");
+}
+
+#[gpui_kit::test]
+fn an_invalid_pattern_shows_its_error_and_keeps_other_rules(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    select_rule(&f, cx, 3);
+    let (pattern, _, _) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    type_into(&f, cx, &pattern, "(unclosed");
+    assert!(cx.update(|cx| cx.global::<ProfileStore>().errors("Default").iter().any(|e| e.rule == 3)));
+    assert!(common::exists(cx, f.w, "profile-rule-3-error"));
+    let tint = f.tab.read_with(cx, |t, cx| match t.full.read(cx).rows().row(0) {
+        rogg_ui::logview::LogRow::Line(l) => l.tint,
+        _ => None,
+    });
+    assert!(tint.is_some(), "the ERROR rule still styles the row");
+}
+
+#[gpui_kit::test]
+fn colour_fields_accept_tokens_and_hex_and_flag_the_rest(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    select_rule(&f, cx, 2);
+    let (_, color, light) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    type_into(&f, cx, &color, "#123456");
+    assert_eq!(rule(cx, 2).color.0, "#123456");
+    type_into(&f, cx, &color, "nope");
+    assert_eq!(rule(cx, 2).color.0, "#123456", "an unreadable colour is not applied");
+    assert!(f.editor.read_with(cx, |e, _| e.color_error()));
+    type_into(&f, cx, &light, "#abcdef");
+    assert_eq!(rule(cx, 2).light.map(|c| c.0).as_deref(), Some("#abcdef"));
+    type_into(&f, cx, &light, "");
+    assert_eq!(rule(cx, 2).light, None, "an empty light colour derives it again");
+}
+
+#[gpui_kit::test]
+fn palette_slots_add_edit_and_remove(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "palette-slot-0");
+    common::click(cx, f.w, "slot-add");
+    let len = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<ProfileStore>().get("Default").hit_palette.len());
+    assert_eq!(len(cx), 5);
+    // "Add colour" selects the new slot (clicking `palette-slot-4` now would toggle the selection off).
+    assert_eq!(f.editor.read_with(cx, |e, _| e.selected_slot()), Some(4));
+    let [fg, _, _, _] = f.editor.read_with(cx, |e, _| e.slot_inputs()).unwrap();
+    type_into(&f, cx, &fg, "#010203");
+    assert_eq!(cx.update(|cx| cx.global::<ProfileStore>().get("Default").hit_palette[4].fg.0.clone()), "#010203");
+    common::click(cx, f.w, "slot-remove");
+    assert_eq!(len(cx), 4);
+}
+
+#[gpui_kit::test]
+fn the_rule_form_keeps_editing_its_rule_after_a_reorder(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    select_rule(&f, cx, 2);
+    let (pattern, _, _) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    let above = rule(cx, 1).pattern;
+    common::click(cx, f.w, "profile-rule-2-up");
+    type_into(&f, cx, &pattern, "moved");
+    assert_eq!(rule(cx, 1).pattern, "moved", "the input edits the selected rule at its new index");
+    assert_eq!(rule(cx, 2).pattern, above, "the rule it swapped with is untouched");
+}
+
+#[gpui_kit::test]
+fn profiles_import_and_export(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    let out = f.dir.path().join("shared.roggprofile");
+    f.editor.update(cx, |e, cx| e.export_profile_to(&out, cx));
+    assert!(out.exists());
+    f.editor.update(cx, |e, cx| e.import_profile_from(&out, cx));
+    assert!(names(cx).contains(&"Default 2".to_string()), "an imported name that is taken gets a number");
+    assert_eq!(f.editor.read_with(cx, |e, _| e.profile_name().to_string()), "Default 2");
+    std::fs::write(&out, "rules = 1").unwrap();
+    f.editor.update(cx, |e, cx| e.import_profile_from(&out, cx));
+    f.ws.read_with(cx, |ws, _| assert!(ws.toasts.iter().any(|(_, t)| t.contains("shared.roggprofile")), "{:?}", ws.toasts));
+}
