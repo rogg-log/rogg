@@ -263,8 +263,9 @@ pub struct ProfileRuleView {
     pub summary: SharedString,
 }
 
-pub fn all_tabs(tabs: &[(SharedString, bool)], on_pick: IndexCallback) -> DialogFrame {
-    tabs.iter().enumerate().fold(DialogFrame::new("Open files"), |d, (i, (label, current))| {
+/// A list of choices with the current one checked (`.tab-picker-item` rows), e.g. All tabs or the log font picker.
+pub fn picker(title: impl Into<SharedString>, items: &[(SharedString, bool)], on_pick: IndexCallback) -> DialogFrame {
+    items.iter().enumerate().fold(DialogFrame::new(title), |d, (i, (label, current))| {
         let on_pick = on_pick.clone();
         d.child(PickerItem {
             id: format!("picker-{i}").into(),
@@ -273,6 +274,10 @@ pub fn all_tabs(tabs: &[(SharedString, bool)], on_pick: IndexCallback) -> Dialog
             on_click: Some(Rc::new(move |w, cx| on_pick(i, w, cx))),
         })
     })
+}
+
+pub fn all_tabs(tabs: &[(SharedString, bool)], on_pick: IndexCallback) -> DialogFrame {
+    picker("Open files", tabs, on_pick)
 }
 
 pub fn profile(name: &str, rules: &[ProfileRuleView]) -> DialogFrame {

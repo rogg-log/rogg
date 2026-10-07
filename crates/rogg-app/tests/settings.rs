@@ -117,3 +117,63 @@ fn a_pinned_theme_keeps_its_density_and_is_never_saved(cx: &mut TestAppContext) 
     });
     assert!(!dir.path().join("settings.toml").exists(), "a pin never writes the settings");
 }
+
+#[gpui_kit::test]
+fn the_settings_dialog_applies_each_change_at_once(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, _ws) = common::open_workspace(cx, Args::default());
+    common::press(cx, w, "cmd-,");
+    assert!(common::exists(cx, w, "setting-theme"));
+    common::click(cx, w, "setting-theme-2");
+    cx.update(|cx| assert_eq!(cx.rogg().appearance, Appearance::Dark));
+    common::click(cx, w, "setting-log-size-up");
+    common::click(cx, w, "setting-wrap");
+    common::click(cx, w, "setting-context-up");
+    common::click(cx, w, "setting-context-up");
+    common::click(cx, w, "setting-cache-down");
+    common::click(cx, w, "setting-depth-down");
+    cx.update(|cx| {
+        let s = SettingsStore::get(cx);
+        assert_eq!((s.appearance.log_font_size, s.behavior.wrap, s.behavior.context, s.behavior.cache_limit_gb, s.behavior.scan_depth), (13, true, 2, 10, 3));
+        assert_eq!(CacheStore::get(cx).limit(), 10 << 30);
+        assert_eq!(cx.rogg().metrics.log_font_size, px(13.));
+    });
+    let (saved, _) = rogg_core::settings::Settings::load(&dir.path().join("settings.toml")).unwrap();
+    assert_eq!(saved.behavior.context, 2);
+    common::press(cx, w, "escape");
+    assert!(!common::exists(cx, w, "setting-theme"));
+    common::click(cx, w, "settings");
+    assert!(common::exists(cx, w, "setting-theme"), "the title bar button opens it too");
+}
+
+#[gpui_kit::test]
+fn picking_another_log_font_returns_to_settings(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    cx.update_window(w, |_, window, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_dialog(rogg_app::workspace::Dialog::FontPicker, cx);
+            ws.pick_log_font("Menlo", window, cx);
+        })
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(SettingsStore::get(cx).appearance.log_font, "Menlo"));
+    assert!(common::exists(cx, w, "setting-theme"));
+}
+
+#[test]
+fn monospace_detection_and_font_options() {
+    use rogg_app::dialogs::fonts::is_monospace;
+    use rogg_app::dialogs::settings::{context_label, log_font_options};
+    assert!(is_monospace([Some(7.2), Some(7.2), Some(7.2)]));
+    assert!(!is_monospace([Some(3.), Some(9.), Some(3.)]));
+    assert!(!is_monospace([Some(0.), Some(0.), Some(0.)]));
+    assert!(!is_monospace([None, Some(7.), Some(7.)]));
+    let (options, selected) = log_font_options(&["SF Mono".into(), "Menlo".into()], "Menlo");
+    assert_eq!(options.iter().map(|o| o.as_ref()).collect::<Vec<_>>(), ["SF Mono", "Menlo", "Other…"]);
+    assert_eq!(selected, 1);
+    let (options, selected) = log_font_options(&["SF Mono".into()], "Iosevka");
+    assert_eq!(options.iter().map(|o| o.as_ref()).collect::<Vec<_>>(), ["SF Mono", "Iosevka", "Other…"]);
+    assert_eq!(selected, 1);
+    assert_eq!([context_label(0), context_label(1), context_label(7)], ["None", "±1 line", "±7 lines"]);
+}

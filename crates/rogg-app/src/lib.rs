@@ -7,6 +7,7 @@ pub mod actions;
 pub mod args;
 pub mod cache;
 pub mod demo;
+pub mod dialogs;
 pub mod document;
 pub mod format;
 pub mod history;

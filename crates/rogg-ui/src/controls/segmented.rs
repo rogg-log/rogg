@@ -44,6 +44,7 @@ impl RenderOnce for Segmented {
                 let on_select = self.on_select.clone();
                 div()
                     .id(SharedString::from(format!("{id}-{i}")))
+                    .test_support()
                     .px(px(11.))
                     .py(px(6.))
                     .text_size(s.px(12.))

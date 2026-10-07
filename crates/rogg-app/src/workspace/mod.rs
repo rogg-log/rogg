@@ -3,7 +3,7 @@
 pub mod chrome;
 pub mod keys;
 
-use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenFile, OpenFolder, OpenRecent, PrevTab, ShowShortcuts, ToggleSidebar};
+use crate::actions::{self, ActivateTab, CloseTab, Dismiss, NextTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::Source;
 use crate::history::HistoryStore;
@@ -38,6 +38,8 @@ pub enum Dialog {
     AllTabs,
     History,
     GoToLine(Entity<InputState>),
+    Settings,
+    FontPicker,
 }
 
 pub struct Workspace {
@@ -214,6 +216,17 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.open_dialog(Dialog::Settings, cx);
+    }
+
+    /// The font picker's choice: saves it and returns to Settings.
+    pub fn pick_log_font(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let name = name.to_string();
+        self.change_settings(move |s| s.appearance.log_font = name, window, cx);
+        self.open_settings(cx);
+    }
+
     pub fn close_dialog(&mut self, cx: &mut Context<Self>) {
         self.dialog = None;
         self.goto_subscription = None;
@@ -255,7 +268,7 @@ impl Workspace {
             .on_toggle_sidebar(act(this, |ws, _, cx| ws.toggle_sidebar(cx)))
             .on_all_tabs(act(this, |ws, _, cx| ws.open_dialog(Dialog::AllTabs, cx)))
             .on_shortcuts(act(this, |ws, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
-            .on_settings(act(this, |ws, _, cx| ws.toast("Settings arrive in a later version", cx)))
+            .on_settings(act(this, |ws, _, cx| ws.open_settings(cx)))
     }
 
     fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>, cx: &App) -> AnyElement {
@@ -284,6 +297,8 @@ impl Workspace {
                     .into_any_element()
             }
             Dialog::GoToLine(input) => dialogs::go_to_line(input.clone()).description("Selects the line in the full log.").on_close(close).into_any_element(),
+            Dialog::Settings => crate::dialogs::settings::render(this, cx).on_close(close).into_any_element(),
+            Dialog::FontPicker => crate::dialogs::fonts::render(this, cx).on_close(act(this, |ws, _, cx| ws.open_settings(cx))).into_any_element(),
         }
     }
 
@@ -326,6 +341,7 @@ impl Workspace {
             .track_focus(&self.focus)
             .on_action(cx.listener(|ws, _: &Dismiss, window, cx| ws.dismiss(window, cx)))
             .on_action(keys::unless_dialog(cx, |ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
+            .on_action(cx.listener(|ws, _: &OpenSettings, _, cx| ws.open_settings(cx)))
             .on_action(cx.listener(|ws, _: &OpenFile, window, cx| ws.prompt_open(false, window, cx)))
             .on_action(cx.listener(|ws, _: &OpenFolder, window, cx| ws.prompt_open(true, window, cx)))
             .on_action(cx.listener(|ws, action: &OpenRecent, window, cx| ws.open_recent(action.index, window, cx)))

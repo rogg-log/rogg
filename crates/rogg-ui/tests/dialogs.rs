@@ -109,3 +109,16 @@ fn history_picker_rows_are_clickable(cx: &mut gpui_kit::TestAppContext) {
     common::click(cx, w, "history-pick-1");
     assert_eq!(picked.get(), Some(1));
 }
+
+#[gpui_kit::test]
+fn the_generic_picker_reports_picks(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let picked = Rc::new(Cell::new(usize::MAX));
+    let p = picked.clone();
+    let w = common::open(cx, 900., 700., move |_, _| {
+        let p = p.clone();
+        rogg_ui::dialogs::picker("Choose a log font", &[("Menlo".into(), false), ("Monaco".into(), true)], Rc::new(move |i, _, _| p.set(i))).into_any_element()
+    });
+    common::click(cx, w, "picker-0");
+    assert_eq!(picked.get(), 0);
+}
