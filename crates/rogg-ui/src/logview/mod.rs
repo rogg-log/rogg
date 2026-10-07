@@ -6,7 +6,7 @@ pub mod text;
 
 pub use element::LogViewElement;
 pub use model::{LogLine, LogRow, LogRowSource, RowTint, Span, SpanStyle, VecRows};
-pub use state::{LogViewEvent, LogViewState, RowGeometry};
+pub use state::{LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
 
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, SharedString, TestSupportExt, Window, div};

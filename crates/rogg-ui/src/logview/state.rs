@@ -3,7 +3,13 @@ use super::scroll::{ScrollAnchor, ScrollGeometry};
 use crate::theme::size;
 use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size, px};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::rc::Rc;
+
+/// Wrapped-row heights kept; when a measurement would exceed this, the cache is cleared first.
+const MAX_CACHED_HEIGHTS: usize = 20_000;
+/// A copied range holds at most this many rows (a shift-click across millions of lines copies its start).
+pub const MAX_COPY_ROWS: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowGeometry {
@@ -18,6 +24,15 @@ pub enum LogViewEvent {
     TogglePin { number: u64 },
 }
 
+/// Where `scroll_to_row` puts the row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollTo {
+    Center,
+    /// Only scroll if needed, by the smallest amount.
+    Visible,
+    Top,
+}
+
 /// Scroll position, selection, wrap and layout caches for one log panel.
 pub struct LogViewState {
     pub(crate) rows: Rc<dyn LogRowSource>,
@@ -25,9 +40,14 @@ pub struct LogViewState {
     pub(crate) scroll_x: f32,
     pub(crate) max_scroll_x: f32,
     pub(crate) wrap: bool,
+    /// The selection head (the line moved by the keyboard and shown in the status bar).
     pub(crate) selected: Option<u64>,
+    /// The other end of a range selection; None for a single line.
+    pub(crate) range_anchor: Option<u64>,
     pub(crate) force_hover_row: Option<usize>,
-    pub(crate) pending_center: Option<usize>,
+    pub(crate) pending_scroll: Option<(usize, ScrollTo)>,
+    /// The request resolved by the current layout; re-applied once wrapped rows are measured.
+    applied_scroll: Option<(usize, ScrollTo)>,
     pub(crate) viewport: Size<Pixels>,
     pub(crate) row_h: f32,
     /// Measured heights of wrapped rows for `heights_width`; unmeasured rows use one row height.
@@ -48,8 +68,10 @@ impl LogViewState {
             max_scroll_x: 0.,
             wrap: false,
             selected: None,
+            range_anchor: None,
             force_hover_row: None,
-            pending_center: None,
+            pending_scroll: None,
+            applied_scroll: None,
             viewport: Size::default(),
             row_h: 23.,
             heights: HashMap::new(),
@@ -63,9 +85,25 @@ impl LogViewState {
         &self.rows
     }
 
+    /// Replaces the rows, keeping the line at the top of the viewport in place (a list scrolled to its top
+    /// stays at its top), so filter changes don't make the view jump.
     pub fn set_rows(&mut self, rows: Rc<dyn LogRowSource>, cx: &mut Context<Self>) {
+        let at_top = !self.initialized || self.with_geometry(|g| self.anchor == g.top());
+        let keep = if at_top {
+            None
+        } else {
+            (0..3).find_map(|k| self.rows.number_at(self.anchor.row + k).map(|n| (n, k == 0)))
+        };
         self.rows = rows;
         self.heights.clear();
+        if let Some((number, same_row)) = keep
+            && let Some(row) = self.rows.nearest_row(number)
+        {
+            self.anchor = ScrollAnchor { row, offset: if same_row { self.anchor.offset.max(0.) } else { 0. } };
+        }
+        if at_top && self.initialized {
+            self.anchor = self.with_geometry(|g| g.top());
+        }
         self.anchor = self.with_geometry(|g| g.clamp(self.anchor));
         cx.notify();
     }
@@ -90,15 +128,114 @@ impl LogViewState {
         self.selected
     }
 
+    /// Selects one line, or nothing; clears any range.
     pub fn set_selected(&mut self, number: Option<u64>, cx: &mut Context<Self>) {
         self.selected = number;
+        self.range_anchor = None;
         cx.notify();
     }
 
-    /// Centres `row` on the next layout (the viewport is only known during prepaint).
-    pub fn center_on_row(&mut self, row: usize, cx: &mut Context<Self>) {
-        self.pending_center = Some(row);
+    /// Extends the selection from its anchor (the line selected before the first extension) to `number`.
+    pub fn extend_selection(&mut self, number: u64, cx: &mut Context<Self>) {
+        if self.range_anchor.is_none() {
+            self.range_anchor = Some(self.selected.unwrap_or(number));
+        }
+        self.selected = Some(number);
         cx.notify();
+    }
+
+    /// The selected lines as an inclusive `(first, last)` pair of display numbers.
+    pub fn selection_range(&self) -> Option<(u64, u64)> {
+        let head = self.selected?;
+        let anchor = self.range_anchor.unwrap_or(head);
+        Some((anchor.min(head), anchor.max(head)))
+    }
+
+    pub fn is_selected(&self, number: u64) -> bool {
+        self.selection_range().is_some_and(|(lo, hi)| (lo..=hi).contains(&number))
+    }
+
+    /// Scrolls `row` into place on the next layout (the viewport is only known during prepaint).
+    pub fn scroll_to_row(&mut self, row: usize, how: ScrollTo, cx: &mut Context<Self>) {
+        self.pending_scroll = Some((row, how));
+        cx.notify();
+    }
+
+    /// Centres `row` on the next layout.
+    pub fn center_on_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.scroll_to_row(row, ScrollTo::Center, cx);
+    }
+
+    /// Moves the selection by `delta` rows (skipping gap rows), scrolls it into view and emits `Selected`.
+    /// With no selection, `delta >= 0` selects the first row and a negative delta the last.
+    pub fn move_selection(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
+        let count = self.rows.row_count();
+        if count == 0 {
+            return;
+        }
+        let target = match self.selected.and_then(|n| self.rows.row_for_number(n)) {
+            None if delta >= 0 => 0,
+            None => count - 1,
+            Some(row) => (row as isize + delta).clamp(0, count as isize - 1) as usize,
+        };
+        self.select_row(target, if delta >= 0 { 1 } else { -1 }, extend, cx);
+    }
+
+    /// PgUp / PgDn: moves the selection by one viewport of rows.
+    pub fn page(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
+        let page = self.with_geometry(|g| g.visible(self.anchor).len()).saturating_sub(1).max(1) as isize;
+        self.move_selection(if down { page } else { -page }, extend, cx);
+    }
+
+    /// ⌘↑ / ⌘↓: selects the first or last line.
+    pub fn select_edge(&mut self, last: bool, extend: bool, cx: &mut Context<Self>) {
+        let count = self.rows.row_count();
+        if count == 0 {
+            return;
+        }
+        if last {
+            self.select_row(count - 1, -1, extend, cx);
+        } else {
+            self.select_row(0, 1, extend, cx);
+        }
+    }
+
+    fn select_row(&mut self, mut row: usize, step: isize, extend: bool, cx: &mut Context<Self>) {
+        let count = self.rows.row_count();
+        let mut guard = count;
+        while self.rows.is_gap(row) && guard > 0 {
+            let next = row as isize + step;
+            if next < 0 || next >= count as isize {
+                return;
+            }
+            row = next as usize;
+            guard -= 1;
+        }
+        let Some(number) = self.rows.number_at(row) else { return };
+        if extend {
+            self.extend_selection(number, cx);
+        } else {
+            self.set_selected(Some(number), cx);
+        }
+        self.scroll_to_row(row, ScrollTo::Visible, cx);
+        cx.emit(LogViewEvent::Selected { row, number });
+    }
+
+    /// The selected lines as text, one per line, gap rows skipped; `with_numbers` prefixes `number\t`.
+    pub fn selected_text(&self, with_numbers: bool) -> Option<String> {
+        let (lo, hi) = self.selection_range()?;
+        let first = self.rows.row_for_number(lo)?;
+        let last = self.rows.row_for_number(hi)?;
+        let mut out = String::new();
+        for ix in first..=last.min(first + MAX_COPY_ROWS - 1) {
+            let (Some(number), Some(text)) = (self.rows.number_at(ix), self.rows.copy_text(ix)) else { continue };
+            if with_numbers {
+                let _ = write!(out, "{number}\t");
+            }
+            out.push_str(&text);
+            out.push('\n');
+        }
+        Some(out)
     }
 
     /// Paint `row` as hovered (gallery specimens).
@@ -133,6 +270,14 @@ impl LogViewState {
         f(&geometry)
     }
 
+    fn resolve_scroll(&self, (row, how): (usize, ScrollTo)) -> ScrollAnchor {
+        self.with_geometry(|g| match how {
+            ScrollTo::Center => g.center_on(row),
+            ScrollTo::Visible => g.ensure_visible(self.anchor, row),
+            ScrollTo::Top => g.row_top(row),
+        })
+    }
+
     /// Called at the start of prepaint with the element size and current metrics.
     pub(crate) fn begin_layout(&mut self, viewport: Size<Pixels>, text_width: f32, row_h: f32) {
         if self.row_h != row_h || (self.wrap && self.heights_width != text_width) {
@@ -145,17 +290,26 @@ impl LogViewState {
             self.anchor = self.with_geometry(|g| g.top());
             self.initialized = true;
         }
-        self.anchor = match self.pending_center.take() {
-            Some(row) => self.with_geometry(|g| g.center_on(row)),
+        self.applied_scroll = self.pending_scroll.take();
+        self.anchor = match self.applied_scroll {
+            Some(request) => self.resolve_scroll(request),
             None => self.with_geometry(|g| g.clamp(self.anchor)),
         };
     }
 
+    /// Stores measured wrapped heights and re-resolves this frame's scroll request with them, so a centred
+    /// row stays centred once its real height is known.
     pub(crate) fn record_heights(&mut self, measured: &[(usize, f32)]) {
+        if self.heights.len() + measured.len() > MAX_CACHED_HEIGHTS {
+            self.heights.clear();
+        }
         for &(row, h) in measured {
             self.heights.insert(row, h);
         }
-        self.anchor = self.with_geometry(|g| g.clamp(self.anchor));
+        self.anchor = match self.applied_scroll {
+            Some(request) => self.resolve_scroll(request),
+            None => self.with_geometry(|g| g.clamp(self.anchor)),
+        };
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<(usize, f32)> {
@@ -177,5 +331,25 @@ impl LogViewState {
         if !self.wrap {
             self.scroll_x = (self.scroll_x + dx).clamp(0., self.max_scroll_x.max(0.));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logview::{LogLine, LogRow, VecRows};
+
+    #[test]
+    fn heights_cache_is_bounded() {
+        let rows: Vec<LogRow> = (0..10)
+            .map(|i| LogRow::Line(LogLine { number: i, text: "x".into(), spans: vec![], pinned: false, context: false, tint: None }))
+            .collect();
+        let mut s = LogViewState::new(Rc::new(VecRows::new(rows)));
+        s.wrap = true;
+        let many: Vec<(usize, f32)> = (0..MAX_CACHED_HEIGHTS + 10).map(|r| (r, 46.)).collect();
+        s.record_heights(&many);
+        assert!(s.heights.len() <= MAX_CACHED_HEIGHTS + 10);
+        s.record_heights(&[(1, 69.)]);
+        assert!(s.heights.len() <= 1, "an over-full cache is cleared before inserting");
     }
 }

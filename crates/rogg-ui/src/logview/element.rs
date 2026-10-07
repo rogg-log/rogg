@@ -250,7 +250,7 @@ pub struct LogViewPrepaint {
     rows: Vec<PaintRow>,
     thumb: Option<Bounds<Pixels>>,
     theme: RoggTheme,
-    selected: Option<u64>,
+    selection: Option<(u64, u64)>,
     force_hover_row: Option<usize>,
     text_left: Pixels,
     scroll_x: Pixels,
@@ -384,9 +384,9 @@ impl Element for LogViewElement {
         self.state.update(cx, |s, _| s.set_max_scroll_x(longest * advance - text_w));
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let (visible, rows_src, selected, force_hover_row, scroll_x, thumb) = {
+        let (visible, rows_src, selection, force_hover_row, scroll_x, thumb) = {
             let s = self.state.read(cx);
-            (s.visible_rows(), s.rows().clone(), s.selected(), s.force_hover_row, s.scroll_x, s.thumb())
+            (s.visible_rows(), s.rows().clone(), s.selection_range(), s.force_hover_row, s.scroll_x, s.thumb())
         };
         let mut rows = Vec::with_capacity(visible.len());
         let mut geometry = Vec::with_capacity(visible.len());
@@ -413,7 +413,7 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, theme, selected, force_hover_row, text_left, scroll_x: px(scroll_x) }
+        LogViewPrepaint { hitbox, rows, thumb, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x) }
     }
 
     fn paint(
@@ -440,7 +440,7 @@ impl Element for LogViewElement {
                     }
                     RowBody::Line { number, number_line, text, pinned, tint, marks, outlines } => {
                         let hovered = pre.force_hover_row == Some(row.row) || row.hitbox.is_hovered(window);
-                        let selected = pre.selected == Some(*number);
+                        let selected = pre.selection.is_some_and(|(lo, hi)| (lo..=hi).contains(number));
                         let bg = if selected {
                             Some(p.selection)
                         } else if let Some(t) = tint {
@@ -547,7 +547,7 @@ impl Element for LogViewElement {
                     if in_gutter {
                         cx.emit(LogViewEvent::TogglePin { number });
                     } else {
-                        s.selected = Some(number);
+                        s.set_selected(Some(number), cx);
                         cx.emit(LogViewEvent::Selected { row, number });
                     }
                     cx.notify();

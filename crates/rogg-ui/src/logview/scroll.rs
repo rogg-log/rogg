@@ -86,6 +86,41 @@ impl ScrollGeometry<'_> {
         self.clamp(self.normalize(ScrollAnchor { row, offset: -(self.viewport - h) / 2. }))
     }
 
+    /// Anchor with `row` at the top of the viewport (clamped at the end of the content).
+    pub fn row_top(&self, row: usize) -> ScrollAnchor {
+        if self.row_count == 0 {
+            return self.top();
+        }
+        self.clamp(ScrollAnchor { row: row.min(self.row_count - 1), offset: 0. })
+    }
+
+    /// The smallest scroll that shows all of `row`: unchanged when it is visible, otherwise aligned with the
+    /// nearer viewport edge. Walks only the rows between the anchor and the target that fit in the viewport.
+    pub fn ensure_visible(&self, a: ScrollAnchor, row: usize) -> ScrollAnchor {
+        if self.row_count == 0 {
+            return self.top();
+        }
+        let row = row.min(self.row_count - 1);
+        if row < a.row || (row == a.row && a.offset > 0.) {
+            return self.row_top(row);
+        }
+        let h = (self.height_of)(row);
+        let mut y = -a.offset;
+        let mut r = a.row;
+        while r < row && y <= self.viewport {
+            y += (self.height_of)(r);
+            r += 1;
+        }
+        if r == row && y + h <= self.viewport {
+            return a;
+        }
+        if row == self.row_count - 1 {
+            // The last row also shows the list's bottom padding.
+            return self.bottom();
+        }
+        self.clamp(self.normalize(ScrollAnchor { row, offset: h - self.viewport }))
+    }
+
     /// Rows intersecting the viewport with their top y relative to the viewport top.
     pub fn visible(&self, a: ScrollAnchor) -> Vec<(usize, f32)> {
         let mut out = Vec::new();
@@ -199,5 +234,27 @@ mod tests {
         assert!((len - 0.01).abs() < 1e-3);
         let (top, _) = g.thumb(g.center_on(500)).unwrap();
         assert!(top > 0.45 && top < 0.55);
+    }
+
+    #[test]
+    fn ensure_visible_is_minimal() {
+        let h = |_| 23.;
+        let g = geo(1000, 230., &h);
+        let top = g.top();
+        assert_eq!(g.ensure_visible(top, 5), top, "already visible rows don't scroll");
+        let down = g.ensure_visible(top, 300);
+        let (_, y) = *g.visible(down).iter().find(|(r, _)| *r == 300).unwrap();
+        assert!((y + 23. - 230.).abs() < 1e-3, "row 300 bottom-aligned, got y={y}");
+        let up = g.ensure_visible(down, 100);
+        assert_eq!(up, ScrollAnchor { row: 100, offset: 0. }, "rows above align to the top");
+        assert_eq!(g.ensure_visible(top, 5000), g.bottom(), "out-of-range rows clamp");
+    }
+
+    #[test]
+    fn row_top_puts_the_row_first() {
+        let h = |_| 23.;
+        let g = geo(1000, 230., &h);
+        assert_eq!(g.row_top(40), ScrollAnchor { row: 40, offset: 0. });
+        assert_eq!(g.row_top(999), g.bottom());
     }
 }

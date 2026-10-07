@@ -60,6 +60,34 @@ pub trait LogRowSource: 'static {
     fn is_gap(&self, ix: usize) -> bool;
     fn longest_line_chars(&self) -> usize;
     fn row_for_number(&self, number: u64) -> Option<usize>;
+
+    /// Display number of the line at row `ix`; None for gap rows and out-of-range rows.
+    fn number_at(&self, ix: usize) -> Option<u64> {
+        if ix >= self.row_count() {
+            return None;
+        }
+        match self.row(ix) {
+            LogRow::Line(l) => Some(l.number),
+            LogRow::Gap { .. } => None,
+        }
+    }
+
+    /// The row showing `number`, or the closest row after it (the last row when none is) — used to keep the
+    /// viewport on the same line when the rows change. Sources with ordered numbers should override this.
+    fn nearest_row(&self, number: u64) -> Option<usize> {
+        self.row_for_number(number)
+    }
+
+    /// Full text of the line at row `ix` for copying (rows may hold display-truncated text); None for gaps.
+    fn copy_text(&self, ix: usize) -> Option<String> {
+        if ix >= self.row_count() {
+            return None;
+        }
+        match self.row(ix) {
+            LogRow::Line(l) => Some(l.text.to_string()),
+            LogRow::Gap { .. } => None,
+        }
+    }
 }
 
 pub struct VecRows {
@@ -100,5 +128,13 @@ impl LogRowSource for VecRows {
 
     fn row_for_number(&self, number: u64) -> Option<usize> {
         self.rows.iter().position(|r| matches!(r, LogRow::Line(l) if l.number == number))
+    }
+
+    fn nearest_row(&self, number: u64) -> Option<usize> {
+        if self.rows.is_empty() {
+            return None;
+        }
+        let after = self.rows.iter().position(|r| matches!(r, LogRow::Line(l) if l.number >= number));
+        Some(after.unwrap_or(self.rows.len() - 1))
     }
 }
