@@ -163,13 +163,11 @@ impl Cache {
             write(&mut file)?;
             file.flush().map_err(CoreError::io(&partial))
         });
-        match result {
-            Ok(()) => std::fs::rename(&partial, dst).map_err(CoreError::io(dst)),
-            Err(e) => {
-                let _ = std::fs::remove_file(&partial);
-                Err(e)
-            }
+        let result = result.and_then(|()| std::fs::rename(&partial, dst).map_err(CoreError::io(dst)));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&partial);
         }
+        result
     }
 
     /// Removes partial files whose writer is no longer running (a crash or kill mid-write). Run at startup.
@@ -189,15 +187,21 @@ impl Cache {
     }
 
     pub fn evict_to(&self, limit: u64) -> Evicted {
-        let Ok(read) = std::fs::read_dir(&self.dir) else { return Evicted::default() };
-        let mut candidates: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
-        let mut out = Evicted::default();
+        let (candidates, total) = self.eviction_candidates();
+        self.remove_candidates(candidates, total, limit)
+    }
+
+    /// The unleased, non-partial files of the directory (least recently used first) and the bytes the directory holds.
+    fn eviction_candidates(&self) -> (Vec<(SystemTime, u64, PathBuf)>, u64) {
+        let Ok(read) = std::fs::read_dir(&self.dir) else { return (Vec::new(), 0) };
+        let mut candidates = Vec::new();
+        let mut total = 0;
         for entry in read.flatten() {
             let Ok(meta) = entry.metadata() else { continue };
             if !meta.is_file() {
                 continue;
             }
-            out.remaining += meta.len();
+            total += meta.len();
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.ends_with(".partial") || self.is_leased(&path) {
@@ -206,9 +210,20 @@ impl Cache {
             candidates.push((meta.modified().unwrap_or(UNIX_EPOCH), meta.len(), path));
         }
         candidates.sort();
+        (candidates, total)
+    }
+
+    /// Removes `candidates` in order until `total` bytes are down to `limit`. The lease check and the removal happen
+    /// under the lease lock, so a lease taken after the candidates were collected still protects its entry.
+    fn remove_candidates(&self, candidates: Vec<(SystemTime, u64, PathBuf)>, total: u64, limit: u64) -> Evicted {
+        let mut out = Evicted { remaining: total, ..Evicted::default() };
         for (_, len, path) in candidates {
             if out.remaining <= limit {
                 break;
+            }
+            let leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+            if leases.contains_key(&path) {
+                continue;
             }
             if std::fs::remove_file(&path).is_ok() {
                 out.removed += 1;
@@ -349,5 +364,33 @@ mod tests {
         assert_eq!(partial_owner(&name), Some(std::process::id() as i32));
         assert_eq!(stream_owner("stream-42-7.log"), Some(42));
         assert_eq!(partial_owner("k.utf8"), None);
+    }
+
+    #[test]
+    fn a_lease_taken_after_the_scan_still_protects_its_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path(), 0);
+        let (a, b) = (dir.path().join("a.member"), dir.path().join("b.member"));
+        std::fs::write(&a, [0u8; 100]).unwrap();
+        std::fs::write(&b, [0u8; 100]).unwrap();
+        set_mtime(&a, SystemTime::now() - Duration::from_secs(3600));
+        let (candidates, total) = cache.eviction_candidates();
+        assert_eq!((candidates.len(), total), (2, 200));
+        let _lease = cache.lease(&a);
+        let out = cache.remove_candidates(candidates, total, 0);
+        assert!(a.exists(), "leased after the scan, so it survives");
+        assert!(!b.exists());
+        assert_eq!(out, Evicted { removed: 1, freed: 100, remaining: 100 });
+    }
+
+    #[test]
+    fn a_failed_rename_leaves_no_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path(), DEFAULT_LIMIT_BYTES);
+        let dst = cache.entry(7, "member");
+        std::fs::create_dir_all(dst.join("occupied")).unwrap();
+        assert!(cache.write_entry(&dst, |f| f.write_all(b"x").map_err(CoreError::io(&dst))).is_err());
+        let names: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().all(|n| !n.ends_with(".partial")), "{names:?}");
     }
 }
