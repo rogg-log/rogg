@@ -129,6 +129,11 @@ impl Workspace {
         }
     }
 
+    /// The capture files of the streams still being read (tests).
+    pub fn stream_paths(&self) -> Vec<PathBuf> {
+        self.streams.iter().map(|(_, capture)| capture.path().to_path_buf()).collect()
+    }
+
     /// While any capture is unfinished, checks every 500 ms for ones that ended.
     fn ensure_stream_polling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.streams_polling {
@@ -384,6 +389,7 @@ impl Workspace {
         }
         let tab = self.tabs.remove(index);
         self.tab_subscriptions.remove(&tab.entity_id());
+        self.end_capture_of(&tab, cx);
         if index < self.active {
             self.active -= 1;
         }
@@ -394,6 +400,16 @@ impl Workspace {
             self.activate(self.active, window, cx);
         }
         cx.notify();
+    }
+
+    /// A stream tab owns its capture: closing the tab stops the copy and deletes the capture file (best effort — a
+    /// snapshot of it that is still alive stays readable through its mapping).
+    fn end_capture_of(&mut self, tab: &Entity<Tab>, cx: &App) {
+        let Source::Stream { path, .. } = &tab.read(cx).doc.read(cx).source else { return };
+        if let Some(at) = self.streams.iter().position(|(_, capture)| capture.path() == path) {
+            self.streams.remove(at).1.stop();
+        }
+        let _ = std::fs::remove_file(path);
     }
 
     pub fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {

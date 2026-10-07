@@ -36,6 +36,7 @@ pub struct StreamCapture {
     path: PathBuf,
     bytes: Arc<AtomicU64>,
     done: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
 }
 
@@ -53,9 +54,10 @@ impl StreamCapture {
             path,
             bytes: Arc::new(AtomicU64::new(0)),
             done: Arc::new(AtomicBool::new(false)),
+            stop: Arc::new(AtomicBool::new(false)),
             error: Arc::new(Mutex::new(None)),
         };
-        let (bytes, done, error) = (capture.bytes.clone(), capture.done.clone(), capture.error.clone());
+        let (bytes, done, stop, error) = (capture.bytes.clone(), capture.done.clone(), capture.stop.clone(), capture.error.clone());
         let spawned = std::thread::Builder::new().name("rogg-stream".into()).spawn(move || {
             let result = (|| -> io::Result<()> {
                 let mut input = open()?;
@@ -67,6 +69,9 @@ impl StreamCapture {
                         Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                         Err(e) => return Err(e),
                     };
+                    if stop.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
                     out.write_all(&buf[..n])?;
                     bytes.fetch_add(n as u64, Ordering::Relaxed);
                 }
@@ -78,6 +83,13 @@ impl StreamCapture {
         });
         spawned.map_err(|source| CoreError::Io { path: capture.path.clone(), source })?;
         Ok(capture)
+    }
+
+    /// Asks the capture to end: the copy loop checks the flag after each read returns and then exits without an
+    /// error, writing nothing more. A read that is blocked waiting for data cannot be interrupted, so the thread
+    /// (and `is_done`) only ends once the next data or end of input arrives.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
     }
 
     pub fn path(&self) -> &Path {

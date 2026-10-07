@@ -69,3 +69,27 @@ fn a_failed_stream_toasts_once_and_keeps_its_tab(cx: &mut TestAppContext) {
     assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1);
     assert_eq!(lines(&tab, cx), 0);
 }
+
+#[gpui_kit::test]
+fn closing_a_stream_tab_stops_and_deletes_its_capture(cx: &mut TestAppContext) {
+    let _dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    let tab = cx
+        .update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_stream("stdin", move || Ok(reader), window, cx)))
+        .unwrap()
+        .expect("a stream tab");
+    writer.write_all(b"one\n").unwrap();
+    common::wait_until(cx, |cx| lines(&tab, cx) == 1);
+    let paths = ws.read_with(cx, |ws, _| ws.stream_paths());
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].exists());
+    drop(tab);
+    common::press(cx, w, "cmd-w");
+    assert!(ws.read_with(cx, |ws, _| ws.stream_paths().is_empty()), "the capture is dropped with its tab");
+    assert!(!paths[0].exists(), "the capture file is deleted");
+    // The producer keeps writing; the capture thread ends on that write and recreates nothing.
+    writer.write_all(b"two\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(!paths[0].exists());
+}

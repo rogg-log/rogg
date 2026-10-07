@@ -35,6 +35,24 @@ fn a_pipe_is_copied_as_it_arrives() {
 }
 
 #[test]
+fn stopping_a_capture_ends_it_at_the_next_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = Cache::new(dir.path(), DEFAULT_LIMIT_BYTES);
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    let capture = StreamCapture::start(move || Ok(reader), &cache).unwrap();
+    writer.write_all(b"one\n").unwrap();
+    wait_for(|| capture.bytes() == 4);
+    capture.stop();
+    assert!(!capture.is_done(), "a blocked read cannot be interrupted");
+    // The producer never ends; the capture finishes soon after its next write, without an error and without keeping it.
+    writer.write_all(b"two\n").unwrap();
+    wait_for(|| capture.is_done());
+    assert_eq!(capture.error(), None);
+    assert_eq!(std::fs::read(capture.path()).unwrap(), b"one\n");
+    drop(writer);
+}
+
+#[test]
 fn opening_errors_are_reported_not_raised() {
     let dir = tempfile::tempdir().unwrap();
     let cache = Cache::new(dir.path(), DEFAULT_LIMIT_BYTES);
