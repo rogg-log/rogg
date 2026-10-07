@@ -9,6 +9,9 @@ pub enum CoreError {
         #[source]
         source: std::io::Error,
     },
+    /// A damaged, truncated or unsupported archive or compressed file (spec §4.13: it fails only its own node).
+    #[error("{}: {message}", path.display())]
+    Archive { path: PathBuf, message: String },
     #[error("invalid regex in term `{term}`: {message}")]
     InvalidRegex { term: String, message: String },
     #[error("cancelled")]
