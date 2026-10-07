@@ -194,16 +194,31 @@ impl LogViewState {
     }
 
     /// Moves the selection by `delta` rows (skipping gap rows), scrolls it into view and emits `Selected`.
-    /// With no selection, `delta >= 0` selects the first row and a negative delta the last.
+    /// With no selection, `delta >= 0` selects the first row and a negative delta the last; when the selected line has
+    /// no row, it moves from the nearest row instead.
     pub fn move_selection(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
         let count = self.rows.row_count();
         if count == 0 {
             return;
         }
-        let target = match self.selected.and_then(|n| self.rows.row_for_number(n)) {
+        let target = match self.selected {
             None if delta >= 0 => 0,
             None => count - 1,
-            Some(row) => (row as isize + delta).clamp(0, count as isize - 1) as usize,
+            Some(n) => match self.rows.row_for_number(n) {
+                Some(row) => (row as isize + delta).clamp(0, count as isize - 1) as usize,
+                // The selected line is not shown any more (a filter change): continue from where it would be.
+                None => {
+                    let near = self.rows.nearest_row(n).unwrap_or(0);
+                    let after = self.rows.number_at(near).is_some_and(|m| m > n);
+                    // `near` is the first row after the selection (or the last row when none is).
+                    let steps = match (after, delta > 0) {
+                        (true, true) => delta - 1,
+                        (false, false) => delta + 1,
+                        _ => delta,
+                    };
+                    (near as isize + steps).clamp(0, count as isize - 1) as usize
+                }
+            },
         };
         self.select_row(target, if delta >= 0 { 1 } else { -1 }, extend, cx);
     }

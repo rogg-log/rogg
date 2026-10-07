@@ -232,6 +232,44 @@ fn keyboard_moves_skip_gaps_page_and_jump_to_edges(cx: &mut TestAppContext) {
     assert_eq!(*events.borrow(), ["select 1003", "select 1002", "select 1099", "select 1000", "select 1009"]);
 }
 
+fn rows_without(skip: u64) -> Rc<VecRows> {
+    Rc::new(VecRows::new(
+        (1000..1100u64)
+            .filter(|n| *n != skip)
+            .map(|n| LogRow::Line(LogLine { number: n, text: format!("line {n}").into(), spans: vec![], pinned: false, context: false, tint: None }))
+            .collect(),
+    ))
+}
+
+#[gpui_kit::test]
+fn arrows_continue_from_where_a_vanished_selection_was(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(100, None)));
+    let w = open(cx, state.clone());
+    render(cx, w);
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1005), cx);
+        s.set_rows(rows_without(1005), cx);
+        s.move_selection(1, false, cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1006), "down selects the row that took its place");
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1005), cx);
+        s.move_selection(-1, false, cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1004), "up selects the row before it");
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(5000), cx);
+        s.move_selection(1, false, cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1099), "a selection past the end stays at the end going down");
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(5000), cx);
+        s.move_selection(-1, false, cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.selected()), Some(1099), "and the last row going up");
+}
+
 #[gpui_kit::test]
 fn set_rows_keeps_the_top_line_in_place(cx: &mut TestAppContext) {
     common::setup(cx);
