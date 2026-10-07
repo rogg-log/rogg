@@ -25,6 +25,10 @@ pub fn history_path() -> PathBuf {
     app_support_dir().join("history.json")
 }
 
+pub fn recent_path() -> PathBuf {
+    app_support_dir().join("recent.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,5 +45,10 @@ mod tests {
         assert!(app_support_dir().ends_with("Library/Application Support/rogg"));
         assert!(cache_dir().ends_with("Library/Caches/rogg"));
         assert!(history_path().ends_with("Library/Application Support/rogg/history.json"));
+    }
+
+    #[test]
+    fn recent_path_is_in_app_support() {
+        assert!(recent_path().ends_with("Library/Application Support/rogg/recent.json"));
     }
 }

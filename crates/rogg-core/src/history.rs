@@ -2,8 +2,9 @@
 
 use crate::error::CoreError;
 use crate::filter::{FilterSpec, MAX_CONTEXT, Term, join_expression};
+use crate::persist::{load_json, save_json};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const HISTORY_LIMIT: usize = 100;
 
@@ -46,18 +47,12 @@ pub struct LoadOutcome {
     pub recovered: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct HistoryFile {
     #[serde(default)]
     version: u32,
     #[serde(default)]
     entries: Vec<HistoryEntry>,
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
 }
 
 impl History {
@@ -76,39 +71,17 @@ impl History {
     }
 
     pub fn load(path: &Path) -> Result<LoadOutcome, CoreError> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(LoadOutcome { history: History::default(), recovered: false });
-            }
-            Err(e) => return Err(CoreError::Io { path: path.to_path_buf(), source: e }),
-        };
-        match serde_json::from_slice::<HistoryFile>(&bytes) {
-            Ok(file) => {
-                let mut history = History { entries: file.entries };
-                for entry in &mut history.entries {
-                    entry.context = entry.context.min(MAX_CONTEXT);
-                }
-                history.entries.truncate(HISTORY_LIMIT);
-                Ok(LoadOutcome { history, recovered: false })
-            }
-            Err(_) => {
-                let backup = with_suffix(path, ".bak");
-                std::fs::rename(path, &backup).map_err(CoreError::io(path))?;
-                Ok(LoadOutcome { history: History::default(), recovered: true })
-            }
+        let (file, recovered) = load_json::<HistoryFile>(path)?;
+        let mut history = History { entries: file.entries };
+        for entry in &mut history.entries {
+            entry.context = entry.context.min(MAX_CONTEXT);
         }
+        history.entries.truncate(HISTORY_LIMIT);
+        Ok(LoadOutcome { history, recovered })
     }
 
     pub fn save(&self, path: &Path) -> Result<(), CoreError> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(CoreError::io(dir))?;
-        }
-        let json = serde_json::to_string_pretty(&HistoryFile { version: 1, entries: self.entries.clone() })
-            .expect("history serializes");
-        let partial = with_suffix(path, ".partial");
-        std::fs::write(&partial, json).map_err(CoreError::io(&partial))?;
-        std::fs::rename(&partial, path).map_err(CoreError::io(path))
+        save_json(path, &HistoryFile { version: 1, entries: self.entries.clone() })
     }
 }
 

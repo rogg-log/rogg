@@ -9,6 +9,8 @@ pub mod highlight;
 pub mod history;
 pub mod index;
 pub mod paths;
+pub mod persist;
+pub mod recent;
 pub mod search;
 pub mod stats;
 pub mod text;
