@@ -209,3 +209,54 @@ fn trailing_bytes_after_the_last_gzip_member_are_ignored() {
     std::fs::write(&gz, &corrupt).unwrap();
     assert!(rogg_core::archive::gunzip(&gz, &mut Vec::new(), &rogg_core::CancelToken::new(), |_, _| {}).is_err(), "a damaged member still fails");
 }
+
+fn gz_member(text: &[u8], level: flate2::Compression) -> Vec<u8> {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), level);
+    enc.write_all(text).unwrap();
+    enc.finish().unwrap()
+}
+
+fn gunzip_bytes(bytes: &[u8]) -> Result<Vec<u8>, rogg_core::CoreError> {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = dir.path().join("t.log.gz");
+    std::fs::write(&gz, bytes).unwrap();
+    let mut out = Vec::new();
+    rogg_core::archive::gunzip(&gz, &mut out, &rogg_core::CancelToken::new(), |_, _| {})?;
+    Ok(out)
+}
+
+#[test]
+fn a_member_boundary_one_byte_before_the_buffer_edge_is_read() {
+    // gunzip buffers 1 MiB: stored members sized so the next member's first byte is the last one in the first buffer.
+    const COPY_CHUNK: usize = 1 << 20;
+    let none = flate2::Compression::none();
+    let big_text = vec![b'a'; 1_000_000];
+    let big = gz_member(&big_text, none);
+    // The small member's payload length that makes the two members exactly COPY_CHUNK - 1 bytes (its overhead is a few
+    // dozen bytes of header, block headers and trailer).
+    let guess = COPY_CHUNK - 1 - big.len();
+    let small_len = (guess.saturating_sub(100)..guess).find(|&n| big.len() + gz_member(&vec![b'b'; n], none).len() == COPY_CHUNK - 1).expect("a small member that fits exactly");
+    let small_text = vec![b'b'; small_len];
+    let mut bytes = big;
+    bytes.extend(gz_member(&small_text, none));
+    assert_eq!(bytes.len(), COPY_CHUNK - 1);
+    bytes.extend(gz_member(b"third\n", flate2::Compression::fast()));
+    let mut expected = big_text;
+    expected.extend(&small_text);
+    expected.extend(b"third\n");
+    let got = gunzip_bytes(&bytes).unwrap();
+    assert!(got == expected, "the member after the buffer edge is not dropped: got {} bytes, expected {}", got.len(), expected.len());
+}
+
+#[test]
+fn a_lone_magic_byte_after_the_last_member_is_ignored() {
+    let mut bytes = gz_member(b"one\n", flate2::Compression::fast());
+    bytes.push(0x1f);
+    assert_eq!(gunzip_bytes(&bytes).unwrap(), b"one\n");
+}
+
+#[test]
+fn an_empty_gz_file_is_an_error() {
+    assert!(gunzip_bytes(b"").is_err(), "gzip -d fails an empty file too");
+}

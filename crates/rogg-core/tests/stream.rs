@@ -94,4 +94,5 @@ fn a_panicking_capture_still_reports_done() {
         assert!(std::time::Instant::now() < deadline, "done was never set");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    assert_eq!(capture.error().as_deref(), Some("capture thread panicked"), "a panic is an error, not a clean end");
 }

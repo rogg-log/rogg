@@ -263,13 +263,28 @@ pub fn gunzip(src: &Path, out: &mut impl Write, cancel: &CancelToken, mut progre
     let mut written = 0u64;
     let mut members = 0u32;
     loop {
-        // At a member boundary: the end of the input, or bytes that do not start another member (padding, garbage —
-        // `gzip -d` warns and ignores them), end the stream once at least one member was read.
-        let head = input.fill_buf().map_err(|e| archive_error(src, e))?;
-        if head.is_empty() || (members > 0 && !head.starts_with(&[0x1f, 0x8b])) {
-            break;
+        // At a member boundary (after the first member): the end of the input, or bytes that do not start another
+        // member (padding, garbage — `gzip -d` warns and ignores them), end the stream. An empty or header-less first
+        // member is left to the decoder, which fails it. The magic is two bytes, so one buffered byte at the buffer's
+        // edge is taken out and replayed to the decoder once the next byte is known to complete the magic.
+        let mut replay = Vec::new();
+        if members > 0 {
+            let head = input.fill_buf().map_err(|e| archive_error(src, e))?;
+            match head {
+                [] => break,
+                [0x1f] => {
+                    input.consume(1);
+                    let next = input.fill_buf().map_err(|e| archive_error(src, e))?;
+                    if next.first() != Some(&0x8b) {
+                        break;
+                    }
+                    replay.push(0x1f);
+                }
+                _ if !head.starts_with(&[0x1f, 0x8b]) => break,
+                _ => {}
+            }
         }
-        let mut decoder = flate2::bufread::GzDecoder::new(&mut input);
+        let mut decoder = flate2::bufread::GzDecoder::new(io::Cursor::new(replay).chain(&mut input));
         loop {
             if cancel.is_cancelled() {
                 return Err(CoreError::Cancelled);
