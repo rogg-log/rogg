@@ -5853,9 +5853,11 @@ dependencies = [
  "anyhow",
  "gpui-kit",
  "rogg-app",
+ "rogg-core",
  "rogg-ui",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

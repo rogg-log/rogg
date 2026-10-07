@@ -34,6 +34,8 @@ fn main() {
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
+            let state = std::env::temp_dir().join(format!("rogg-gallery-{}", std::process::id()));
+            rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(&state));
             let bounds = Bounds::centered(None, size(px(1640.), px(1000.)), cx);
             gpui_kit::open_window(
                 WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },

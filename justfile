@@ -34,3 +34,7 @@ run *args:
 
 demo:
     cargo run -p rogg-app -- --demo
+
+visual-app:
+    cd tools/visual-diff && ROGG_VISUAL_PAGE=app npm run all
+    open target/visual-app/report.html

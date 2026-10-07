@@ -42,6 +42,30 @@ fn captures_replica_with_rows_and_dialog() {
 }
 
 #[test]
+fn captures_the_real_app_page_with_rows_and_history() {
+    let dir = std::env::temp_dir().join(format!("rogg-capture-app-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("app.png");
+    let json = dir.join("app.json");
+    capture(&["--capture", "app", "--dialog", "history", "--out", png.to_str().unwrap(), "--geometry", json.to_str().unwrap()]);
+    assert_eq!(png_size(&png), (2880, 1800));
+    let g: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    for key in ["titlebar", "tab-shell-2", "token-3", "row-top-0", "row-bottom-1", "gap-bottom-0", "statusbar", "dialog", "tree-row-10", "history-pick-1"] {
+        assert!(g["elements"].get(key).is_some(), "missing geometry key {key}");
+    }
+}
+
+#[test]
+fn app_page_rejects_dialogs_it_does_not_have() {
+    let out = Command::new(env!("CARGO_BIN_EXE_rogg-gallery"))
+        .args(["--capture", "app", "--dialog", "profile", "--out", "/tmp/never.png"])
+        .output()
+        .expect("spawn gallery");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not available on the app page"));
+}
+
+#[test]
 fn rejects_bad_arguments() {
     let out = Command::new(env!("CARGO_BIN_EXE_rogg-gallery")).args(["--capture", "nope", "--out", "/tmp/x.png"]).output().unwrap();
     assert!(!out.status.success());

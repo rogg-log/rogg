@@ -28,6 +28,9 @@ impl CaptureOptions {
             Some(d) => Some(ReplicaDialog::from_slug(&d).ok_or_else(|| format!("unknown dialog `{d}`"))?),
             None => None,
         };
+        if page == Page::App && matches!(dialog, Some(ReplicaDialog::Profile | ReplicaDialog::Appearance)) {
+            return Err(format!("dialog `{}` is not available on the app page", dialog.unwrap().slug()));
+        }
         let appearance = match value("--theme").as_deref() {
             None | Some("dark") => Appearance::Dark,
             Some("light") => Appearance::Light,
@@ -78,8 +81,7 @@ fn collect_geometry(window: &Window, view: &Entity<GalleryView>, cx: &gpui_kit::
             elements.insert(name.to_string(), Rect::from(snap.bounds()));
         }
     }
-    let replica = view.read(cx).replica.clone();
-    for (prefix, state) in [("top", replica.read(cx).top.clone()), ("bottom", replica.read(cx).bottom.clone())] {
+    for (prefix, state) in view.read(cx).log_states(cx) {
         let (mut line_ix, mut gap_ix) = (0, 0);
         for g in state.read(cx).last_rows() {
             let key = if g.is_gap {
@@ -103,9 +105,13 @@ pub fn run(opts: CaptureOptions) -> anyhow::Result<()> {
         gpui_kit::platform::current_headless_renderer,
     );
     let (appearance, density) = (opts.appearance, opts.density);
+    let app_state = if opts.page == Page::App { Some(seed_app_state()?) } else { None };
     cx.update(|cx| {
         gpui_kit::init(cx);
         RoggTheme::new(appearance, density).install(cx);
+        if let Some(dir) = &app_state {
+            rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(dir.path()));
+        }
     });
     let (page, dialog) = (opts.page, opts.dialog);
     let (handle, view) = cx.update(|cx| {
@@ -132,7 +138,19 @@ pub fn run(opts: CaptureOptions) -> anyhow::Result<()> {
     if let Some(path) = &opts.geometry {
         std::fs::write(path, serde_json::to_string_pretty(&geometry)?)?;
     }
+    drop(app_state);
     Ok(())
+}
+
+/// A temp dir for the app page's state, with the reference's history entries, so the history dialog shows them.
+fn seed_app_state() -> anyhow::Result<tempfile::TempDir> {
+    let dir = tempfile::tempdir()?;
+    let mut history = rogg_core::history::History::default();
+    for spec in rogg_app::demo::reference_history().iter().rev() {
+        history.record(rogg_core::history::HistoryEntry::from_spec(spec));
+    }
+    history.save(&dir.path().join("history.json"))?;
+    Ok(dir)
 }
 
 #[cfg(test)]

@@ -16,7 +16,6 @@ use std::rc::Rc;
 
 pub fn render(view: &mut GalleryView, window: &mut Window, cx: &mut Context<GalleryView>) -> AnyElement {
     let p = cx.rogg().palette;
-    let _ = window;
     match view.page {
         Page::Tokens => tokens(cx),
         Page::Controls => controls(view, &p),
@@ -27,6 +26,21 @@ pub fn render(view: &mut GalleryView, window: &mut Window, cx: &mut Context<Gall
         Page::Chrome => chrome(view, &p),
         Page::Empty => empty_states(&p),
         Page::Dialogs => dialogs_page(view, &p),
+        Page::App => {
+            let app = match view.app.clone() {
+                Some(app) => app,
+                None => {
+                    let app = GalleryView::new_app(window, cx);
+                    view.app = Some(app.clone());
+                    app
+                }
+            };
+            if view.chrome {
+                div().w(px(1440.)).h(px(900.)).flex().border_1().border_color(p.border).rounded(px(10.)).overflow_hidden().child(app).into_any_element()
+            } else {
+                div().size_full().child(app).into_any_element()
+            }
+        }
         Page::Replica => {
             let window_el = crate::replica::replica_window(&view.replica.clone(), cx);
             if view.chrome {

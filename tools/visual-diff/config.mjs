@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const REFERENCE_HTML = path.join(ROOT, 'docs/superpowers/specs/assets/rogg-main-window.html');
-export const OUT = path.join(ROOT, 'target/visual');
+// `ROGG_VISUAL_PAGE=app` compares the reference with the real app (rogg --demo) instead of the gallery replica.
+export const PAGE = process.env.ROGG_VISUAL_PAGE ?? 'replica';
+export const OUT = path.join(ROOT, PAGE === 'replica' ? 'target/visual' : `target/visual-${PAGE}`);
 export const GALLERY_BIN = path.join(ROOT, 'target/debug/rogg-gallery');
 export const GOLDEN = path.join(ROOT, 'tools/visual-diff/golden');
 
@@ -17,14 +19,14 @@ export const VARIANTS = [
   { theme: 'light', density: 'comfortable' },
 ];
 
-// Reference <dialog> id → gallery --dialog slug.
+// Reference <dialog> id → gallery --dialog slug, and the pages that have it (profile and settings are M4 in the app).
 export const DIALOGS = [
-  { html: 'tabs-dialog', gallery: 'all-tabs' },
-  { html: 'profile-dialog', gallery: 'profile' },
-  { html: 'settings-dialog', gallery: 'appearance' },
-  { html: 'shortcuts-dialog', gallery: 'shortcuts' },
-  { html: 'history-dialog', gallery: 'history' },
-];
+  { html: 'tabs-dialog', gallery: 'all-tabs', pages: ['replica', 'app'] },
+  { html: 'profile-dialog', gallery: 'profile', pages: ['replica'] },
+  { html: 'settings-dialog', gallery: 'appearance', pages: ['replica'] },
+  { html: 'shortcuts-dialog', gallery: 'shortcuts', pages: ['replica', 'app'] },
+  { html: 'history-dialog', gallery: 'history', pages: ['replica', 'app'] },
+].filter((d) => d.pages.includes(PAGE));
 
 export const variantName = (v) => `${v.theme}-${v.density}`;
 export const captureNames = () => VARIANTS.flatMap((v) => [variantName(v), ...DIALOGS.map((d) => `${variantName(v)}--${d.gallery}`)]);

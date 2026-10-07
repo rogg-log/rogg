@@ -2,6 +2,7 @@ use crate::{fixtures, pages};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{AppContext, Context, Entity, FontWeight, SharedString, Window, div, px, relative};
+use rogg_app::workspace::keys::ThemeChoice;
 use rogg_ui::controls::{FindField, Segmented, TextButton};
 use rogg_ui::logview::{LogViewState, VecRows};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme, size};
@@ -19,10 +20,11 @@ pub enum Page {
     Empty,
     Dialogs,
     Replica,
+    App,
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [
+    pub const ALL: [Page; 11] = [
         Page::Tokens,
         Page::Controls,
         Page::Tabs,
@@ -33,6 +35,7 @@ impl Page {
         Page::Empty,
         Page::Dialogs,
         Page::Replica,
+        Page::App,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Page {
             Page::Empty => "empty",
             Page::Dialogs => "dialogs",
             Page::Replica => "replica",
+            Page::App => "app",
         }
     }
 
@@ -62,6 +66,7 @@ impl Page {
             Page::Empty => "Empty states",
             Page::Dialogs => "Dialogs",
             Page::Replica => "Mockup replica",
+            Page::App => "Real app (demo)",
         }
     }
 
@@ -84,6 +89,7 @@ pub struct GalleryView {
     pub log_compact: Entity<LogViewState>,
     pub log_wrapped: Entity<LogViewState>,
     pub replica: Entity<crate::replica::ReplicaState>,
+    pub app: Option<Entity<rogg_app::workspace::Workspace>>,
 }
 
 impl GalleryView {
@@ -103,16 +109,52 @@ impl GalleryView {
         let log_wrapped = cx.new(|_| LogViewState::new(rows));
         log_wrapped.update(cx, |s, cx| s.set_wrap(true, cx));
         let replica = cx.new(|cx| crate::replica::ReplicaState::new(window, cx));
-        Self { page, chrome, inputs, log_compact, log_wrapped, replica }
+        Self { page, chrome, inputs, log_compact, log_wrapped, replica, app: (page == Page::App).then(|| Self::new_app(window, cx)) }
+    }
+
+    /// The real app window in demo mode, with drawn traffic lights (headless windows have no native ones).
+    pub fn new_app(window: &mut Window, cx: &mut Context<Self>) -> Entity<rogg_app::workspace::Workspace> {
+        cx.new(|cx| {
+            let mut ws = rogg_app::workspace::Workspace::new(rogg_app::args::Args { demo: true, paths: vec![] }, window, cx);
+            ws.set_traffic_lights(true, cx);
+            // The host (gallery toolbar or --theme) owns the theme: pin the workspace to it instead of the system appearance.
+            let choice = if cx.rogg().appearance == Appearance::Dark { ThemeChoice::Dark } else { ThemeChoice::Light };
+            ws.set_theme(choice, window, cx);
+            ws
+        })
+    }
+
+    /// The two log panels whose rows go into capture geometry: the replica's, or the app's active tab.
+    pub fn log_states(&self, cx: &gpui_kit::App) -> [(&'static str, Entity<LogViewState>); 2] {
+        if self.page == Page::App
+            && let Some(tab) = self.app.as_ref().and_then(|a| a.read(cx).active_tab())
+        {
+            let t = tab.read(cx);
+            return [("top", t.full.clone()), ("bottom", t.filtered.clone())];
+        }
+        let r = self.replica.read(cx);
+        [("top", r.top.clone()), ("bottom", r.bottom.clone())]
     }
 }
 
 impl GalleryView {
     /// Page only, no gallery chrome; the replica opens `dialog` if given.
     pub fn for_capture(page: Page, dialog: Option<crate::replica::ReplicaDialog>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        use crate::replica::ReplicaDialog;
+        use rogg_app::workspace::Dialog;
         let this = Self::new(page, false, window, cx);
-        if let Some(d) = dialog {
-            this.replica.update(cx, |r, cx| r.open_dialog(d, cx));
+        match (page, dialog, this.app.clone()) {
+            (Page::App, Some(d), Some(app)) => {
+                let dialog = match d {
+                    ReplicaDialog::AllTabs => Dialog::AllTabs,
+                    ReplicaDialog::Shortcuts => Dialog::Shortcuts,
+                    ReplicaDialog::History => Dialog::History,
+                    ReplicaDialog::Profile | ReplicaDialog::Appearance => unreachable!("rejected by CaptureOptions::parse"),
+                };
+                app.update(cx, |ws, cx| ws.open_dialog(dialog, cx));
+            }
+            (_, Some(d), _) => this.replica.update(cx, |r, cx| r.open_dialog(d, cx)),
+            _ => {}
         }
         this
     }
