@@ -316,6 +316,7 @@ impl Document {
         self.filter.view = Arc::new(view);
         self.filter.stats = Some(stats);
         self.filter.revision += 1;
+        self.refresh_search(super::Pane::Filtered, cx);
         cx.notify();
     }
 }

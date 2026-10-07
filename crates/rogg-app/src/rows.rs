@@ -2,7 +2,7 @@
 //! each raw line is cut to the display limit before it is decoded (M1 carry-over).
 
 use crate::decorate;
-use crate::document::Document;
+use crate::document::{Document, Pane};
 use gpui_kit::SharedString;
 use rogg_core::highlight::Highlighter;
 use rogg_core::search::CompiledSearch;
@@ -157,7 +157,7 @@ impl Document {
     /// Rows for the full log pane; None until the text is loaded.
     pub fn full_rows(&self) -> Option<Rc<FullRows>> {
         let text = self.text()?.clone();
-        Some(Rc::new(FullRows { text, base: self.number_base(), pins: Arc::new(self.filter.pins.clone()), search: None }))
+        Some(Rc::new(FullRows { text, base: self.number_base(), pins: Arc::new(self.filter.pins.clone()), search: self.search(Pane::Full).compiled.clone() }))
     }
 
     /// Rows for the filtered log pane; None until the text is loaded.
@@ -168,7 +168,7 @@ impl Document {
             base: self.number_base(),
             view: self.filter.view.clone(),
             highlighter: self.filter.highlighter.clone(),
-            search: None,
+            search: self.search(Pane::Filtered).compiled.clone(),
         }))
     }
 }

@@ -4,6 +4,7 @@
 
 mod filter;
 mod load;
+mod search;
 
 use crate::paths::AppPaths;
 use gpui_kit::{App, Context, Global, SharedString};
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use filter::FilterState;
+pub use search::{Pane, PaneSearch};
 
 /// How often background job channels are polled: at most one UI update per frame.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -94,6 +96,7 @@ pub struct Document {
     pub source: Source,
     pub load: LoadState,
     pub filter: FilterState,
+    search: search::SearchState,
     number_base: u64,
     text_revision: u64,
     open_job: Option<OpenJob>,
@@ -114,6 +117,7 @@ impl Document {
             source,
             load: LoadState::Loading { fraction: 0., label: "Opening".into() },
             filter: FilterState::new(init.spec, init.pins),
+            search: Default::default(),
             number_base: init.number_base,
             text_revision: 0,
             open_job: None,
@@ -192,6 +196,7 @@ impl Document {
         };
         if matches!(self.load, LoadState::Ready(_)) {
             self.start_filter(cx);
+            self.refresh_search(Pane::Full, cx);
         }
         cx.notify();
     }
@@ -216,7 +221,7 @@ impl Document {
 
     /// Drains every job channel once; returns whether any job is still running.
     fn poll_jobs(&mut self, cx: &mut Context<Self>) -> bool {
-        let active = self.poll_open(cx) | self.poll_filter(cx);
+        let active = self.poll_open(cx) | self.poll_filter(cx) | self.poll_search(cx);
         if !active {
             self.polling = false;
         }
