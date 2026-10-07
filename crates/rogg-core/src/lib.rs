@@ -7,6 +7,7 @@ pub mod encoding;
 pub mod engine;
 pub mod error;
 pub mod filter;
+pub mod folder;
 pub mod highlight;
 pub mod history;
 pub mod index;
@@ -15,8 +16,10 @@ pub mod paths;
 pub mod persist;
 pub mod recent;
 pub mod search;
+pub mod source;
 pub mod stats;
 pub mod text;
+pub mod tree;
 pub mod view;
 
 pub use cancel::CancelToken;
