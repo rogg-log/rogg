@@ -3,7 +3,12 @@
 use std::path::PathBuf;
 
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
+    home_from(std::env::var_os("HOME"))
+}
+
+/// An unset or empty `HOME` falls back to the temp dir, so paths never become cwd-relative.
+fn home_from(home: Option<std::ffi::OsString>) -> PathBuf {
+    home.filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
 }
 
 /// `~/Library/Application Support/rogg`
@@ -23,6 +28,13 @@ pub fn history_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_or_unset_home_falls_back_to_temp_dir() {
+        assert_eq!(home_from(None), std::env::temp_dir());
+        assert_eq!(home_from(Some("".into())), std::env::temp_dir());
+        assert_eq!(home_from(Some("/Users/x".into())), PathBuf::from("/Users/x"));
+    }
 
     #[test]
     fn macos_locations() {

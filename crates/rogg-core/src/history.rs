@@ -76,14 +76,14 @@ impl History {
     }
 
     pub fn load(path: &Path) -> Result<LoadOutcome, CoreError> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(LoadOutcome { history: History::default(), recovered: false });
             }
             Err(e) => return Err(CoreError::Io { path: path.to_path_buf(), source: e }),
         };
-        match serde_json::from_str::<HistoryFile>(&text) {
+        match serde_json::from_slice::<HistoryFile>(&bytes) {
             Ok(file) => {
                 let mut history = History { entries: file.entries };
                 for entry in &mut history.entries {
@@ -162,6 +162,17 @@ mod tests {
         let recovered = History::load(&path).unwrap();
         assert!(recovered.recovered && recovered.history.entries().is_empty());
         assert!(dir.path().join("nested/history.json.bak").exists());
+    }
+
+    #[test]
+    fn non_utf8_file_is_recovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        std::fs::write(&path, [0x7b, 0xff, 0xfe]).unwrap();
+        let outcome = History::load(&path).unwrap();
+        assert!(outcome.recovered && outcome.history.entries().is_empty());
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(dir.path().join("history.json.bak")).unwrap(), [0x7b, 0xff, 0xfe]);
     }
 
     #[test]
