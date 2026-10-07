@@ -148,3 +148,18 @@ fn recent_archive_members_reopen_their_member(cx: &mut TestAppContext) {
     let source = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.read(cx).source.source_ref());
     assert_eq!(source, Some(SourceRef::member(SourceRef::File(zip.canonicalize().unwrap()), "b.log")));
 }
+
+#[gpui_kit::test]
+fn a_failed_listing_is_retried_when_the_archive_is_expanded_again(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let zip = dir.path().join("fixed.zip");
+    std::fs::write(&zip, b"PK\x03\x04 not really a zip").unwrap();
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()] });
+    common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.starts_with("Could not read fixed.zip"))));
+    assert_eq!(rows(cx, w), 1);
+    write_archive(&zip, BundleKind::Zip, &[("a.log", b"a\n")]).unwrap();
+    common::click(cx, w, "tree-row-0");
+    common::click(cx, w, "tree-row-0");
+    wait_rows(cx, w, 2);
+    assert!(!common::exists(cx, w, "tree-note-0"), "the unreadable note is gone once it lists");
+}

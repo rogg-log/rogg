@@ -9,7 +9,7 @@ use rogg_core::source::SourceRef;
 use rogg_core::stats::{group_digits, noun};
 use rogg_core::tree::{Listing, NodeId, NodeKind, SourceTree};
 use rogg_ui::sidebar::{RecentItem, SidebarFooter, TreeRow};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -131,6 +131,7 @@ pub fn rows_with_failures(
 pub fn tree_rows(tree: &SourceTree, expanded: &HashSet<NodeId>, files: &[OpenFile], active: Option<EntityId>) -> (Vec<TreeRow>, Vec<RowAction>) {
     let mut rows = Vec::new();
     let mut actions = Vec::new();
+    let tabs: HashMap<&SourceRef, &OpenFile> = files.iter().filter_map(|f| Some((f.source.as_ref()?, f))).collect();
     for (id, depth) in tree.visible(|id| expanded.contains(&id)) {
         let node = tree.node(id);
         if tree.is_container(id) {
@@ -142,7 +143,7 @@ pub fn tree_rows(tree: &SourceTree, expanded: &HashSet<NodeId>, files: &[OpenFil
             rows.push(TreeRow::Folder { label: node.name.clone().into(), expanded: expanded.contains(&id), depth, note: note.map(SharedString::from), failed });
             actions.push(RowAction::ToggleNode(id));
         } else {
-            let tab = node.source.as_ref().and_then(|s| files.iter().find(|f| f.source.as_ref() == Some(s)));
+            let tab = node.source.as_ref().and_then(|s| tabs.get(s).copied());
             rows.push(TreeRow::File {
                 label: node.name.clone().into(),
                 size: node.size.map(format_size).unwrap_or_default().into(),
@@ -159,7 +160,7 @@ pub fn tree_rows(tree: &SourceTree, expanded: &HashSet<NodeId>, files: &[OpenFil
 /// The sidebar footer for a root (spec §5.3: `10 members · 8.4 GB expanded` / `Members open individually`).
 pub fn tree_footer(tree: &SourceTree, root: NodeId) -> SidebarFooter {
     let node = tree.node(root);
-    let sum = tree.summary(root);
+    let sum = tree.root_summary(root);
     let lines = match node.kind {
         NodeKind::Archive(_) => vec![
             SharedString::from(format!("{} {} · {} expanded", group_digits(sum.files), noun(sum.files, "member", "members"), format_size(sum.bytes))),

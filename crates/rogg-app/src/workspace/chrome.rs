@@ -154,6 +154,7 @@ impl Workspace {
             }
             None => true,
         });
+        let finished_any = !finished.is_empty();
         for (node, result) in finished {
             let name = self.sources.tree.node(node).name.clone();
             match result {
@@ -182,7 +183,9 @@ impl Workspace {
                 self.open_node(first, false, window, cx);
             }
         }
-        cx.notify();
+        if finished_any {
+            cx.notify();
+        }
         let active = !self.sources.jobs.is_empty();
         if !active {
             self.sources.polling = false;
@@ -221,12 +224,13 @@ impl Workspace {
         self.open_source(document, TabInit::default(), window, cx);
     }
 
-    /// Folder and archive rows expand and collapse; an archive is listed the first time it opens.
+    /// Folder and archive rows expand and collapse; an archive is listed the first time it opens, and again when its
+    /// last listing failed.
     pub fn toggle_node(&mut self, id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
         if !self.sources.expanded.remove(&id) {
             self.sources.expanded.insert(id);
             let node = self.sources.tree.node(id);
-            if matches!(node.kind, NodeKind::Archive(_)) && node.listing == Listing::Pending {
+            if matches!(node.kind, NodeKind::Archive(_)) && matches!(node.listing, Listing::Pending | Listing::Failed(_)) {
                 self.start_listing(id, window, cx);
             }
         }
@@ -421,7 +425,7 @@ impl Workspace {
                 let (more_rows, more_actions) = sidebar_model::rows_with_failures(&sidebar_model::group_open_files(&loose), active, &self.collapsed, &failed);
                 rows.extend(more_rows);
                 actions.extend(more_actions);
-                let total = tree.roots().iter().map(|&r| tree.summary(r).files).sum::<u64>() + loose.len() as u64;
+                let total = tree.roots().iter().map(|&r| tree.root_summary(r).files).sum::<u64>() + loose.len() as u64;
                 (rows, actions, format!("{total} {}", noun(total, "file", "files")).into(), recent_items(cx))
             }
         };

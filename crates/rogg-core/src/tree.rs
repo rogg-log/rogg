@@ -55,6 +55,8 @@ pub struct SourceTree {
     nodes: Vec<Node>,
     roots: Vec<NodeId>,
     by_source: HashMap<SourceRef, NodeId>,
+    /// `summary` of each root, recomputed when the root's tree changes (the sidebar asks on every render).
+    root_summaries: HashMap<NodeId, TreeSummary>,
 }
 
 impl SourceTree {
@@ -103,6 +105,7 @@ impl SourceTree {
         let source = SourceRef::File(path.to_path_buf());
         let id = self.push(Node { name: source.name(), kind, size, source: Some(source), parent: None, children: Vec::new(), listing: Listing::Pending });
         self.roots.push(id);
+        self.refresh_summary(id);
         id
     }
 
@@ -166,6 +169,7 @@ impl SourceTree {
         }
         self.sort(root);
         self.nodes[root].listing = Listing::Listed;
+        self.refresh_summary(root);
     }
 
     /// Fills an archive from its listing: folders from the member paths, members, and nested archives (`Pending`).
@@ -188,6 +192,7 @@ impl SourceTree {
         }
         self.sort(archive);
         self.nodes[archive].listing = Listing::Listed;
+        self.refresh_summary(archive);
     }
 
     /// Rows in display order with their depth: every root, and the children of each container `expanded` accepts.
@@ -227,6 +232,17 @@ impl SourceTree {
             id = parent;
         }
         id
+    }
+
+    fn refresh_summary(&mut self, changed: NodeId) {
+        let root = self.root_of(changed);
+        let summary = self.summary(root);
+        self.root_summaries.insert(root, summary);
+    }
+
+    /// `summary(root)` from the cache: no tree walk, so it is cheap enough for every render.
+    pub fn root_summary(&self, root: NodeId) -> TreeSummary {
+        self.root_summaries.get(&root).copied().unwrap_or_else(|| self.summary(root))
     }
 
     /// Openable files under `id` and their total size (spec §5.3 footer `10 members · 8.4 GB expanded`).

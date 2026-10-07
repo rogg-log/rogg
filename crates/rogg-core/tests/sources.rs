@@ -66,6 +66,19 @@ fn listings_become_folders_members_and_nested_archives() {
 }
 
 #[test]
+fn root_summaries_follow_listings_of_nested_archives() {
+    let mut tree = SourceTree::new();
+    let zip = tree.add_root(Path::new("/b/incident.zip"), NodeKind::Archive(ArchiveKind::Zip), Some(900));
+    assert_eq!(tree.root_summary(zip), TreeSummary::default());
+    tree.insert_listing(zip, &[entry("inner.tgz", 50), entry("README", 5)]);
+    assert_eq!(tree.root_summary(zip), TreeSummary { files: 1, bytes: 5 });
+    let inner = tree.visible(|_| true).into_iter().map(|(id, _)| id).find(|&id| tree.node(id).name == "inner.tgz").unwrap();
+    tree.insert_listing(inner, &[entry("x.log", 7), entry("y.log", 8)]);
+    assert_eq!(tree.root_summary(zip), TreeSummary { files: 3, bytes: 20 }, "a nested listing updates its root's cached summary");
+    assert_eq!(tree.root_summary(zip), tree.summary(zip));
+}
+
+#[test]
 fn folder_scans_list_text_gz_and_archives_but_not_binaries() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("bundle");
