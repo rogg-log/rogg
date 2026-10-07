@@ -6,20 +6,7 @@ use rogg_ui::logview::{LogLine, LogRow, RowTint, Span, SpanStyle};
 use rogg_ui::sidebar::{RecentItem, SidebarFooter, TreeRow};
 use rogg_ui::theme::Color;
 
-pub const BUNDLE: &str = "incident-2026-10-05.zip";
-
-pub const FILES: [(&str, &str); 10] = [
-    ("api.log", "972 MB"),
-    ("worker.log", "841 MB"),
-    ("gateway.log", "1.0 GB"),
-    ("auth.log", "713 MB"),
-    ("scheduler.log", "904 MB"),
-    ("database.log", "867 MB"),
-    ("cache.log", "624 MB"),
-    ("metrics.log", "955 MB"),
-    ("events.log", "701 MB"),
-    ("system.log", "884 MB"),
-];
+pub use rogg_app::demo::{BUNDLE, FILES};
 
 pub fn sidebar_rows(active: &str) -> Vec<TreeRow> {
     let mut rows = vec![TreeRow::Folder { label: BUNDLE.into(), expanded: true, depth: 0 }];
@@ -34,14 +21,11 @@ pub fn sidebar_rows(active: &str) -> Vec<TreeRow> {
 }
 
 pub fn recent() -> Vec<RecentItem> {
-    vec![
-        RecentItem { label: "staging / logs".into(), is_folder: true, missing: false },
-        RecentItem { label: "deployment-10-04.log".into(), is_folder: false, missing: false },
-    ]
+    rogg_app::demo::RECENT.iter().map(|(label, is_folder)| RecentItem { label: (*label).into(), is_folder: *is_folder, missing: false }).collect()
 }
 
 pub fn sidebar_footer() -> SidebarFooter {
-    SidebarFooter { title: "Support bundle".into(), lines: vec!["10 members · 8.4 GB expanded".into(), "Members open individually".into()] }
+    SidebarFooter { title: rogg_app::demo::FOOTER_TITLE.into(), lines: rogg_app::demo::FOOTER_LINES.iter().map(|l| SharedString::from(*l)).collect() }
 }
 
 pub fn reference_terms() -> Vec<(SharedString, ChipState)> {

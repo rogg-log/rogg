@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 rogg-ui = { path = "../rogg-ui" }
+rogg-app = { path = "../rogg-app" }
 # test-support provides HeadlessAppContext + capture_screenshot + element snapshots for --capture (Task 15).
 gpui-kit = { workspace = true, features = ["test-support"] }
 anyhow.workspace = true

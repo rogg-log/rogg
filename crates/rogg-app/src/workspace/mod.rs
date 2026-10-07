@@ -113,6 +113,9 @@ impl Workspace {
             ws.toast("Recent files were unreadable and have been reset; the old file was kept as recent.json.bak", cx);
         }
         ws.open_paths(args.paths, window, cx);
+        if args.demo {
+            crate::demo::open(&mut ws, window, cx);
+        }
         ws
     }
 
