@@ -119,11 +119,12 @@ pub fn init(name: &str) -> TabInit {
         selection: Some(FIRST_LINE_NUMBER + SELECTED_SAMPLE),
         labels: TabLabels {
             crumbs: Some(vec![BUNDLE.into(), SharedString::from(name.to_string())]),
-            profile: Some(PROFILE.into()),
+            profile: None,
             note: Some(STATUS_NOTE.into()),
             full_count: Some("40 sample lines".into()),
             tooltip: Some(format!("{name} · {BUNDLE}").into()),
         },
+        profile: Some(PROFILE.into()),
         ..TabInit::default()
     }
 }

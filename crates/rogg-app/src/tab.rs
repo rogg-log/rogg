@@ -2,12 +2,16 @@
 //! the expression editor (spec §5.6).
 
 use crate::document::{Document, DocumentEvent, DocumentInit, Pane, Source};
+use crate::profiles::{ProfileStore, RowStyler};
+use crate::settings::SettingsStore;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Window};
 use rogg_ui::controls::FindField;
 use rogg_ui::layout::MainWindowParts;
 use rogg_ui::logview::{LogRowSource, LogViewEvent, LogViewState, ScrollTo, VecRows};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Labels the demo sets to match the reference; None means "derive from the document".
 #[derive(Clone, Debug, Default)]
@@ -34,11 +38,13 @@ pub struct TabInit {
     pub split: Option<f32>,
     /// Display number to scroll to the top of each pane once the text loads (session restore).
     pub top: [Option<u64>; 2],
+    /// The tab's highlighting profile; None takes the settings' default profile.
+    pub profile: Option<SharedString>,
 }
 
 impl Default for TabInit {
     fn default() -> Self {
-        Self { doc: DocumentInit::default(), selection: None, labels: TabLabels::default(), wrap: [false, false], follow: true, split: None, top: [None, None] }
+        Self { doc: DocumentInit::default(), selection: None, labels: TabLabels::default(), wrap: [false, false], follow: true, split: None, top: [None, None], profile: None }
     }
 }
 
@@ -47,7 +53,7 @@ impl TabInit {
     pub fn from_settings(settings: &rogg_core::settings::Settings) -> Self {
         let b = &settings.behavior;
         let spec = rogg_core::filter::FilterSpec { terms: Vec::new(), regex: b.regex, case_sensitive: b.case_sensitive, context: b.context };
-        Self { doc: DocumentInit { spec, ..DocumentInit::default() }, wrap: [b.wrap, b.wrap], follow: b.follow_selection, ..Self::default() }
+        Self { doc: DocumentInit { spec, ..DocumentInit::default() }, wrap: [b.wrap, b.wrap], follow: b.follow_selection, profile: Some(b.default_profile.clone().into()), ..Self::default() }
     }
 }
 
@@ -75,6 +81,7 @@ struct Applied {
     pins: u64,
     filter: u64,
     search: [u64; 2],
+    style: u64,
 }
 
 pub struct Tab {
@@ -95,6 +102,12 @@ pub struct Tab {
     pub labels: TabLabels,
     /// The pane ⌘F, ⌘G and Wrap act on.
     pub last_pane: Pane,
+    /// The tab's highlighting profile (spec §6.1: each tab has one).
+    pub profile: SharedString,
+    styler: Option<Arc<RowStyler>>,
+    /// What `styler` was built from: the profile store's revision, the theme and the profile name.
+    style_key: Option<(u64, Appearance, SharedString)>,
+    style_revision: u64,
     selection: Option<u64>,
     /// False while `selection` is only the initial one (demo, `--line`): the footer stays empty until the user selects.
     selection_announced: bool,
@@ -137,6 +150,10 @@ impl Tab {
             split: init.split.unwrap_or(MainWindowParts::DEFAULT_SPLIT),
             labels: init.labels,
             last_pane: Pane::Full,
+            profile: init.profile.unwrap_or_else(|| SettingsStore::get(cx).behavior.default_profile.into()),
+            styler: None,
+            style_key: None,
+            style_revision: 0,
             selection: None,
             selection_announced: false,
             pending_selection: init.selection,
@@ -155,8 +172,33 @@ impl Tab {
             tab.live_started = true;
             tab.set_following(true, cx);
         }
+        tab.refresh_style(cx);
         tab.sync_rows(cx);
         tab
+    }
+
+    /// Rebuilds the row styler when the profile, its contents (the store revision) or the theme changed; the rows of
+    /// both panes are rebuilt with it.
+    pub fn refresh_style(&mut self, cx: &mut Context<Self>) {
+        let key = (ProfileStore::revision(cx), cx.rogg().appearance, self.profile.clone());
+        if self.style_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.styler = Some(Arc::new(RowStyler::for_profile(cx, &self.profile)));
+        self.style_key = Some(key);
+        self.style_revision += 1;
+        self.sync_rows(cx);
+    }
+
+    /// The tab's highlighting profile (spec §6.1: each tab has one).
+    pub fn set_profile(&mut self, name: SharedString, cx: &mut Context<Self>) {
+        self.profile = name;
+        self.refresh_style(cx);
+        cx.notify();
+    }
+
+    pub fn styler(&self) -> Option<Arc<RowStyler>> {
+        self.styler.clone()
     }
 
     fn on_doc_event(&mut self, ev: &DocumentEvent, cx: &mut Context<Self>) {
@@ -243,15 +285,16 @@ impl Tab {
                 pins: doc.filter.pins_revision,
                 filter: doc.filter.revision,
                 search: [doc.search(Pane::Full).revision, doc.search(Pane::Filtered).revision],
+                style: self.style_revision,
             };
             let a = self.applied;
-            let full_changed = now.text != a.text || now.pins != a.pins || now.search[0] != a.search[0];
-            let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1];
-            (now, full_changed.then(|| doc.full_rows()).flatten(), filtered_changed.then(|| doc.filtered_rows()).flatten())
+            let full_changed = now.text != a.text || now.pins != a.pins || now.search[0] != a.search[0] || now.style != a.style;
+            let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1] || now.style != a.style;
+            (now, full_changed.then(|| doc.full_rows(self.styler.clone())).flatten(), filtered_changed.then(|| doc.filtered_rows(self.styler.clone())).flatten())
         };
         let before = self.applied;
         let loaded = now.load != before.load;
-        let only_grew = !loaded && now.pins == before.pins && now.search[0] == before.search[0];
+        let only_grew = !loaded && now.pins == before.pins && now.search[0] == before.search[0] && now.style == before.style;
         self.applied = now;
         if let Some(rows) = full_rows {
             if only_grew && !self.live_started && self.end_in_view.is_none() {

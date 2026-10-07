@@ -85,7 +85,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
     let t = tab.read(cx);
     let d = t.doc.read(cx);
     let crumbs = t.labels.crumbs.clone().unwrap_or_else(|| d.source.crumbs());
-    let info_bar = InfoBar::new(crumbs, t.labels.profile.clone().unwrap_or_else(|| "Default".into()))
+    let info_bar = InfoBar::new(crumbs, t.labels.profile.clone().unwrap_or_else(|| t.profile.clone()))
         .on_profile(later(tab, "Highlighting profiles arrive in a later version"))
         .on_export(later(tab, "Export arrives in a later version"))
         .into_any_element();
@@ -141,6 +141,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                 .error(d.filter.error.clone())
                 .context(context_items, context_selected)
                 .summary(spec.summary().into())
+                .chip_colors(t.styler().map(|s| s.chips()))
                 .focused(t.focus[1].is_focused(window))
                 .on_cycle(tab_act_ix(tab, |t, i, _, cx| t.doc.update(cx, |d, cx| d.cycle_term(i, cx))))
                 .on_edit(tab_act(tab, |t, window, cx| t.start_edit(window, cx)))

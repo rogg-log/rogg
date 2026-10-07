@@ -1,15 +1,15 @@
 //! The engine as `LogRowSource`s for the two panes. Rows are materialised on demand, for the visible range only;
 //! each raw line is cut to the display limit before it is decoded (M1 carry-over).
 
-use crate::decorate;
 use crate::document::{Document, Pane};
+use crate::profiles::RowStyler;
 use gpui_kit::SharedString;
 use rogg_core::highlight::Highlighter;
 use rogg_core::search::CompiledSearch;
 use rogg_core::text::LogText;
 use rogg_core::view::{FilteredView, ViewRow};
 use rogg_ui::logview::text::MAX_DISPLAY_BYTES;
-use rogg_ui::logview::{LogLine, LogRow, LogRowSource, RowTint, Span, SpanStyle};
+use rogg_ui::logview::{LogLine, LogRow, LogRowSource, Span, SpanStyle};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -35,17 +35,19 @@ pub fn display_line(text: &LogText, i: u64) -> SharedString {
     display.into()
 }
 
-fn decorated(display: SharedString, number: u64, pinned: bool, context: bool, hits: Vec<Span>, search: Option<&CompiledSearch>) -> LogLine {
-    let mut spans = Vec::with_capacity(hits.len() + 1);
-    let stamp = decorate::timestamp_len(&display);
-    if stamp > 0 {
-        spans.push(Span { range: 0..stamp, style: SpanStyle::Faint });
-    }
+/// What decorates a row besides its filter hits: the active find, the profile styler, and which pane it is for.
+struct Decor<'a> {
+    search: Option<&'a CompiledSearch>,
+    styler: Option<&'a RowStyler>,
+    filtered: bool,
+}
+
+fn decorated(display: SharedString, number: u64, pinned: bool, context: bool, hits: Vec<Span>, decor: Decor) -> LogLine {
+    let (mut spans, tint) = decor.styler.map(|s| s.decorate(&display, decor.filtered)).unwrap_or_default();
     spans.extend(hits);
-    if let Some(search) = search {
+    if let Some(search) = decor.search {
         spans.extend(search.spans(&display).into_iter().map(|range| Span { range, style: SpanStyle::SearchHit }));
     }
-    let tint = decorate::is_error(&display).then_some(RowTint::Error);
     LogLine { number, text: display, spans, pinned, context, tint }
 }
 
@@ -56,6 +58,7 @@ pub struct FullRows {
     pub base: u64,
     pub pins: Arc<BTreeSet<u64>>,
     pub search: Option<Arc<CompiledSearch>>,
+    pub styler: Option<Arc<RowStyler>>,
 }
 
 impl LogRowSource for FullRows {
@@ -65,7 +68,7 @@ impl LogRowSource for FullRows {
 
     fn row(&self, ix: usize) -> LogRow {
         let i = ix as u64;
-        LogRow::Line(decorated(display_line(&self.text, i), self.base + i, self.pins.contains(&i), false, Vec::new(), self.search.as_deref()))
+        LogRow::Line(decorated(display_line(&self.text, i), self.base + i, self.pins.contains(&i), false, Vec::new(), Decor { search: self.search.as_deref(), styler: self.styler.as_deref(), filtered: false }))
     }
 
     fn is_gap(&self, _: usize) -> bool {
@@ -102,6 +105,7 @@ pub struct FilteredRows {
     pub view: Arc<FilteredView>,
     pub highlighter: Option<Arc<Highlighter>>,
     pub search: Option<Arc<CompiledSearch>>,
+    pub styler: Option<Arc<RowStyler>>,
 }
 
 impl LogRowSource for FilteredRows {
@@ -116,9 +120,15 @@ impl LogRowSource for FilteredRows {
                 let hits = self
                     .highlighter
                     .as_ref()
-                    .map(|h| h.spans(&display, HIT_SLOTS).into_iter().map(|(range, slot)| Span { range, style: SpanStyle::Hit(slot) }).collect())
+                    .map(|h| {
+                        let slots = self.styler.as_ref().map_or(HIT_SLOTS, |s| s.palette_len());
+                        h.spans(&display, slots)
+                            .into_iter()
+                            .map(|(range, slot)| Span { range, style: self.styler.as_ref().map_or(SpanStyle::Hit(slot), |s| s.hit(slot)) })
+                            .collect()
+                    })
                     .unwrap_or_default();
-                LogRow::Line(decorated(display, self.base + number, pinned, !matched && !pinned, hits, self.search.as_deref()))
+                LogRow::Line(decorated(display, self.base + number, pinned, !matched && !pinned, hits, Decor { search: self.search.as_deref(), styler: self.styler.as_deref(), filtered: true }))
             }
             Some(ViewRow::Gap { omitted }) => LogRow::Gap { omitted },
             None => LogRow::Gap { omitted: 0 },
@@ -165,13 +175,13 @@ impl LogRowSource for FilteredRows {
 
 impl Document {
     /// Rows for the full log pane; None until the text is loaded.
-    pub fn full_rows(&self) -> Option<Rc<FullRows>> {
+    pub fn full_rows(&self, styler: Option<Arc<RowStyler>>) -> Option<Rc<FullRows>> {
         let text = self.text()?.clone();
-        Some(Rc::new(FullRows { text, base: self.number_base(), pins: Arc::new(self.filter.pins.clone()), search: self.search(Pane::Full).compiled.clone() }))
+        Some(Rc::new(FullRows { text, base: self.number_base(), pins: Arc::new(self.filter.pins.clone()), search: self.search(Pane::Full).compiled.clone(), styler }))
     }
 
     /// Rows for the filtered log pane; None until the text is loaded.
-    pub fn filtered_rows(&self) -> Option<Rc<FilteredRows>> {
+    pub fn filtered_rows(&self, styler: Option<Arc<RowStyler>>) -> Option<Rc<FilteredRows>> {
         let text = self.text()?.clone();
         Some(Rc::new(FilteredRows {
             text,
@@ -179,6 +189,7 @@ impl Document {
             view: self.filter.view.clone(),
             highlighter: self.filter.highlighter.clone(),
             search: self.search(Pane::Filtered).compiled.clone(),
+            styler,
         }))
     }
 }
@@ -189,6 +200,7 @@ mod tests {
     use rogg_core::filter::FilterSpec;
     use rogg_core::search::SearchQuery;
     use rogg_ui::logview::{LogRow, LogRowSource, RowTint, SpanStyle};
+    use rogg_ui::theme::{Appearance, Palette};
 
     fn text(lines: &[&str]) -> Arc<LogText> {
         Arc::new(LogText::from_bytes(lines.join("\n").into_bytes()))
@@ -204,13 +216,12 @@ mod tests {
     #[test]
     fn full_rows_number_pin_and_decorate() {
         let t = text(&["2026-10-05 14:32:08.142  ERROR  disk full", "plain"]);
-        let rows = FullRows { text: t, base: 100, pins: Arc::new(BTreeSet::from([1])), search: None };
+        let rows = FullRows { text: t, base: 100, pins: Arc::new(BTreeSet::from([1])), search: None, styler: Some(Arc::new(RowStyler::from_profile(&rogg_core::profile::builtin_default(), &Palette::dark(), Appearance::Dark))) };
         assert_eq!(rows.row_count(), 2);
         let first = line(rows.row(0));
         assert_eq!(first.number, 100);
-        assert_eq!(first.tint, Some(RowTint::Error));
-        assert_eq!(first.spans[0].range, 0..23);
-        assert_eq!(first.spans[0].style, SpanStyle::Faint);
+        assert_eq!(first.tint, Some(RowTint::Color(Palette::dark().error_row_tint)));
+        assert!(first.spans.iter().any(|s| *s == Span { range: 0..23, style: SpanStyle::Fg(Palette::dark().faint) }));
         assert!(!first.pinned && !first.context);
         let second = line(rows.row(1));
         assert!(second.pinned && second.spans.is_empty() && second.tint.is_none());
@@ -226,7 +237,7 @@ mod tests {
         let t = text(&["a", "ERROR disk full", "b", "c", "d", "pinned line", "e", "f"]);
         let spec = FilterSpec::from_expression("disk");
         let view = FilteredView::build(Arc::new(vec![1]), &BTreeSet::from([5]), 0, 8, |_| false);
-        let rows = FilteredRows { text: t.clone(), base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: None };
+        let rows = FilteredRows { text: t.clone(), base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: None, styler: None };
         // shown lines 1 and 5 with a gap of three between them
         assert_eq!(rows.row_count(), 3);
         let hit = line(rows.row(0));
@@ -243,7 +254,7 @@ mod tests {
         assert_eq!(rows.copy_text(2).as_deref(), Some("pinned line"));
 
         let ctx = FilteredView::build(Arc::new(vec![1]), &BTreeSet::new(), 1, 8, |_| false);
-        let rows = FilteredRows { text: t, base: 1, view: Arc::new(ctx), highlighter: None, search: None };
+        let rows = FilteredRows { text: t, base: 1, view: Arc::new(ctx), highlighter: None, search: None, styler: None };
         assert!(line(rows.row(0)).context && !line(rows.row(1)).context && line(rows.row(2)).context);
     }
 
@@ -251,7 +262,7 @@ mod tests {
     fn search_hits_are_outlined() {
         let t = text(&["one timeout two timeout"]);
         let search = Arc::new(SearchQuery { text: "timeout".into(), regex: false, case_sensitive: false }.compile().unwrap());
-        let rows = FullRows { text: t, base: 1, pins: Arc::new(BTreeSet::new()), search: Some(search) };
+        let rows = FullRows { text: t, base: 1, pins: Arc::new(BTreeSet::new()), search: Some(search), styler: None };
         let ranges: Vec<_> = line(rows.row(0)).spans.into_iter().filter(|s| s.style == SpanStyle::SearchHit).map(|s| s.range).collect();
         assert_eq!(ranges, [4..11, 16..23]);
     }
@@ -266,7 +277,7 @@ mod tests {
         let spec = FilterSpec::from_expression("needle || a");
         let view = FilteredView::build(Arc::new(vec![0]), &BTreeSet::new(), 0, 1, |_| false);
         let search = Arc::new(SearchQuery { text: "aaa".into(), regex: false, case_sensitive: false }.compile().unwrap());
-        let rows = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: Some(search) };
+        let rows = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: Some(search), styler: None };
         let row = line(rows.row(0));
         assert!(row.spans.iter().all(|s| s.range.end <= row.text.len()), "spans stay inside the display text");
         assert_eq!(rows.copy_text(0).map(|s| s.len()), Some(long.len()));

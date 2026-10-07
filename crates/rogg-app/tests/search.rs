@@ -47,7 +47,7 @@ fn rows_outline_the_query(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
     let doc = doc(cx, LINES.join("\n"));
     doc.update(cx, |d, cx| d.set_search(Pane::Full, "disk", cx));
-    let rows = doc.read_with(cx, |d, _| d.full_rows().unwrap());
+    let rows = doc.read_with(cx, |d, _| d.full_rows(None).unwrap());
     use rogg_ui::logview::{LogRow, LogRowSource, SpanStyle};
     let LogRow::Line(line) = rows.row(1) else { panic!("line") };
     assert!(line.spans.iter().any(|s| s.style == SpanStyle::SearchHit && s.range == (6..10)));

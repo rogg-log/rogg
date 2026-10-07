@@ -124,11 +124,26 @@ impl Workspace {
         if cx.try_global::<SettingsStore>().is_some_and(|s| s.recovered) {
             ws.toast("Settings were unreadable and have been reset; the old file was kept as settings.toml.bak", cx);
         }
+        let recovered: Vec<String> = cx
+            .try_global::<crate::profiles::ProfileStore>()
+            .map(|s| s.recovered.iter().filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).collect())
+            .unwrap_or_default();
+        for file in recovered {
+            ws.toast(format!("Profile {file} was unreadable; the old file was kept as {file}.bak"), cx);
+        }
         ws.open_paths(args.paths, window, cx);
         if args.demo {
             crate::demo::open(&mut ws, window, cx);
         }
         ws
+    }
+
+    /// Rebuilds every tab's rows after a profile or the theme changed.
+    pub fn restyle_tabs(&mut self, cx: &mut Context<Self>) {
+        for tab in self.tabs.clone() {
+            tab.update(cx, |t, cx| t.refresh_style(cx));
+        }
+        cx.notify();
     }
 
     pub fn tabs(&self) -> &[Entity<Tab>] {

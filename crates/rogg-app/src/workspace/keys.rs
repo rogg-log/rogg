@@ -129,7 +129,9 @@ impl Workspace {
     pub fn apply_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let appearance = SettingsStore::get(cx).appearance;
         let (theme, density) = self.theme_override.unwrap_or((appearance.theme, appearance.density));
-        crate::settings::apply_theme(theme, density, window.appearance(), cx);
+        if crate::settings::apply_theme(theme, density, window.appearance(), cx) {
+            self.restyle_tabs(cx);
+        }
         cx.notify();
     }
 }
