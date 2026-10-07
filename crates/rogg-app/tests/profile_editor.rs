@@ -66,6 +66,51 @@ fn new_duplicate_and_delete_profiles(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn deleting_the_default_profile_setting_falls_back_to_default(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-new");
+    cx.update(|cx| {
+        SettingsStore::update(cx, |s| s.behavior.default_profile = "New profile".into());
+    });
+    common::click(cx, f.w, "profile-delete");
+    assert!(!names(cx).contains(&"New profile".to_string()));
+    cx.update(|cx| assert_eq!(SettingsStore::get(cx).behavior.default_profile, "Default", "the setting does not name a deleted profile"));
+    let saved = std::fs::read_to_string(f.dir.path().join("settings.toml")).unwrap();
+    assert!(!saved.contains("New profile"), "the reset is saved: {saved}");
+    let log = common::write_log(f.dir.path(), "b.log", &["other"]);
+    cx.update_window(f.w, |_, window, cx| f.ws.update(cx, |ws, cx| ws.open_paths(vec![log.clone()], window, cx))).unwrap();
+    let opened = f.ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    assert_eq!(opened.read_with(cx, |t, _| t.profile.to_string()), "Default");
+    // A setting that names no profile (edited by hand, or saved before the reset failed) opens tabs on Default too.
+    cx.update(|cx| {
+        SettingsStore::update(cx, |s| s.behavior.default_profile = "Gone".into());
+    });
+    let log = common::write_log(f.dir.path(), "c.log", &["third"]);
+    cx.update_window(f.w, |_, window, cx| f.ws.update(cx, |ws, cx| ws.open_paths(vec![log], window, cx))).unwrap();
+    let third = f.ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    assert_eq!(third.read_with(cx, |t, _| t.profile.to_string()), "Default", "an unknown profile name resolves to Default");
+}
+
+#[gpui_kit::test]
+fn a_failing_profile_save_is_reported_once(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let f = open_editor(cx);
+    let profiles = f.dir.path().join("profiles");
+    std::fs::create_dir_all(&profiles).unwrap();
+    let set_mode = |mode: u32| std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(mode)).unwrap();
+    set_mode(0o555);
+    common::click(cx, f.w, "profile-rule-1-toggle");
+    common::click(cx, f.w, "profile-rule-1-toggle");
+    set_mode(0o755);
+    let failures = f.ws.read_with(cx, |ws, _| ws.toasts.iter().filter(|(_, t)| t.starts_with("Could not save profile Default: ")).count());
+    assert_eq!(failures, 1, "two failing edits, one toast: {:?}", f.ws.read_with(cx, |ws, _| ws.toasts.clone()));
+    assert!(f.ws.read_with(cx, |ws, _| ws.profile_error.is_some()));
+    common::click(cx, f.w, "profile-rule-1-toggle");
+    assert!(f.ws.read_with(cx, |ws, _| ws.profile_error.is_none()), "a successful save clears the error");
+    assert!(profiles.join("Default.toml").exists());
+}
+
+#[gpui_kit::test]
 fn rules_toggle_reorder_add_and_delete(cx: &mut TestAppContext) {
     let f = open_editor(cx);
     common::click(cx, f.w, "profile-rule-1-toggle");

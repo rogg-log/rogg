@@ -26,6 +26,7 @@ pub struct ProfileStore {
     revision: u64,
     /// Profile files that were unreadable and were moved to `.bak` (toasts at start).
     pub recovered: Vec<PathBuf>,
+    /// Why the last save or delete failed, as a message for the user; None after a successful one.
     pub last_error: Option<String>,
 }
 
@@ -80,7 +81,7 @@ impl ProfileStore {
         if !names_collide(old_name, &profile.name) && saved.is_ok() {
             let _ = profile::delete(&self.dir, old_name);
         }
-        self.last_error = saved.err().map(|e| e.to_string());
+        self.last_error = saved.err().map(|e| format!("Could not save profile {}: {e}", profile.name));
         match self.entries.iter().position(|e| e.profile.name == old_name) {
             Some(i) => self.entries[i] = entry(profile),
             None => self.entries.push(entry(profile)),
@@ -103,7 +104,7 @@ impl ProfileStore {
             return false;
         }
         self.entries.remove(i);
-        self.last_error = profile::delete(&self.dir, name).err().map(|e| e.to_string());
+        self.last_error = profile::delete(&self.dir, name).err().map(|e| format!("Could not delete profile {name}: {e}"));
         self.revision += 1;
         true
     }

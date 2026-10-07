@@ -122,6 +122,7 @@ impl Workspace {
         if before.behavior.cache_limit_gb != after.behavior.cache_limit_gb {
             crate::settings::apply_cache_limit(cx);
         }
+        self.report_settings_error(cx);
         cx.notify();
     }
 

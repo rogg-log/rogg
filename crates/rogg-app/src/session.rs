@@ -62,6 +62,24 @@ pub fn bounds_for(state: &WindowState) -> WindowBounds {
     if state.maximized { WindowBounds::Maximized(b) } else { WindowBounds::Windowed(b) }
 }
 
+/// How much of a restored window must show on one display to be left where it was (enough to grab and drag it).
+const MIN_VISIBLE: f32 = 100.;
+
+/// A stored frame placed on the current displays (the first one is the primary). gpui restores a frame as is, so one
+/// saved on a display that is now smaller or unplugged could open out of sight: when less than 100 × 100 px of it
+/// shows on any display, it opens centred on the first one, its size clamped to that display. With no display known
+/// the frame is left as stored.
+pub fn fit_to_displays(frame: Bounds<Pixels>, displays: &[Bounds<Pixels>]) -> Bounds<Pixels> {
+    let visible = displays.iter().any(|d| {
+        let overlap = frame.intersect(d);
+        f32::from(overlap.size.width) >= MIN_VISIBLE && f32::from(overlap.size.height) >= MIN_VISIBLE
+    });
+    match displays.first() {
+        Some(first) if !visible => Bounds::centered_at(first.center(), frame.size.min(&first.size)),
+        _ => frame,
+    }
+}
+
 /// `bounds_for` a stored frame whose values are all finite; None otherwise (the window opens at its default frame).
 pub fn restorable_bounds(state: &WindowState) -> Option<WindowBounds> {
     [state.x, state.y, state.width, state.height].iter().all(|v| v.is_finite()).then(|| bounds_for(state))

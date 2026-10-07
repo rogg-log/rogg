@@ -106,6 +106,27 @@ fn unreadable_settings_toast_and_reset(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_failing_settings_save_is_reported_once(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let set_mode = |mode: u32| std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+    let change = |cx: &mut TestAppContext, wrap: bool| {
+        cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.change_settings(|s| s.behavior.wrap = wrap, window, cx))).unwrap();
+    };
+    set_mode(0o555);
+    change(cx, true);
+    change(cx, false);
+    set_mode(0o755);
+    let failures = ws.read_with(cx, |ws, _| ws.toasts.iter().filter(|(_, t)| t.starts_with("Could not save settings: ")).count());
+    assert_eq!(failures, 1, "two failing changes, one toast");
+    assert!(ws.read_with(cx, |ws, _| ws.settings_error.is_some()));
+    change(cx, true);
+    assert!(ws.read_with(cx, |ws, _| ws.settings_error.is_none()), "a successful save clears the error");
+    assert!(dir.path().join("settings.toml").exists());
+}
+
+#[gpui_kit::test]
 fn a_pinned_theme_keeps_its_density_and_is_never_saved(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let (w, ws) = common::open_workspace(cx, Args::default());

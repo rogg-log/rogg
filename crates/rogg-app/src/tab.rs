@@ -176,7 +176,10 @@ impl Tab {
             split: init.split.unwrap_or(MainWindowParts::DEFAULT_SPLIT),
             labels: init.labels,
             last_pane: Pane::Full,
-            profile: init.profile.unwrap_or_else(|| SettingsStore::get(cx).behavior.default_profile.into()),
+            // A name no profile has (a stale default-profile setting) is Default, as on session restore.
+            profile: Some(init.profile.unwrap_or_else(|| SettingsStore::get(cx).behavior.default_profile.into()))
+                .filter(|p| cx.try_global::<ProfileStore>().is_none_or(|s| s.contains(p)))
+                .unwrap_or_else(|| rogg_core::profile::DEFAULT_PROFILE.into()),
             crumb_tabs: init.crumb_tabs,
             self_id: cx.entity_id(),
             styler: None,

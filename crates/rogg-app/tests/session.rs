@@ -143,6 +143,30 @@ fn window_frames_convert_both_ways() {
     assert_eq!((t.size.width, t.size.height), (px(760.), px(520.)), "never smaller than the window's minimum");
 }
 
+#[test]
+fn a_restored_frame_is_kept_on_a_display() {
+    use gpui_kit::{Bounds, point, px, size};
+    use rogg_app::session::fit_to_displays;
+    let rect = |x: f32, y: f32, w: f32, h: f32| Bounds { origin: point(px(x), px(y)), size: size(px(w), px(h)) };
+    let laptop = rect(0., 0., 1512., 982.);
+    let external = rect(1512., 0., 2560., 1440.);
+    let displays = [laptop, external];
+    let on_external = rect(1800., 100., 1600., 1000.);
+    assert_eq!(fit_to_displays(on_external, &displays), on_external, "fully visible on the second display: unchanged");
+    let partly = rect(-1000., 100., 1200., 800.);
+    assert_eq!(fit_to_displays(partly, &displays), partly, "200 × 800 px visible is enough to grab it");
+    // The external display was unplugged: the frame is nowhere, and larger than the laptop's display.
+    let gone = fit_to_displays(on_external, &[laptop]);
+    assert_eq!(gone.size, size(px(1512.), px(982.)), "the size is clamped to the display");
+    assert_eq!(gone.center(), laptop.center(), "centred on the first display");
+    let small_gone = fit_to_displays(rect(3000., 200., 900., 700.), &[laptop]);
+    assert_eq!(small_gone, Bounds::centered_at(laptop.center(), size(px(900.), px(700.))), "the stored size is kept when it fits");
+    // Only a 50 × 50 px corner shows: too little to grab, so it is centred.
+    let corner = rect(1462., 932., 900., 700.);
+    assert_eq!(fit_to_displays(corner, &[laptop]), Bounds::centered_at(laptop.center(), size(px(900.), px(700.))));
+    assert_eq!(fit_to_displays(corner, &[]), corner, "no display known: left as stored");
+}
+
 // Carry-over checks beyond the brief's tests.
 
 #[test]

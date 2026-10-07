@@ -142,3 +142,22 @@ fn open_as_tab_refuses_an_empty_view_and_closing_deletes_the_copy(cx: &mut TestA
     cx.run_until_parked();
     assert!(!file.exists(), "closing a derived tab deletes its copy");
 }
+
+#[gpui_kit::test]
+fn open_as_tab_waits_for_a_view_build_in_flight(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    // 100 matches: the context-free view is built at once, a ±2 view off the UI thread.
+    cx.update(|cx| cx.set_global(rogg_app::document::EngineConfig { view_sync_work: 150, ..Default::default() }));
+    let lines: Vec<&str> = (0..1000).map(|i| if i % 10 == 5 { "match here" } else { "filler" }).collect();
+    let log = common::write_log(dir.path(), "a.log", &lines);
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let parent = active(&ws, cx);
+    ready(&parent, cx);
+    filter(&parent, "match", cx);
+    common::wait_until(cx, |cx| doc(&parent, cx).read_with(cx, |d, _| d.filter_settled()));
+    doc(&parent, cx).update(cx, |d, cx| d.set_context(2, cx));
+    assert!(doc(&parent, cx).read_with(cx, |d, _| d.filter.progress.is_none() && !d.filter_settled()), "the ±2 view is still being built");
+    common::press(cx, w, "shift-cmd-t");
+    assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1, "no tab from the stale view");
+    assert!(ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, t)| t.contains("Filtering is still running — open as tab when it finishes"))));
+}

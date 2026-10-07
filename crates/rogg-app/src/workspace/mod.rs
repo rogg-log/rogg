@@ -80,6 +80,10 @@ pub struct Workspace {
     _session_subscriptions: Vec<Subscription>,
     /// Why the last session save failed; None after a successful one. A failure is toasted once, not every 30 s.
     pub session_error: Option<String>,
+    /// Why the last settings save failed; None after a successful one. Toasted once, like `session_error`.
+    pub settings_error: Option<String>,
+    /// The last profile save's failure message; None after a successful one. Toasted once.
+    pub profile_error: Option<String>,
     /// The Export dialog's line options (spec §6.5).
     pub export_options: rogg_core::export::ExportOptions,
     /// The Export dialog's session scope: all tabs, or only the active one.
@@ -131,6 +135,8 @@ impl Workspace {
             last_window: None,
             _session_subscriptions: Vec::new(),
             session_error: None,
+            settings_error: None,
+            profile_error: None,
             export_options: rogg_core::export::ExportOptions { context: true, gaps: true, numbers: false },
             export_all_tabs: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
@@ -451,7 +457,8 @@ impl Workspace {
             let t = tab.read(cx);
             let d = t.doc.read(cx);
             let Some(text) = d.text().cloned() else { return };
-            if d.filter.progress.is_some() {
+            // A running scan or a view build in flight: the shown lines are not the ones the new filter will show.
+            if !d.filter_settled() {
                 self.toast("Filtering is still running — open as tab when it finishes", cx);
                 return;
             }
@@ -531,15 +538,48 @@ impl Workspace {
         }
     }
 
-    /// After any profile change: tabs whose profile was deleted move to Default, every tab restyles.
+    /// After any profile change: tabs whose profile was deleted move to Default, and so does the default-profile
+    /// setting; every tab restyles.
     fn profiles_changed(&mut self, cx: &mut Context<Self>) {
+        let gone = |name: &str, cx: &App| cx.try_global::<crate::profiles::ProfileStore>().is_some_and(|s| !s.contains(name));
         for tab in self.tabs.clone() {
-            let gone = cx.try_global::<crate::profiles::ProfileStore>().is_some_and(|s| !s.contains(&tab.read(cx).profile));
-            if gone {
+            if gone(&tab.read(cx).profile, cx) {
                 tab.update(cx, |t, cx| t.set_profile(rogg_core::profile::DEFAULT_PROFILE.into(), cx));
             }
         }
+        if gone(&SettingsStore::get(cx).behavior.default_profile, cx) {
+            SettingsStore::update(cx, |s| s.behavior.default_profile = rogg_core::profile::DEFAULT_PROFILE.into());
+        }
         self.restyle_tabs(cx);
+        self.report_settings_error(cx);
+        self.report_profile_error(cx);
+    }
+
+    /// After a settings change: toasts a failed save once, on the first failure after a success (like
+    /// `session_error`); a successful save clears it. The dialog says changes are saved: a lost edit must not go
+    /// unnoticed.
+    pub(crate) fn report_settings_error(&mut self, cx: &mut Context<Self>) {
+        match cx.try_global::<SettingsStore>().and_then(|s| s.last_error.clone()) {
+            Some(e) => {
+                if self.settings_error.replace(e.clone()).is_none() {
+                    self.toast(format!("Could not save settings: {e}"), cx);
+                }
+            }
+            None => self.settings_error = None,
+        }
+    }
+
+    /// After a profile change: like `report_settings_error`, for the profile library.
+    fn report_profile_error(&mut self, cx: &mut Context<Self>) {
+        let profile = cx.try_global::<crate::profiles::ProfileStore>().and_then(|s| s.last_error.clone());
+        match profile {
+            Some(message) => {
+                if self.profile_error.replace(message.clone()).is_none() {
+                    self.toast(message, cx);
+                }
+            }
+            None => self.profile_error = None,
+        }
     }
 
     /// A renamed profile: tabs showing it and the default-profile setting follow the new name.
