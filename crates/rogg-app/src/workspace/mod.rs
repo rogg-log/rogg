@@ -76,6 +76,8 @@ pub struct Workspace {
     last_window: Option<rogg_core::session::WindowState>,
     /// Frame changes and app quit (the session is saved on quit).
     _session_subscriptions: Vec<Subscription>,
+    /// Why the last session save failed; None after a successful one. A failure is toasted once, not every 30 s.
+    pub session_error: Option<String>,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -122,6 +124,7 @@ impl Workspace {
             refocus_after_dialog: false,
             last_window: None,
             _session_subscriptions: Vec::new(),
+            session_error: None,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
@@ -209,7 +212,15 @@ impl Workspace {
             return;
         }
         let Some(path) = cx.try_global::<crate::paths::AppPaths>().map(|p| p.session.clone()) else { return };
-        let _ = self.capture_session(true, cx).save(&path);
+        match self.capture_session(true, cx).save(&path) {
+            Ok(()) => self.session_error = None,
+            Err(e) => {
+                let message = e.to_string();
+                if self.session_error.replace(message.clone()).is_none() {
+                    self.toast(format!("Could not save the session: {message}"), cx);
+                }
+            }
+        }
     }
 
     fn start_autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) {

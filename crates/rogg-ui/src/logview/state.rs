@@ -93,6 +93,8 @@ pub struct LogViewState {
     /// Always show the horizontal scrollbar (gallery specimens).
     pub(crate) force_hbar: bool,
     initialized: bool,
+    /// Scrolls the user made (wheel, scrollbar, drag-select past an edge); programmatic scrolls do not count.
+    user_scrolls: u64,
 }
 
 impl EventEmitter<LogViewEvent> for LogViewState {}
@@ -123,6 +125,7 @@ impl LogViewState {
             hbar_generation: 0,
             force_hbar: false,
             initialized: false,
+            user_scrolls: 0,
         }
     }
 
@@ -231,10 +234,16 @@ impl LogViewState {
 
     /// After a user scroll: leaves tail mode when the end is no longer in view.
     pub(crate) fn user_scrolled(&mut self, cx: &mut Context<Self>) {
+        self.user_scrolls += 1;
         if self.tail && !self.with_geometry(|g| g.is_at_bottom(self.anchor)) {
             self.tail = false;
             cx.emit(LogViewEvent::TailLeft);
         }
+    }
+
+    /// How many times the user has scrolled this view (wheel, scrollbar, drag-select past an edge).
+    pub fn user_scrolls(&self) -> u64 {
+        self.user_scrolls
     }
 
     pub fn wrap(&self) -> bool {

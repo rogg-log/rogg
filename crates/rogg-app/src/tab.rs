@@ -317,7 +317,12 @@ impl Tab {
 
     /// The top line of each pane a session stores: a restored one not applied yet counts.
     pub fn session_top(&self, cx: &App) -> [Option<u64>; 2] {
-        [Pane::Full, Pane::Filtered].map(|pane| self.pending_top[pane.index()].or_else(|| self.state(pane).read(cx).top_number()))
+        [Pane::Full, Pane::Filtered].map(|pane| self.pending_top_of(pane, cx).or_else(|| self.state(pane).read(cx).top_number()))
+    }
+
+    /// A restored top line still to apply; void once the user has scrolled that pane (it would yank the view back).
+    fn pending_top_of(&self, pane: Pane, cx: &App) -> Option<u64> {
+        self.pending_top[pane.index()].filter(|_| self.state(pane).read(cx).user_scrolls() == 0)
     }
 
     /// The display number the user last selected in either pane (shown as `Line N`); none for an initial selection.
@@ -373,7 +378,9 @@ impl Tab {
                 continue;
             }
             let state = self.state(pane).clone();
-            if let Some(row) = self.pending_top[pane.index()].take().and_then(|n| state.read(cx).rows().nearest_row(n)) {
+            let top = self.pending_top_of(pane, cx);
+            self.pending_top[pane.index()] = None;
+            if let Some(row) = top.and_then(|n| state.read(cx).rows().nearest_row(n)) {
                 state.update(cx, |s, cx| s.scroll_to_row(row, ScrollTo::Top, cx));
             }
         }
@@ -403,7 +410,11 @@ impl Tab {
     fn on_log_event(&mut self, pane: Pane, ev: &LogViewEvent, cx: &mut Context<Self>) {
         self.last_pane = pane;
         match ev {
-            LogViewEvent::Selected { number, .. } => self.sync_selection(pane, *number, cx),
+            LogViewEvent::Selected { number, .. } => {
+                // The user moved in this pane (a click, the keyboard): a restored top must not yank it back.
+                self.pending_top[pane.index()] = None;
+                self.sync_selection(pane, *number, cx)
+            }
             LogViewEvent::TogglePin { number } => self.toggle_pin(*number, cx),
             LogViewEvent::AddTerm { text, exclude } => {
                 let (text, exclude) = (text.clone(), *exclude);

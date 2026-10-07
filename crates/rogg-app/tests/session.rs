@@ -240,3 +240,83 @@ fn restored_members_put_their_archive_in_the_sidebar(cx: &mut TestAppContext) {
     let titles: Vec<String> = ws.read_with(cx, |ws, cx| ws.tabs().iter().map(|t| t.read(cx).title(cx).to_string()).collect());
     assert_eq!(titles, ["b.log"], "the archive is listed, not opened at its first member");
 }
+
+#[gpui_kit::test]
+fn a_failing_session_save_is_reported_once(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = common::setup(cx);
+    let log = common::write_log(dir.path(), "a.log", &["a"]);
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let set_mode = |mode: u32| std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+    set_mode(0o555);
+    ws.update(cx, |ws, cx| ws.save_session_now(cx));
+    ws.update(cx, |ws, cx| ws.save_session_now(cx));
+    set_mode(0o755);
+    let failures = ws.read_with(cx, |ws, _| ws.toasts.iter().filter(|(_, t)| t.contains("Could not save the session")).count());
+    assert_eq!(failures, 1, "a failure is toasted once, not on every autosave");
+    assert!(ws.read_with(cx, |ws, _| ws.session_error.is_some()));
+    ws.update(cx, |ws, cx| ws.save_session_now(cx));
+    assert!(ws.read_with(cx, |ws, _| ws.session_error.is_none()), "a successful save clears the error");
+    assert!(dir.path().join("session.json").exists());
+}
+
+#[gpui_kit::test]
+fn the_demo_neither_restores_nor_saves_the_session(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let log = common::write_log(dir.path(), "mine.log", &["mine"]);
+    let path = dir.path().join("session.json");
+    Session { tabs: vec![TabState::new(SessionSource::File { path: log })], ..Session::default() }.save(&path).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![] });
+    let titles: Vec<String> = ws.read_with(cx, |ws, cx| ws.tabs().iter().map(|t| t.read(cx).title(cx).to_string()).collect());
+    assert!(!titles.is_empty() && !titles.iter().any(|t| t == "mine.log"), "{titles:?}");
+    ws.update(cx, |ws, cx| ws.save_session_now(cx));
+    assert_eq!(std::fs::read(&path).unwrap(), before, "the demo never overwrites the user's session");
+}
+
+fn restore_big_filtered(cx: &mut TestAppContext) -> (tempfile::TempDir, AnyWindowHandle, gpui_kit::Entity<rogg_app::tab::Tab>) {
+    let dir = common::setup(cx);
+    cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
+    let lines: Vec<String> = (0..400).map(|i| if i % 2 == 0 { format!("x {i}") } else { format!("y {i}") }).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let log = common::write_log(dir.path(), "big.log", &refs);
+    let mut state = TabState::new(SessionSource::File { path: log });
+    state.filter = FilterSpec::from_expression("x");
+    state.top = [None, Some(201)];
+    Session { tabs: vec![state], ..Session::default() }.save(&dir.path().join("session.json")).unwrap();
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    (dir, w, tab)
+}
+
+fn settle(cx: &mut TestAppContext, w: AnyWindowHandle, tab: &gpui_kit::Entity<rogg_app::tab::Tab>) {
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.doc.read(cx).filter_settled()));
+    common::render(cx, w);
+}
+
+#[gpui_kit::test]
+fn scrolling_the_filtered_log_during_the_scan_drops_its_restored_top(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point, px};
+    let (_dir, w, tab) = restore_big_filtered(cx);
+    assert!(tab.read_with(cx, |t, cx| !t.doc.read(cx).filter_settled()), "the scan is still running");
+    common::render(cx, w);
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-bottom", ScrollDelta::Pixels(point(px(0.), px(-10.))), cx)
+    })
+    .unwrap();
+    assert!(tab.read_with(cx, |t, cx| t.filtered.read(cx).user_scrolls() > 0));
+    settle(cx, w, &tab);
+    assert_ne!(top_numbers(&tab, cx)[1], Some(201), "the restored top does not yank a pane the user scrolled");
+}
+
+#[gpui_kit::test]
+fn selecting_in_the_filtered_log_during_the_scan_drops_its_restored_top(cx: &mut TestAppContext) {
+    let (_dir, w, tab) = restore_big_filtered(cx);
+    assert!(tab.read_with(cx, |t, cx| !t.doc.read(cx).filter_settled()), "the scan is still running");
+    let filtered = tab.read_with(cx, |t, _| t.filtered.clone());
+    filtered.update(cx, |_, cx| cx.emit(rogg_ui::logview::LogViewEvent::Selected { row: 0, number: 1 }));
+    settle(cx, w, &tab);
+    assert_ne!(top_numbers(&tab, cx)[1], Some(201));
+}

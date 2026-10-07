@@ -792,3 +792,20 @@ fn the_focus_line_is_on_the_panel_perimeter(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(common::bounds(cx, w, "log-focus"), common::bounds(cx, w, "log-test"), "drawn on the panel's edge, not inset");
 }
+
+#[gpui_kit::test]
+fn user_scrolls_count_the_wheel_not_programmatic_scrolls(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(1000, None)));
+    let w = open(cx, state.clone());
+    render(cx, w);
+    state.update(cx, |s, cx| s.scroll_to_row(300, ScrollTo::Top, cx));
+    render(cx, w);
+    assert_eq!(state.read_with(cx, |s, _| s.user_scrolls()), 0);
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("log-test", ScrollDelta::Pixels(point(px(0.), px(-40.))), cx)
+    })
+    .unwrap();
+    assert_eq!(state.read_with(cx, |s, _| s.user_scrolls()), 1);
+}
