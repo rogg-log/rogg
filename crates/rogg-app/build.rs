@@ -1,5 +1,6 @@
 //! Build details for the About dialog: the short git commit, the build date and the compiler version. Anything
 //! that cannot be found (no git checkout, no `date`) is left unset, and the app shows `unknown`.
+use std::path::Path;
 use std::process::Command;
 
 fn output(cmd: &str, args: &[&str]) -> Option<String> {
@@ -27,6 +28,14 @@ fn main() {
     if let (Some(common), Some(branch)) =
         (output("git", &["rev-parse", "--path-format=absolute", "--git-common-dir"]), output("git", &["symbolic-ref", "-q", "HEAD"]))
     {
-        println!("cargo:rerun-if-changed={common}/{branch}");
+        // A missing path makes cargo rerun on every build, so only name files that exist. With packed refs (after
+        // `git gc`) the branch has no loose file; `packed-refs` changes when the branch moves instead.
+        let loose = format!("{common}/{branch}");
+        let packed = format!("{common}/packed-refs");
+        if Path::new(&loose).exists() {
+            println!("cargo:rerun-if-changed={loose}");
+        } else if Path::new(&packed).exists() {
+            println!("cargo:rerun-if-changed={packed}");
+        }
     }
 }
