@@ -95,7 +95,7 @@ pub struct LogViewState {
     pub(crate) selected: Option<u64>,
     /// The other end of a range selection; None for a single line.
     pub(crate) range_anchor: Option<u64>,
-    /// Characters selected within the selected row; cleared whenever the line selection or the rows change.
+    /// Characters selected within the selected row; cleared when the line selection changes or its line leaves the rows.
     pub(crate) char_selection: Option<CharSelection>,
     pub(crate) force_hover_row: Option<usize>,
     pub(crate) pending_scroll: Option<(usize, ScrollTo)>,
@@ -220,7 +220,9 @@ impl LogViewState {
             (0..3).find_map(|k| self.rows.number_at(self.anchor.row + k).map(|n| (n, k == 0)))
         };
         self.rows = rows;
-        self.char_selection = None;
+        // Rebuilt rows (appended lines, pins, Find, restyling) keep a character selection while its line is still there;
+        // the tab clears it on a new filter.
+        self.char_selection = self.char_selection.and_then(|c| self.snap_char_selection(c.number, c.anchor, c.head));
         self.heights.clear();
         if let Some((number, same_row)) = keep
             && let Some(row) = self.rows.nearest_row(number)
@@ -308,15 +310,27 @@ impl LogViewState {
     /// Selects characters `anchor..head` of line `number` (a drag within one row). Offsets snap back to char boundaries
     /// and stop at the display cut (never inside the `…` marker); an empty range clears the selection.
     pub fn set_char_selection(&mut self, number: u64, anchor: usize, head: usize, cx: &mut Context<Self>) {
-        let Some(ix) = self.rows.row_for_number(number) else { return };
-        let LogRow::Line(line) = self.rows.row(ix) else { return };
+        if self.rows.row_for_number(number).is_none() {
+            return;
+        }
+        let selection = self.snap_char_selection(number, anchor, head);
+        if selection != self.char_selection {
+            self.char_selection = selection;
+            cx.notify();
+        }
+    }
+
+    /// `anchor..head` of line `number` snapped to char boundaries and the display cut; None when the line is not a row
+    /// or the range is empty.
+    fn snap_char_selection(&self, number: u64, anchor: usize, head: usize) -> Option<CharSelection> {
+        let ix = self.rows.row_for_number(number)?;
+        let LogRow::Line(line) = self.rows.row(ix) else { return None };
         let (display, truncated) = display_text(&line.text, MAX_DISPLAY_TEXT_BYTES);
         // The row producer may already have cut the line and added the marker itself.
         let cut = if truncated || (self.rows.is_display_cut(ix) && display.ends_with('…')) { display.len() - '…'.len_utf8() } else { display.len() };
         let snap = |i: usize| display.floor_char_boundary(i.min(cut));
         let (anchor, head) = (snap(anchor), snap(head));
-        self.char_selection = (anchor != head).then_some(CharSelection { number, anchor, head });
-        cx.notify();
+        (anchor != head).then_some(CharSelection { number, anchor, head })
     }
 
     pub fn clear_char_selection(&mut self, cx: &mut Context<Self>) {
@@ -437,9 +451,11 @@ impl LogViewState {
             && let Some(c) = self.char_selection
             && self.selection_range() == Some((c.number, c.number))
         {
-            // The display text's kept prefix has the same bytes as the line (control chars become spaces one for one),
-            // so the offsets index the full line too.
-            let text = self.rows.copy_text(self.rows.row_for_number(c.number)?)?;
+            // The display text's kept prefix has the same bytes as the row's text (control chars become spaces one for
+            // one), and the range never reaches past the cut, so the row's own text is sliced (tabs intact) rather than
+            // the full line.
+            let LogRow::Line(line) = self.rows.row(self.rows.row_for_number(c.number)?) else { return None };
+            let text: &str = &line.text;
             let r = c.range();
             let end = text.floor_char_boundary(r.end.min(text.len()));
             return Some(text[text.floor_char_boundary(r.start.min(end))..end].to_string());

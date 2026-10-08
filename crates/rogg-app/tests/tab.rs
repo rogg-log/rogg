@@ -130,3 +130,32 @@ fn a_selection_shown_after_a_background_scan_is_selected_in_the_filtered_pane(cx
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.doc.read(cx).filter.progress.is_none() && t.doc.read(cx).text().is_some()));
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.filtered.read(cx).selected() == Some(201)));
 }
+
+#[gpui_kit::test]
+fn a_char_selection_survives_rebuilt_rows_and_a_new_filter_clears_it(cx: &mut TestAppContext) {
+    let (_dir, _w, _, tab) = open_one(cx);
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    doc.update(cx, |d, cx| d.set_expression("error || timeout", cx)).unwrap();
+    cx.run_until_parked();
+    let (full, filtered) = tab.read_with(cx, |t, _| (t.full.clone(), t.filtered.clone()));
+    // "ERROR disk full" is line 2: select "ERROR" in the filtered pane, and "ok" of line 1 in the full log.
+    filtered.update(cx, |s, cx| {
+        s.set_selected(Some(2), cx);
+        s.set_char_selection(2, 0, 5, cx);
+    });
+    full.update(cx, |s, cx| {
+        s.set_selected(Some(1), cx);
+        s.set_char_selection(1, 0, 2, cx);
+    });
+    // Pinning a hidden line rebuilds the filtered rows without changing the filter.
+    let rows = filtered.read_with(cx, |s, _| s.rows().row_count());
+    doc.update(cx, |d, cx| d.toggle_pin(0, cx)); // line 1
+    cx.run_until_parked();
+    assert_ne!(filtered.read_with(cx, |s, _| s.rows().row_count()), rows, "the filtered rows were rebuilt");
+    assert_eq!(filtered.read_with(cx, |s, _| s.selected_text(false)).as_deref(), Some("ERROR"), "kept across the rebuild");
+    assert_eq!(full.read_with(cx, |s, _| s.selected_text(false)).as_deref(), Some("ok"));
+    doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(filtered.read_with(cx, |s, _| s.char_selection()), None, "a new filter clears it");
+    assert_eq!(full.read_with(cx, |s, _| s.char_selection()), None, "in both panes");
+}

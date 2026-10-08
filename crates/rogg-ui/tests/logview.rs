@@ -828,16 +828,54 @@ fn a_char_selection_copies_its_characters_and_clears_on_other_selections(cx: &mu
     assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "a keyboard move clears it");
     state.update(cx, |s, cx| {
         s.set_char_selection(1004, 0, 4, cx);
-        s.set_rows(rows(20, None), cx);
-    });
-    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "new rows (a filter change) clear it");
-    state.update(cx, |s, cx| {
-        s.set_char_selection(1004, 0, 4, cx);
         s.set_selected(Some(1004), cx);
     });
     assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "a click (plain selection) clears it");
     state.update(cx, |s, cx| s.set_char_selection(1004, 3, 3, cx));
     assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "an empty range is no selection");
+}
+
+#[gpui_kit::test]
+fn a_char_selection_survives_rebuilt_rows_that_keep_its_line(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None))); // row i shows "line {i}", numbered 1000 + i
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1004), cx);
+        s.set_char_selection(1004, 0, 4, cx);
+        s.set_rows(rows(30, None), cx); // lines appended, a pin toggled, Find typed…
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection().map(|c| (c.number, c.range()))), Some((1004, 0..4)), "its line is still there");
+    assert_eq!(state.read_with(cx, |s, _| s.selected_text(false)).as_deref(), Some("line"));
+    // The line is now shorter than the range: the range is cut to what still fits.
+    let short = |text: &str| {
+        Rc::new(VecRows::new(vec![LogRow::Line(LogLine { number: 1004, text: text.to_string().into(), spans: vec![], pinned: false, context: false, tint: None })]))
+    };
+    state.update(cx, |s, cx| s.set_rows(short("li"), cx));
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection().map(|c| c.range())), Some(0..2), "clamped to the shorter line");
+    state.update(cx, |s, cx| {
+        s.set_rows(rows(30, None), cx);
+        s.set_char_selection(1004, 0, 4, cx);
+        s.set_rows(rows_without(1004), cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "its line is gone");
+}
+
+#[gpui_kit::test]
+fn an_unchanged_char_selection_does_not_redraw(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None)));
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1004), cx);
+        s.set_char_selection(1004, 0, 4, cx);
+    });
+    let notes = Rc::new(RefCell::new(0));
+    let n = notes.clone();
+    let _sub = cx.update(|cx| cx.observe(&state, move |_, _| *n.borrow_mut() += 1));
+    state.update(cx, |s, cx| s.set_char_selection(1004, 0, 4, cx));
+    state.update(cx, |s, cx| s.set_char_selection(1004, 0, 99, cx)); // snaps to the same 0..6 once
+    state.update(cx, |s, cx| s.set_char_selection(1004, 0, 6, cx));
+    cx.run_until_parked();
+    assert_eq!(*notes.borrow(), 1, "only the change to 0..6 notifies");
 }
 
 #[gpui_kit::test]

@@ -143,6 +143,9 @@ pub struct Tab {
     /// Rows to scroll to the top of each pane once the text loads.
     pending_top: [Option<u64>; 2],
     applied: Applied,
+    /// The filter spec the rows were last synced against: a change (not just a rescan or growth, which bump the
+    /// filter revision too) clears the character selections.
+    applied_spec: Option<rogg_core::filter::FilterSpec>,
     edit_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -192,6 +195,7 @@ impl Tab {
             pending_selection: init.selection,
             pending_top: init.top,
             applied: Applied::default(),
+            applied_spec: None,
             edit_subscription: None,
             _subscriptions: subscriptions,
         };
@@ -361,6 +365,14 @@ impl Tab {
             let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1] || now.style != a.style;
             (now, full_changed.then(|| doc.full_rows(self.styler.clone())).flatten(), filtered_changed.then(|| doc.filtered_rows(self.styler.clone())).flatten())
         };
+        let spec_changed = {
+            let spec = &self.doc.read(cx).filter.spec;
+            let changed = self.applied_spec.as_ref() != Some(spec);
+            if changed {
+                self.applied_spec = Some(spec.clone());
+            }
+            changed
+        };
         let before = self.applied;
         let loaded = now.load != before.load;
         let only_grew = !loaded && now.pins == before.pins && now.search[0] == before.search[0] && now.style == before.style;
@@ -381,6 +393,11 @@ impl Tab {
             {
                 self.filtered.update(cx, |s, cx| s.set_selected(Some(number), cx));
             }
+        }
+        if spec_changed {
+            // A new filter clears the character selections (spec B3), in both panes.
+            self.full.update(cx, |s, cx| s.clear_char_selection(cx));
+            self.filtered.update(cx, |s, cx| s.clear_char_selection(cx));
         }
         // A restored top line: the full log's rows are complete once the text loads; the filtered log's only once its
         // filter has settled (a background scan may still be running at load, with no rows yet).
