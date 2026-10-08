@@ -1,7 +1,7 @@
 //! Highlighting profiles (spec §6.1) as an app global, and their colours resolved for the active theme.
 
 use gpui_kit::{App, Global};
-use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, Profile, TINT_ALPHA, derive_light, names_collide, unique_name};
+use rogg_core::profile::{self, ColorSpec, ColorValue, DEFAULT_PROFILE, LineRule, Profile, TINT_ALPHA, derive_light, names_collide, unique_name};
 use rogg_core::style::{CompiledProfile, RuleError};
 use rogg_ui::logview::{RowTint, Span, SpanStyle};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, ChipColor, Color, HitColor, Palette};
@@ -28,6 +28,10 @@ pub struct ProfileStore {
     pub recovered: Vec<PathBuf>,
     /// Why the last save or delete failed, as a message for the user; None after a successful one.
     pub last_error: Option<String>,
+    /// How many times a profile file was written.
+    saves: u64,
+    /// Profiles changed in memory only (a colour slider being dragged); `flush` writes them.
+    unsaved: Vec<String>,
 }
 
 impl Global for ProfileStore {}
@@ -35,13 +39,18 @@ impl Global for ProfileStore {}
 impl ProfileStore {
     pub fn load(dir: PathBuf) -> Self {
         match profile::load_dir(&dir) {
-            Ok(loaded) => Self { dir, entries: loaded.profiles.into_iter().map(entry).collect(), revision: 0, recovered: loaded.recovered, last_error: None },
-            Err(e) => Self { dir, entries: profile::builtins().into_iter().map(entry).collect(), revision: 0, recovered: Vec::new(), last_error: Some(e.to_string()) },
+            Ok(loaded) => Self { dir, entries: loaded.profiles.into_iter().map(entry).collect(), revision: 0, recovered: loaded.recovered, last_error: None, saves: 0, unsaved: Vec::new() },
+            Err(e) => Self { dir, entries: profile::builtins().into_iter().map(entry).collect(), revision: 0, recovered: Vec::new(), last_error: Some(e.to_string()), saves: 0, unsaved: Vec::new() },
         }
     }
 
     pub fn revision(cx: &App) -> u64 {
         cx.try_global::<ProfileStore>().map_or(0, |s| s.revision)
+    }
+
+    /// How many times a profile file was written (a slider drag writes once, when it ends).
+    pub fn saves(&self) -> u64 {
+        self.saves
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -52,9 +61,14 @@ impl ProfileStore {
         self.entries.iter().any(|e| e.profile.name == name)
     }
 
-    /// The entry named `name`, or Default (always first) when there is none.
+    /// The index of the entry named `name`, or of Default (always first) when there is none.
+    fn position(&self, name: &str) -> usize {
+        let named = |n: &str| self.entries.iter().position(|e| e.profile.name == n);
+        named(name).or_else(|| named(DEFAULT_PROFILE)).unwrap_or(0)
+    }
+
     fn find(&self, name: &str) -> &Entry {
-        self.entries.iter().find(|e| e.profile.name == name).or_else(|| self.entries.iter().find(|e| e.profile.name == DEFAULT_PROFILE)).unwrap_or(&self.entries[0])
+        &self.entries[self.position(name)]
     }
 
     pub fn get(&self, name: &str) -> &Profile {
@@ -75,7 +89,8 @@ impl ProfileStore {
         if profile.hit_palette.is_empty() {
             profile.hit_palette = profile::default_palette();
         }
-        let saved = profile::save(&self.dir, &profile);
+        let saved = self.save(&profile);
+        self.unsaved.retain(|n| n != old_name && *n != profile.name);
         // A rename whose names share a file on the case-insensitive disk ("Ops" → "ops") was saved over the old file:
         // deleting the old name would delete the profile.
         if !names_collide(old_name, &profile.name) && saved.is_ok() {
@@ -104,6 +119,7 @@ impl ProfileStore {
             return false;
         }
         self.entries.remove(i);
+        self.unsaved.retain(|n| n != name);
         self.last_error = profile::delete(&self.dir, name).err().map(|e| format!("Could not delete profile {name}: {e}"));
         self.revision += 1;
         true
@@ -116,6 +132,64 @@ impl ProfileStore {
         f(&mut profile);
         self.put(&old, profile);
     }
+
+    /// Edits like `edit`, in memory only: tabs restyle at once and `flush` writes the file (a colour slider changes on
+    /// every mouse move). A change of colours alone keeps the compiled patterns. Returns whether anything changed.
+    pub fn edit_unsaved(&mut self, name: &str, f: impl FnOnce(&mut Profile)) -> bool {
+        let i = self.position(name);
+        let mut profile = self.entries[i].profile.clone();
+        f(&mut profile);
+        let current = &self.entries[i].profile;
+        if profile == *current {
+            return false;
+        }
+        if profile.name != current.name || profile.hit_palette.is_empty() {
+            let old = current.name.clone();
+            self.put(&old, profile);
+            return true;
+        }
+        if !self.unsaved.contains(&profile.name) {
+            self.unsaved.push(profile.name.clone());
+        }
+        if same_patterns(current, &profile) {
+            self.entries[i].profile = profile;
+        } else {
+            self.entries[i] = entry(profile);
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// Writes `name` if it has changes made by `edit_unsaved`; returns whether it did.
+    pub fn flush(&mut self, name: &str) -> bool {
+        let Some(k) = self.unsaved.iter().position(|n| n == name) else { return false };
+        self.unsaved.remove(k);
+        let Some(entry) = self.entries.iter().find(|e| e.profile.name == name) else { return false };
+        let profile = entry.profile.clone();
+        let saved = self.save(&profile);
+        self.last_error = saved.err().map(|e| format!("Could not save profile {}: {e}", profile.name));
+        true
+    }
+
+    /// Writes every profile with unsaved changes; returns whether any was written.
+    pub fn flush_all(&mut self) -> bool {
+        let mut any = false;
+        for name in self.unsaved.clone() {
+            any |= self.flush(&name);
+        }
+        any
+    }
+
+    fn save(&mut self, profile: &Profile) -> Result<PathBuf, rogg_core::error::CoreError> {
+        self.saves += 1;
+        profile::save(&self.dir, profile)
+    }
+}
+
+/// Whether `a` and `b` differ at most in colours, which do not affect what the rules match.
+fn same_patterns(a: &Profile, b: &Profile) -> bool {
+    a.rules.len() == b.rules.len()
+        && a.rules.iter().zip(&b.rules).all(|(x, y)| LineRule { color: y.color.clone(), light: y.light.clone(), ..x.clone() } == *y)
 }
 
 fn token_color(token: &str, p: &Palette) -> Color {
@@ -322,6 +396,23 @@ mod tests {
         assert_eq!(store.names().iter().filter(|n| n.eq_ignore_ascii_case("ops")).count(), 1);
         let reloaded = ProfileStore::load(dir.path().to_path_buf());
         assert!(reloaded.contains("ops"), "{:?}", reloaded.names());
+    }
+
+    #[test]
+    fn unsaved_edits_restyle_and_wait_for_a_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProfileStore::load(dir.path().to_path_buf());
+        let name = store.add(Profile { name: "Ops".into(), ..rogg_core::profile::builtin_default() });
+        let (saves, revision, compiled) = (store.saves(), store.revision, store.compiled(&name));
+        assert!(store.edit_unsaved(&name, |p| p.rules[0].color = ColorSpec::hex(0x336699ff)));
+        assert!(!store.edit_unsaved(&name, |p| p.rules[0].color = ColorSpec::hex(0x336699ff)), "no change, nothing to save");
+        assert_eq!((store.saves(), store.revision), (saves, revision + 1), "applied in memory, not written");
+        assert!(Arc::ptr_eq(&compiled, &store.compiled(&name)), "a colour change keeps the compiled patterns");
+        assert!(store.edit_unsaved(&name, |p| p.rules[0].pattern = "x".into()));
+        assert!(!Arc::ptr_eq(&compiled, &store.compiled(&name)), "a pattern change recompiles");
+        assert!(store.flush(&name) && !store.flush(&name), "written once");
+        assert_eq!(store.saves(), saves + 1);
+        assert_eq!(ProfileStore::load(dir.path().to_path_buf()).get(&name).rules[0].color, ColorSpec::hex(0x336699ff));
     }
 
     #[test]

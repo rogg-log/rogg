@@ -531,6 +531,7 @@ impl Workspace {
     }
 
     pub fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
+        self.flush_profiles(cx);
         if matches!(dialog, Dialog::Settings) {
             crate::settings::cache_log_fonts(cx);
         }
@@ -649,7 +650,15 @@ impl Workspace {
         }
     }
 
+    /// Saves colours the profile editor's pickers changed in memory (it is about to go away).
+    fn flush_profiles(&mut self, cx: &mut Context<Self>) {
+        if cx.has_global::<crate::profiles::ProfileStore>() && cx.update_global::<crate::profiles::ProfileStore, _>(|s, _| s.flush_all()) {
+            self.report_profile_error(cx);
+        }
+    }
+
     pub fn close_dialog(&mut self, cx: &mut Context<Self>) {
+        self.flush_profiles(cx);
         self.dialog = None;
         self.goto_subscription = None;
         self.dialog_subscription = None;

@@ -1,11 +1,13 @@
 //! The highlighting profile editor (spec §6.1): choose, create, duplicate, rename, delete, import and export profiles;
 //! reorder, enable, add, edit and delete rules; edit the filter-match palette. Every change is saved at once and open
-//! tabs restyle (the workspace listens for `Changed`).
+//! tabs restyle (the workspace listens for `Changed`). A colour slider restyles on every move but is written when the
+//! drag ends (on release, when the picker closes, and on a profile switch or close at the latest).
 
 use crate::profiles::{ProfileStore, RowStyler};
 use crate::tab::Tab;
 use gpui_kit::component::color_picker::{ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::slider::SliderEvent;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, BorrowAppContext, Context, Entity, EventEmitter, SharedString, Subscription, TestSupportExt, WeakEntity, Window, div, px};
 use rogg_core::profile::{
@@ -80,12 +82,59 @@ impl ProfileEditor {
         cx.notify();
     }
 
+    /// Edits the shown profile in memory (tabs restyle, `flush` saves it): a picker's slider drag in progress.
+    fn edit_unsaved(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Profile)) {
+        let name = self.profile.clone();
+        if cx.update_global::<ProfileStore, _>(|s, _| s.edit_unsaved(&name, f)) {
+            cx.emit(ProfileEditorEvent::Changed);
+            cx.notify();
+        }
+    }
+
+    /// `edit`, or `edit_unsaved` while a picker is open (its sliders change on every mouse move).
+    fn change(&mut self, live: bool, cx: &mut Context<Self>, f: impl FnOnce(&mut Profile)) {
+        if live { self.edit_unsaved(cx, f) } else { self.edit(cx, f) }
+    }
+
+    /// Saves the shown profile's in-memory colour changes, if any.
+    pub fn flush(&mut self, cx: &mut Context<Self>) {
+        let name = self.profile.clone();
+        if cx.update_global::<ProfileStore, _>(|s, _| s.flush(&name)) {
+            // The workspace reports a failed save.
+            cx.emit(ProfileEditorEvent::Changed);
+        }
+    }
+
+    /// Saves when a picker's slider is released or its popover closes.
+    fn picker_subscriptions(picker: &Entity<ColorPickerState>, cx: &mut Context<Self>) -> Vec<Subscription> {
+        let sliders = picker.read(cx).sliders().clone();
+        let mut subs: Vec<Subscription> = [sliders.hue(), sliders.saturation(), sliders.lightness(), sliders.alpha()]
+            .into_iter()
+            .map(|slider| {
+                cx.subscribe(slider, |e, _, ev: &SliderEvent, cx| {
+                    if let SliderEvent::Release(_) = ev {
+                        e.flush(cx);
+                    }
+                })
+            })
+            .collect();
+        let mut was_open = false;
+        subs.push(cx.observe(picker, move |e, picker, cx| {
+            let open = picker.read(cx).is_open();
+            if std::mem::replace(&mut was_open, open) && !open {
+                e.flush(cx);
+            }
+        }));
+        subs
+    }
+
     fn rule_count(&self, cx: &App) -> usize {
         cx.global::<ProfileStore>().get(&self.profile).rules.len()
     }
 
     /// Shows `name` and assigns it to the tab the editor was opened from (spec §6.1: each tab has one profile).
     pub fn select_profile(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.flush(cx);
         self.profile = name.to_string();
         self.selected_rule = None;
         self.selected_slot = None;
@@ -216,6 +265,7 @@ impl ProfileEditor {
 
     /// Selects rule `i` and opens its editing form below it (with fresh inputs showing its values).
     pub fn select_rule(&mut self, i: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush(cx);
         self.selected_rule = i;
         self.color_error = false;
         self.rule_inputs = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()).map(|rule| {
@@ -237,13 +287,13 @@ impl ProfileEditor {
                 cx.subscribe_in(&color, window, |e, input, ev: &InputEvent, window, cx| {
                     if let InputEvent::Change = ev {
                         let text = input.read(cx).value().to_string();
-                        e.apply_rule_color(text, window, cx);
+                        e.apply_rule_color(text, false, window, cx);
                     }
                 }),
                 cx.subscribe_in(&light, window, |e, input, ev: &InputEvent, window, cx| {
                     if let InputEvent::Change = ev {
                         let text = input.read(cx).value().to_string();
-                        e.apply_rule_light(text, window, cx);
+                        e.apply_rule_light(text, false, window, cx);
                     }
                 }),
             ];
@@ -251,37 +301,43 @@ impl ProfileEditor {
         });
         self.rule_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()).map(|rule| {
             let pickers = Self::rule_picker_colors(&rule, cx).map(|c| new_picker(c, window, cx));
-            let subs = pickers
+            let mut subs: Vec<Subscription> = pickers
                 .iter()
                 .enumerate()
                 .map(|(field, picker)| {
-                    cx.subscribe_in(picker, window, move |e, _, ev: &ColorPickerEvent, window, cx| {
+                    cx.subscribe_in(picker, window, move |e, picker, ev: &ColorPickerEvent, window, cx| {
                         let ColorPickerEvent::Change(Some(h)) = ev else { return };
                         let hex = ColorSpec::hex(Color::from_hsla(*h).0).0;
                         if let Some(([_, color, light], _)) = &e.rule_inputs {
                             let input = if field == 0 { color } else { light };
                             input.update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
                         }
+                        // An open picker is being dragged: save when that ends. A pick that closes it saves now.
+                        let live = picker.read(cx).is_open();
                         if field == 0 {
-                            e.apply_rule_color(hex, window, cx)
+                            e.apply_rule_color(hex, live, window, cx)
                         } else {
-                            e.apply_rule_light(hex, window, cx)
+                            e.apply_rule_light(hex, live, window, cx)
                         }
                     })
                 })
                 .collect();
+            for picker in &pickers {
+                subs.extend(Self::picker_subscriptions(picker, cx));
+            }
             (pickers, subs)
         });
         cx.notify();
     }
 
-    /// The rule colour field's text changed: a token or hex colour is saved, anything else flags the field.
-    fn apply_rule_color(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// The rule colour field's text changed: a token or hex colour is saved (`live`: applied, saved when the drag
+    /// ends), anything else flags the field.
+    fn apply_rule_color(&mut self, text: String, live: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(i) = self.selected_rule else { return };
         let spec = ColorSpec(text.trim().to_string());
         self.color_error = spec.parse().is_none();
         if !self.color_error {
-            self.edit(cx, |p| {
+            self.change(live, cx, |p| {
                 if let Some(r) = p.rules.get_mut(i) {
                     r.color = spec;
                 }
@@ -292,12 +348,12 @@ impl ProfileEditor {
     }
 
     /// The rule's light-theme override changed: empty clears it, a valid colour is saved.
-    fn apply_rule_light(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn apply_rule_light(&mut self, text: String, live: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(i) = self.selected_rule else { return };
         let text = text.trim().to_string();
         let spec = (!text.is_empty()).then_some(ColorSpec(text));
         if spec.as_ref().is_none_or(|s| s.parse().is_some()) {
-            self.edit(cx, |p| {
+            self.change(live, cx, |p| {
                 if let Some(r) = p.rules.get_mut(i) {
                     r.light = spec;
                 }
@@ -308,7 +364,7 @@ impl ProfileEditor {
 
     /// A palette-slot field changed (0 fg, 1 bg, 2 light fg, 3 light bg): valid colours are saved; the light fields may
     /// be empty (derived).
-    fn apply_slot_field(&mut self, field: usize, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn apply_slot_field(&mut self, field: usize, text: String, live: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(slot) = self.selected_slot else { return };
         let text = text.trim().to_string();
         let spec = ColorSpec(text.clone());
@@ -316,7 +372,7 @@ impl ProfileEditor {
         if !(spec.parse().is_some() || (optional && text.is_empty())) {
             return;
         }
-        self.edit(cx, |p| {
+        self.change(live, cx, |p| {
             let Some(h) = p.hit_palette.get_mut(slot) else { return };
             match field {
                 0 => h.fg = spec,
@@ -368,6 +424,7 @@ impl ProfileEditor {
 
     /// Selects palette slot `i` and opens its colour form (with fresh inputs showing its values).
     pub fn select_slot(&mut self, i: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush(cx);
         self.selected_slot = i;
         self.slot_inputs = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()).map(|h| {
             let make = |text: String, placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
@@ -386,7 +443,7 @@ impl ProfileEditor {
                     cx.subscribe_in(input, window, move |e, input, ev: &InputEvent, window, cx| {
                         if let InputEvent::Change = ev {
                             let text = input.read(cx).value().to_string();
-                            e.apply_slot_field(field, text, window, cx);
+                            e.apply_slot_field(field, text, false, window, cx);
                         }
                     })
                 })
@@ -395,20 +452,24 @@ impl ProfileEditor {
         });
         self.slot_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()).map(|h| {
             let pickers = Self::slot_picker_colors(&h, cx).map(|c| new_picker(c, window, cx));
-            let subs = pickers
+            let mut subs: Vec<Subscription> = pickers
                 .iter()
                 .enumerate()
                 .map(|(field, picker)| {
-                    cx.subscribe_in(picker, window, move |e, _, ev: &ColorPickerEvent, window, cx| {
+                    cx.subscribe_in(picker, window, move |e, picker, ev: &ColorPickerEvent, window, cx| {
                         let ColorPickerEvent::Change(Some(c)) = ev else { return };
                         let hex = ColorSpec::hex(Color::from_hsla(*c).0).0;
                         if let Some((inputs, _)) = &e.slot_inputs {
                             inputs[field].update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
                         }
-                        e.apply_slot_field(field, hex, window, cx);
+                        let live = picker.read(cx).is_open();
+                        e.apply_slot_field(field, hex, live, window, cx);
                     })
                 })
                 .collect();
+            for picker in &pickers {
+                subs.extend(Self::picker_subscriptions(picker, cx));
+            }
             (pickers, subs)
         });
         cx.notify();
@@ -490,7 +551,10 @@ impl Render for ProfileEditor {
             });
         let mut frame = DialogFrame::new(format!("Highlighting · {}", profile.name))
             .description("Rules apply top to bottom; for each effect the first matching rule wins. Changes apply immediately.")
-            .on_close(ed(&this, |_, _, cx| cx.emit(ProfileEditorEvent::Close)))
+            .on_close(ed(&this, |e, _, cx| {
+                e.flush(cx);
+                cx.emit(ProfileEditorEvent::Close)
+            }))
             .child(toolbar);
         if let Some((input, _)) = &self.rename {
             frame = frame.child(

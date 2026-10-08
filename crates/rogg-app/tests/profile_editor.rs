@@ -427,3 +427,92 @@ fn the_pickers_follow_the_field_and_open_on_the_sliders(cx: &mut TestAppContext)
     assert_eq!(shown(&fg, cx), Some(Color(0x778899ff)));
     assert_eq!(shown(&light_fg, cx), Some(Color(derive_light(0x778899ff, false))));
 }
+
+/// Drags `picker`'s lightness slider through `values` as the mouse would (the popover open, a change per move) and
+/// returns the rule colour the store held after each move.
+fn drag_lightness(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+    picker: &Entity<gpui_kit::component::color_picker::ColorPickerState>,
+    name: &str,
+    values: &[f32],
+) -> Vec<String> {
+    use gpui_kit::component::slider::SliderEvent;
+    picker.update(cx, |p, cx| p.set_open(true, cx));
+    cx.run_until_parked();
+    let slider = picker.read_with(cx, |p, _| p.sliders().lightness().clone());
+    let mut seen = Vec::new();
+    for v in values {
+        let v = *v;
+        cx.update_window(f.w, |_, window, cx| {
+            slider.update(cx, |s, cx| {
+                s.set_value(v, window, cx);
+                cx.emit(SliderEvent::Change(s.value()));
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        seen.push(cx.update(|cx| cx.global::<ProfileStore>().get(name).rules[0].color.0.clone()));
+    }
+    seen
+}
+
+fn release(cx: &mut TestAppContext, picker: &Entity<gpui_kit::component::color_picker::ColorPickerState>) {
+    use gpui_kit::component::slider::SliderEvent;
+    let slider = picker.read_with(cx, |p, _| p.sliders().lightness().clone());
+    slider.update(cx, |s, cx| cx.emit(SliderEvent::Release(s.value())));
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_slider_drag_restyles_live_and_saves_when_it_ends(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-duplicate");
+    let name = f.editor.read_with(cx, |e, _| e.profile_name().to_string());
+    let file = f.dir.path().join(format!("profiles/{name}.toml"));
+    let on_disk = |cx: &mut TestAppContext| {
+        cx.run_until_parked();
+        std::fs::read_to_string(&file).unwrap()
+    };
+    let saves = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<ProfileStore>().saves());
+    select_rule(&f, cx, 0);
+    let [color, _] = f.editor.read_with(cx, |e, _| e.rule_pickers()).unwrap();
+
+    // A drag: every move restyles, nothing is written until the slider is released, then the final colour once.
+    let (disk, before) = (on_disk(cx), saves(cx));
+    let revision = cx.update(|cx| ProfileStore::revision(cx));
+    let seen = drag_lightness(&f, cx, &color, &name, &[0.2, 0.4, 0.6]);
+    assert!(seen[0] != seen[1] && seen[1] != seen[2], "the live profile follows the drag: {seen:?}");
+    assert!(cx.update(|cx| ProfileStore::revision(cx)) >= revision + 3, "every move restyles the tabs");
+    assert_eq!(saves(cx), before, "nothing is written while dragging");
+    assert_eq!(on_disk(cx), disk);
+    release(cx, &color);
+    assert_eq!(saves(cx), before + 1, "the release writes the profile once");
+    assert!(on_disk(cx).contains(&seen[2]), "the final colour is on disk");
+
+    // Closing the popover writes a colour that was not released (a pick from the grid, say) …
+    let seen = drag_lightness(&f, cx, &color, &name, &[0.3]);
+    color.update(cx, |p, cx| p.set_open(false, cx));
+    assert!(on_disk(cx).contains(&seen[0]), "closing the popover saves");
+    // … and so do switching profiles and closing the editor.
+    let seen = drag_lightness(&f, cx, &color, &name, &[0.35]);
+    f.editor.update(cx, |e, cx| e.select_profile("Default", cx));
+    assert!(on_disk(cx).contains(&seen[0]), "switching profiles saves");
+    f.editor.update(cx, |e, cx| e.select_profile(&name, cx));
+    select_rule(&f, cx, 0);
+    let [color, _] = f.editor.read_with(cx, |e, _| e.rule_pickers()).unwrap();
+    let seen = drag_lightness(&f, cx, &color, &name, &[0.45]);
+    assert!(!on_disk(cx).contains(&seen[0]) && color.read_with(cx, |p, _| p.is_open()));
+    f.ws.update(cx, |ws, cx| ws.close_dialog(cx)); // Escape
+    assert!(f.ws.read_with(cx, |ws, _| ws.profile_editor().is_none()));
+    assert!(on_disk(cx).contains(&seen[0]), "closing the editor saves");
+
+    // Typed colours still save at once.
+    common::click(cx, f.w, "profile");
+    let editor = f.ws.read_with(cx, |ws, _| ws.profile_editor()).unwrap();
+    editor.update(cx, |e, cx| e.select_profile(&name, cx));
+    cx.update_window(f.w, |_, window, cx| editor.update(cx, |e, cx| e.select_rule(Some(0), window, cx))).unwrap();
+    let (_, color_input, _) = editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    type_into(&f, cx, &color_input, "#123456");
+    assert!(on_disk(cx).contains("#123456"));
+}
