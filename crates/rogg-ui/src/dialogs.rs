@@ -3,9 +3,9 @@ use crate::form::SectionLabel;
 use crate::icons::{IconName, icon};
 use crate::theme::{ActiveRoggTheme, Color, size};
 use crate::{Callback, IndexCallback};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, BoxShadow, Entity, FontWeight, MouseButton, SharedString, TestSupportExt, Window, div, px};
+use gpui_kit::{AnyElement, App, BoxShadow, Entity, FontWeight, MouseButton, SharedString, TestSupportExt, Window, div, px, relative};
 use std::rc::Rc;
 
 /// Space kept free around a dialog that is taller than the window; the body scrolls instead.
@@ -19,11 +19,18 @@ pub struct DialogFrame {
     body: Vec<AnyElement>,
     note: Option<SharedString>,
     on_close: Option<Callback>,
+    width: f32,
 }
 
 impl DialogFrame {
     pub fn new(title: impl Into<SharedString>) -> Self {
-        Self { title: title.into(), description: None, body: vec![], note: None, on_close: None }
+        Self { title: title.into(), description: None, body: vec![], note: None, on_close: None, width: size::DIALOG_W }
+    }
+
+    /// Overrides the default 500px width.
+    pub fn width(mut self, w: f32) -> Self {
+        self.width = w;
+        self
     }
 
     pub fn description(mut self, text: impl Into<SharedString>) -> Self {
@@ -59,7 +66,7 @@ impl RenderOnce for DialogFrame {
             .flex()
             .flex_col()
             .max_h(window.viewport_size().height - px(VIEWPORT_MARGIN))
-            .w(px(size::DIALOG_W))
+            .w(px(self.width))
             .p(px(size::DIALOG_PAD))
             .bg(p.side)
             .border_1()
@@ -425,6 +432,49 @@ impl RenderOnce for AboutNote {
     }
 }
 
+/// Bytes of a line the full-line dialog shows; Copy still copies the whole line.
+pub const FULL_LINE_SHOWN_BYTES: usize = 1024 * 1024;
+
+/// The part of `text` the full-line dialog shows (at most 1 MB, cut on a char boundary), and whether it was cut.
+pub fn full_line_shown(text: &str) -> (&str, bool) {
+    let end = text.floor_char_boundary(FULL_LINE_SHOWN_BYTES.min(text.len()));
+    (&text[..end], end < text.len())
+}
+
+/// "Show full line…" (spec B2): the whole line, read-only, selectable and wrapped, in the log font, with Copy.
+pub fn full_line(number: u64, view: Entity<TextareaState>, cut: bool, on_copy: Callback) -> DialogFrame {
+    let mut frame = DialogFrame::new(format!("Line {number}")).width(size::FULL_LINE_DIALOG_W).child(FullLineText { view });
+    if cut {
+        frame = frame.child(AboutNote("The line is longer than 1 MB: the first 1 MB is shown. Copy copies the whole line.".into()));
+    }
+    frame.child(div().flex().justify_end().pt(px(14.)).child(ActionButton::new("full-line-copy", "Copy").primary().on_click(move |w, cx| on_copy(w, cx))))
+}
+
+#[derive(IntoElement)]
+struct FullLineText {
+    view: Entity<TextareaState>,
+}
+
+impl RenderOnce for FullLineText {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let t = cx.rogg().clone();
+        div()
+            .id("full-line-text")
+            .test_support()
+            .mt(px(12.))
+            .h(px(size::FULL_LINE_TEXT_H))
+            .p(px(8.))
+            .bg(t.palette.bg)
+            .border_1()
+            .border_color(t.palette.border)
+            .rounded(px(5.))
+            .font_family(t.fonts.log.clone())
+            .text_size(t.metrics.log_font_size)
+            .text_color(t.palette.log_text)
+            .child(Textarea::new(&self.view).readonly(true).appearance(false).h(relative(1.)))
+    }
+}
+
 /// A data folder: label, path (mono, truncated) and Show in Finder.
 #[derive(IntoElement)]
 struct DataRow {
@@ -461,5 +511,19 @@ impl RenderOnce for DataRow {
                     .child(div().truncate().font_family(t.fonts.mono.clone()).text_size(s.px(11.)).text_color(p.muted).child(self.path)),
             )
             .child(ActionButton::new(SharedString::from(format!("about-reveal-{i}")), "Show in Finder").on_click(move |w, cx| on_reveal(i, w, cx)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FULL_LINE_SHOWN_BYTES, full_line_shown};
+
+    #[test]
+    fn the_full_line_dialog_shows_at_most_1_mb_on_a_char_boundary() {
+        assert_eq!(full_line_shown("short"), ("short", false));
+        let long = "é".repeat(FULL_LINE_SHOWN_BYTES); // 2 MB of 2-byte chars
+        let (shown, cut) = full_line_shown(&long);
+        assert!(cut && shown.len() <= FULL_LINE_SHOWN_BYTES && shown.len() > FULL_LINE_SHOWN_BYTES - 2);
+        assert!(long.is_char_boundary(shown.len()));
     }
 }

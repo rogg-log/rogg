@@ -59,12 +59,13 @@ fn label_token(token: &str) -> String {
 fn context_menu(menu: PopupMenu, state: &Entity<LogViewState>, cx: &App) -> PopupMenu {
     let Some(target) = state.read(cx).context_target().cloned() else { return menu };
     let number = target.number;
-    let (s1, s2, s3) = (state.clone(), state.clone(), state.clone());
+    let (s1, s2, s3, s6) = (state.clone(), state.clone(), state.clone(), state.clone());
     let menu = menu
         .item(PopupMenuItem::new(if target.pinned { "Unpin" } else { "Pin" }).on_click(move |_, _, cx| emit(&s1, LogViewEvent::TogglePin { number }, cx)))
         .separator()
         .item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| copy(&s2, false, cx)))
         .item(PopupMenuItem::new("Copy with line numbers").on_click(move |_, _, cx| copy(&s3, true, cx)))
+        .item(PopupMenuItem::new("Show full line…").on_click(move |_, _, cx| emit(&s6, LogViewEvent::ShowFullLine { number }, cx)))
         .separator();
     match target.token {
         Some(token) => {

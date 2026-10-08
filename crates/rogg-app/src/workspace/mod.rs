@@ -11,7 +11,7 @@ use crate::recent::RecentStore;
 use crate::sidebar_model::FixedSidebar;
 use crate::tab::{Tab, TabEvent, TabInit};
 use crate::tab_view::{self, TabBody};
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputState, TextareaState};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, ExternalPaths, FocusHandle, Pixels, ScrollHandle, SharedString, Stateful, Subscription,
@@ -45,6 +45,7 @@ pub enum Dialog {
     Statistics,
     Export,
     About,
+    FullLine { number: u64, text: SharedString, view: Entity<TextareaState>, cut: bool },
 }
 
 pub struct Workspace {
@@ -366,6 +367,23 @@ impl Workspace {
             TabEvent::FocusCrumb(i) => self.focus_crumb(*i, window, cx),
             TabEvent::OpenAsTab => self.open_as_tab(window, cx),
             TabEvent::ShowExport => self.open_export(cx),
+            TabEvent::ShowFullLine { number, text } => self.open_full_line(*number, text.clone(), window, cx),
+        }
+    }
+
+    /// "Show full line…": opens the line in a read-only text box (at most 1 MB shown) with Copy.
+    pub fn open_full_line(&mut self, number: u64, text: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        let (shown, cut) = rogg_ui::dialogs::full_line_shown(&text);
+        let shown = SharedString::from(shown.to_string());
+        let view = cx.new(|cx| TextareaState::new(window, cx).default_value(shown));
+        self.open_dialog(Dialog::FullLine { number, text, view, cut }, cx);
+    }
+
+    /// The open full-line dialog's line number and whole text (tests).
+    pub fn full_line_dialog(&self) -> Option<(u64, SharedString)> {
+        match &self.dialog {
+            Some(Dialog::FullLine { number, text, .. }) => Some((*number, text.clone())),
+            _ => None,
         }
     }
 
@@ -716,6 +734,12 @@ impl Workspace {
                 dialogs::statistics(&rows).description("Counts for the active tab's filter; they update as it runs.").on_close(close).into_any_element()
             }
             Dialog::Export => crate::dialogs::export::render(self, this, cx).on_close(close).into_any_element(),
+            Dialog::FullLine { number, text, view, cut } => {
+                let whole = text.clone();
+                dialogs::full_line(*number, view.clone(), *cut, Rc::new(move |_, cx: &mut App| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(whole.to_string()))))
+                    .on_close(close)
+                    .into_any_element()
+            }
             Dialog::About => dialogs::about(&crate::about::view(cx), Rc::new(act_ix(this, |ws, i, _, cx| ws.reveal_data_folder(i, cx))))
                 .on_close(close)
                 .into_any_element(),

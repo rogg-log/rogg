@@ -34,6 +34,8 @@ pub enum LogViewEvent {
     AddTerm { text: String, exclude: bool },
     /// The user scrolled away from the end while in tail mode (live follow pauses on this).
     TailLeft,
+    /// Context menu "Show full line…": open the whole line in a dialog.
+    ShowFullLine { number: u64 },
 }
 
 /// Where `scroll_to_row` puts the row.

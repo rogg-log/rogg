@@ -80,6 +80,8 @@ pub mod size {
     pub const SCROLL_THUMB_W: f32 = 6.;
     pub const SCROLL_THUMB_MIN_H: f32 = 24.;
     pub const DIALOG_W: f32 = 500.;
+    pub const FULL_LINE_DIALOG_W: f32 = 760.;
+    pub const FULL_LINE_TEXT_H: f32 = 360.;
     pub const DIALOG_PAD: f32 = 22.;
 }
 

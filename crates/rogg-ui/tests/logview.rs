@@ -56,6 +56,7 @@ fn click_selects_and_gutter_click_toggles_pin(cx: &mut TestAppContext) {
                 LogViewEvent::TogglePin { number } => format!("pin {number}"),
                 LogViewEvent::AddTerm { text, exclude } => format!("term {text} {exclude}"),
                 LogViewEvent::TailLeft => "tail-left".to_string(),
+                LogViewEvent::ShowFullLine { number } => format!("full {number}"),
             })
         })
         .detach();
@@ -543,7 +544,7 @@ fn right_click_outside_any_line_clears_the_context_target(cx: &mut TestAppContex
     assert_eq!(state.read_with(cx, |s, _| s.context_target().map(|t| t.number)), Some(1001));
     // Below the last of 3 rows of a 238 px panel: no line, so no stale target.
     cx.update_window(w, |_, window, cx| window.blur(cx)).unwrap();
-    right_click_at(cx, point(px(300.), px(200.)));
+    right_click_at(cx, point(px(700.), px(200.)));
     assert_eq!(state.read_with(cx, |s, _| s.context_target().cloned()), None);
     cx.update_window(w, |_, window, _| assert!(focus.is_focused(window), "an empty-area right-click still focuses the panel")).unwrap();
 }
@@ -587,7 +588,7 @@ fn right_click_outside_the_panel_leaves_focus_and_target_alone(cx: &mut TestAppC
         assert!(other.is_focused(window) && !focus.is_focused(window));
     })
     .unwrap();
-    right_click_at(cx, point(px(300.), px(200.)));
+    right_click_at(cx, point(px(700.), px(200.)));
     assert_eq!(state.read_with(cx, |s, _| s.context_target().cloned()), target, "the target is untouched");
     cx.update_window(w, |_, window, _| {
         assert!(other.is_focused(window), "focus stays where it was");

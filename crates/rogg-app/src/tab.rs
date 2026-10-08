@@ -83,6 +83,8 @@ pub enum TabEvent {
     OpenAsTab,
     /// The info bar's Export button: open the Export dialog.
     ShowExport,
+    /// The context menu's "Show full line…": the whole text of the line.
+    ShowFullLine { number: u64, text: SharedString },
 }
 
 /// Spec §4.5 reload toast.
@@ -429,6 +431,13 @@ impl Tab {
             LogViewEvent::AddTerm { text, exclude } => {
                 let (text, exclude) = (text.clone(), *exclude);
                 self.doc.update(cx, |d, cx| d.add_term(&text, exclude, cx));
+            }
+            LogViewEvent::ShowFullLine { number } => {
+                let state = if pane == Pane::Full { &self.full } else { &self.filtered };
+                let rows = state.read(cx).rows().clone();
+                if let Some(text) = rows.row_for_number(*number).and_then(|row| rows.copy_text(row)) {
+                    cx.emit(TabEvent::ShowFullLine { number: *number, text: text.into() });
+                }
             }
             LogViewEvent::TailLeft => {
                 if pane == Pane::Full && self.live.following {

@@ -183,6 +183,7 @@ impl ReplicaState {
             // The replica has no filter model to add terms to.
             LogViewEvent::AddTerm { .. } => {}
             LogViewEvent::TailLeft => {}
+            LogViewEvent::ShowFullLine { .. } => {}
         }
     }
 
