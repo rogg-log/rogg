@@ -77,7 +77,7 @@ Entering edit mode (the edit button, ⌘L, Enter) must not change the band's hei
 ## C. Colours and filters
 
 ### C1. Any colour in profiles (item 4)
-- **Where:** the rule form's colour row keeps its preset swatches and hex field, and gains a `Custom…` swatch at the end.
+- **Where:** the rule form's colour row keeps its preset swatches and hex field, and gains a custom-colour swatch after them: a square the size of the presets, filled with the field's current colour, with a small pen icon inside and no text label (user change at the iteration C review, 2026-10-08).
   - It opens gpui-kit's `ColorPicker` popover: hue, saturation and lightness sliders, alpha, and hex.
   - The picker is styled by the existing kit theme mirror, so no gpui-kit default colours appear.
   - Choosing a colour writes `#rrggbb`, or `#rrggbbaa` when alpha is not 1, into the rule colour. The colour applies and saves at once, like the other edits.
