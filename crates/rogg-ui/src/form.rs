@@ -293,7 +293,8 @@ impl RenderOnce for TextField {
             .border_1()
             .border_color(if self.error { p.error } else { p.border })
             .rounded(px(4.))
-            .when_some(self.width, |d, w| d.w(px(w)))
+            // An explicit width is a promise: a crowded row must not shrink the field.
+            .when_some(self.width, |d, w| d.w(px(w)).flex_none())
             .child(Styled::h(input, px(20.)))
     }
 }

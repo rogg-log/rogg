@@ -531,3 +531,37 @@ fn every_picker_features_rogg_colours(cx: &mut TestAppContext) {
     let hits = |p: &Palette, bg: bool| p.hits.iter().map(|h| if bg { h.bg } else { h.fg }).collect::<Vec<_>>();
     assert_eq!(slots, [hits(&dark, false), hits(&dark, true), hits(&light, false), hits(&light, true)], "slots feature the palette's hit colours");
 }
+
+#[gpui_kit::test]
+fn the_rule_forms_colour_fields_keep_their_width_inside_the_dialog(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    select_rule(&f, cx, 0);
+    let dialog = common::bounds(cx, f.w, "dialog");
+    for id in ["rule-color", "rule-light"] {
+        let field = common::bounds(cx, f.w, id);
+        assert_eq!(field.size.width, gpui_kit::px(96.), "{id} keeps its width: {field:?}");
+        assert!(field.right() <= dialog.right(), "{id} is inside the dialog: {field:?} in {dialog:?}");
+    }
+    // The other rows still fit inside the frame's padding.
+    for id in ["rule-pattern", "rule-case", "rule-effect-bold", "rule-custom", "rule-delete"] {
+        let b = common::bounds(cx, f.w, id);
+        assert!(b.right() <= dialog.right() - gpui_kit::px(22.), "{id} is inside the dialog padding: {b:?} in {dialog:?}");
+    }
+    assert_eq!(common::bounds(cx, f.w, "rule-pattern").size.width, gpui_kit::px(240.));
+}
+
+#[gpui_kit::test]
+fn the_slot_forms_colour_fields_keep_their_width_inside_the_dialog(cx: &mut TestAppContext) {
+    let f = open_editor(cx);
+    common::click(cx, f.w, "palette-slot-0");
+    let dialog = common::bounds(cx, f.w, "dialog");
+    for id in ["slot-fg", "slot-bg", "slot-light-fg", "slot-light-bg"] {
+        let field = common::bounds(cx, f.w, id);
+        assert_eq!(field.size.width, gpui_kit::px(96.), "{id} keeps its width: {field:?}");
+        assert!(field.right() <= dialog.right(), "{id} is inside the dialog: {field:?} in {dialog:?}");
+    }
+    for id in ["slot-bg-custom", "slot-light-bg-custom"] {
+        let b = common::bounds(cx, f.w, id);
+        assert!(b.right() <= dialog.right() - gpui_kit::px(22.), "{id} is inside the dialog padding: {b:?} in {dialog:?}");
+    }
+}

@@ -264,3 +264,20 @@ fn custom_colour_without_a_value_is_a_neutral_square_with_a_visible_pen(cx: &mut
     assert_eq!(read(cx, "rule-custom-fill"), Some(format!("#{:08x}", raised.0)));
     assert_eq!(read(cx, "rule-custom-pen"), Some(format!("#{:08x}", pen_ink(raised, text).0)));
 }
+
+#[gpui_kit::test]
+fn a_text_field_with_a_width_does_not_shrink_in_a_crowded_row(cx: &mut TestAppContext) {
+    common::setup(cx);
+    // The row is narrower than its children: the field must still keep its width.
+    let w = common::open(cx, 120., 100., |window, cx| {
+        let input = cx.new(|cx| InputState::new(window, cx).default_value("#ffaa00"));
+        div()
+            .w(px(120.))
+            .flex()
+            .items_start()
+            .child(div().flex_none().w(px(60.)).h(px(21.)))
+            .child(TextField::new("hex", input).mono(true).width(96.))
+            .into_any_element()
+    });
+    assert_eq!(common::bounds(cx, w, "hex").size, size(px(96.), px(22.)));
+}

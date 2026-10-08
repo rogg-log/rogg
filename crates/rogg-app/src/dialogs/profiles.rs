@@ -16,7 +16,7 @@ use rogg_core::profile::{
 use rogg_ui::controls::{ActionButton, CompactSelect, FlagButton, Segmented};
 use rogg_ui::dialogs::DialogFrame;
 use rogg_ui::form::{CustomColor, EditableRuleRow, PaletteSlot, SectionLabel, Swatch, TextField};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color, Palette};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color, Palette, size};
 use std::path::Path;
 
 pub enum ProfileEditorEvent {
@@ -550,6 +550,7 @@ impl Render for ProfileEditor {
                     })))
             });
         let mut frame = DialogFrame::new(format!("Highlighting · {}", profile.name))
+            .width(size::PROFILE_DIALOG_W)
             .description("Rules apply top to bottom; for each effect the first matching rule wins. Changes apply immediately.")
             .on_close(ed(&this, |e, _, cx| {
                 e.flush(cx);

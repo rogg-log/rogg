@@ -80,6 +80,8 @@ pub mod size {
     pub const SCROLL_THUMB_W: f32 = 6.;
     pub const SCROLL_THUMB_MIN_H: f32 = 24.;
     pub const DIALOG_W: f32 = 500.;
+    /// The profile editor: its Colour row (ten swatches, the custom swatch and a 96 px field) needs the room.
+    pub const PROFILE_DIALOG_W: f32 = 600.;
     pub const FULL_LINE_DIALOG_W: f32 = 760.;
     pub const FULL_LINE_TEXT_H: f32 = 360.;
     pub const DIALOG_PAD: f32 = 22.;
