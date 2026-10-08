@@ -16,7 +16,7 @@ use rogg_core::profile::{
 use rogg_ui::controls::{ActionButton, CompactSelect, FlagButton, Segmented};
 use rogg_ui::dialogs::DialogFrame;
 use rogg_ui::form::{CustomColor, EditableRuleRow, PaletteSlot, SectionLabel, Swatch, TextField};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color, Palette};
 use std::path::Path;
 
 pub enum ProfileEditorEvent {
@@ -667,6 +667,18 @@ fn form_line(label: &'static str, cx: &App) -> gpui_kit::Div {
 }
 
 impl ProfileEditor {
+    /// The first row of each picker's Palette tab: the token swatches for the rule colour and the palette's hit colours
+    /// (text, background) for the slot fields, as the light theme shows them for the light-theme fields. Returns the
+    /// rule's two rows and the slot's four.
+    pub fn featured_colors(cx: &App) -> ([Vec<Color>; 2], [Vec<Color>; 4]) {
+        let (current, light) = (cx.rogg().palette, Palette::light());
+        let tokens = |p: &Palette| -> Vec<Color> {
+            SWATCH_TOKENS.iter().map(|token| crate::profiles::resolve_color(&ColorSpec::token(token), None, false, p, Appearance::Dark)).collect()
+        };
+        let hits = |p: &Palette, bg: bool| -> Vec<Color> { p.hits.iter().map(|h| if bg { h.bg } else { h.fg }).collect() };
+        ([tokens(&current), tokens(&light)], [hits(&current, false), hits(&current, true), hits(&light, false), hits(&light, true)])
+    }
+
     fn rule_form(&self, i: usize, rule: &LineRule, this: &Entity<Self>, cx: &App) -> gpui_kit::AnyElement {
         let Some(([pattern, color, light], _)) = &self.rule_inputs else { return div().into_any_element() };
         let Some(([color_picker, light_picker], _)) = &self.rule_pickers else { return div().into_any_element() };
@@ -685,8 +697,7 @@ impl ProfileEditor {
             Some(ColorValue::Rgba(v)) => format!("auto · {}", ColorSpec::hex(derive_light(v, false)).0),
             _ => "follows the theme".to_string(),
         };
-        let featured: Vec<Color> =
-            SWATCH_TOKENS.iter().map(|token| crate::profiles::resolve_color(&ColorSpec::token(token), None, false, &p, cx.rogg().appearance)).collect();
+        let [featured, featured_light] = Self::featured_colors(cx).0;
         let panes = [Panes::Full, Panes::Filtered, Panes::Both];
         div()
             .id("rule-form")
@@ -738,7 +749,7 @@ impl ProfileEditor {
             .child(
                 form_line("Light theme", cx)
                     .child(TextField::new("rule-light", light.clone()).mono(true).width(96.))
-                    .child(CustomColor::new("rule-light-custom", light_picker))
+                    .child(CustomColor::new("rule-light-custom", light_picker).featured(featured_light))
                     .child(div().text_size(cx.rogg().text_scale().px(10.)).text_color(p.faint).child(derived)),
             )
             .child(div().flex().child(ActionButton::new("rule-delete", "Delete rule").on_click(ed(this, move |e, window, cx| e.delete_rule(i, window, cx)))))
@@ -749,6 +760,7 @@ impl ProfileEditor {
         let Some(([fg, bg, light_fg, light_bg], _)) = &self.slot_inputs else { return div().into_any_element() };
         let Some(([fg_picker, bg_picker, light_fg_picker, light_bg_picker], _)) = &self.slot_pickers else { return div().into_any_element() };
         let len = profile.hit_palette.len();
+        let [fg_featured, bg_featured, light_fg_featured, light_bg_featured] = Self::featured_colors(cx).1;
         div()
             .id("slot-form")
             .test_support()
@@ -759,16 +771,16 @@ impl ProfileEditor {
             .child(
                 form_line("Colours", cx)
                     .child(TextField::new("slot-fg", fg.clone()).mono(true).width(96.))
-                    .child(CustomColor::new("slot-fg-custom", fg_picker))
+                    .child(CustomColor::new("slot-fg-custom", fg_picker).featured(fg_featured))
                     .child(TextField::new("slot-bg", bg.clone()).mono(true).width(96.))
-                    .child(CustomColor::new("slot-bg-custom", bg_picker)),
+                    .child(CustomColor::new("slot-bg-custom", bg_picker).featured(bg_featured)),
             )
             .child(
                 form_line("Light theme", cx)
                     .child(TextField::new("slot-light-fg", light_fg.clone()).mono(true).width(96.))
-                    .child(CustomColor::new("slot-light-fg-custom", light_fg_picker))
+                    .child(CustomColor::new("slot-light-fg-custom", light_fg_picker).featured(light_fg_featured))
                     .child(TextField::new("slot-light-bg", light_bg.clone()).mono(true).width(96.))
-                    .child(CustomColor::new("slot-light-bg-custom", light_bg_picker)),
+                    .child(CustomColor::new("slot-light-bg-custom", light_bg_picker).featured(light_bg_featured)),
             )
             .child(
                 div()

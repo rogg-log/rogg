@@ -516,3 +516,18 @@ fn a_slider_drag_restyles_live_and_saves_when_it_ends(cx: &mut TestAppContext) {
     type_into(&f, cx, &color_input, "#123456");
     assert!(on_disk(cx).contains("#123456"));
 }
+
+#[gpui_kit::test]
+fn every_picker_features_rogg_colours(cx: &mut TestAppContext) {
+    use rogg_core::profile::ColorSpec;
+    use rogg_ui::theme::{Appearance, Palette};
+    let _f = open_editor(cx);
+    let ([rule, rule_light], slots) = cx.update(|cx| ProfileEditor::featured_colors(cx));
+    let (dark, light) = (cx.update(|cx| rogg_ui::theme::ActiveRoggTheme::rogg(cx).palette), Palette::light());
+    let token = |t: &str, p: &Palette| rogg_app::profiles::resolve_color(&ColorSpec::token(t), None, false, p, Appearance::Dark);
+    assert_eq!(rule.len(), 10);
+    assert_eq!(rule[4], token("error", &dark), "the rule colour features the token swatches");
+    assert_eq!(rule_light[4], token("error", &light), "the light override features them as the light theme shows them");
+    let hits = |p: &Palette, bg: bool| p.hits.iter().map(|h| if bg { h.bg } else { h.fg }).collect::<Vec<_>>();
+    assert_eq!(slots, [hits(&dark, false), hits(&dark, true), hits(&light, false), hits(&light, true)], "slots feature the palette's hit colours");
+}
