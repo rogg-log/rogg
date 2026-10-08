@@ -1,9 +1,11 @@
-use super::model::LogRowSource;
+use super::model::{LogRow, LogRowSource};
 use super::scroll::{ScrollAnchor, ScrollGeometry};
+use super::text::{MAX_DISPLAY_TEXT_BYTES, display_text};
 use crate::theme::size;
 use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size, px};
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -64,6 +66,21 @@ pub(crate) enum Drag {
     HThumb { grab: f32 },
 }
 
+/// Characters selected within one row by a drag: byte offsets into the row's display text, on char boundaries and
+/// within the display cut. `anchor` is where the drag started, `head` where the pointer is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CharSelection {
+    pub number: u64,
+    pub anchor: usize,
+    pub head: usize,
+}
+
+impl CharSelection {
+    pub fn range(&self) -> Range<usize> {
+        self.anchor.min(self.head)..self.anchor.max(self.head)
+    }
+}
+
 /// Scroll position, selection, wrap and layout caches for one log panel.
 pub struct LogViewState {
     pub(crate) rows: Rc<dyn LogRowSource>,
@@ -76,6 +93,8 @@ pub struct LogViewState {
     pub(crate) selected: Option<u64>,
     /// The other end of a range selection; None for a single line.
     pub(crate) range_anchor: Option<u64>,
+    /// Characters selected within the selected row; cleared whenever the line selection or the rows change.
+    pub(crate) char_selection: Option<CharSelection>,
     pub(crate) force_hover_row: Option<usize>,
     pub(crate) pending_scroll: Option<(usize, ScrollTo)>,
     /// The request resolved by the current layout; re-applied once wrapped rows are measured.
@@ -114,6 +133,7 @@ impl LogViewState {
             tail: false,
             selected: None,
             range_anchor: None,
+            char_selection: None,
             force_hover_row: None,
             pending_scroll: None,
             applied_scroll: None,
@@ -198,6 +218,7 @@ impl LogViewState {
             (0..3).find_map(|k| self.rows.number_at(self.anchor.row + k).map(|n| (n, k == 0)))
         };
         self.rows = rows;
+        self.char_selection = None;
         self.heights.clear();
         if let Some((number, same_row)) = keep
             && let Some(row) = self.rows.nearest_row(number)
@@ -274,7 +295,30 @@ impl LogViewState {
     pub fn set_selected(&mut self, number: Option<u64>, cx: &mut Context<Self>) {
         self.selected = number;
         self.range_anchor = None;
+        self.char_selection = None;
         cx.notify();
+    }
+
+    pub fn char_selection(&self) -> Option<CharSelection> {
+        self.char_selection
+    }
+
+    /// Selects characters `anchor..head` of line `number` (a drag within one row). Offsets snap back to char boundaries
+    /// and stop at the display cut (never inside the `…` marker); an empty range clears the selection.
+    pub fn set_char_selection(&mut self, number: u64, anchor: usize, head: usize, cx: &mut Context<Self>) {
+        let Some(LogRow::Line(line)) = self.rows.row_for_number(number).map(|row| self.rows.row(row)) else { return };
+        let (display, truncated) = display_text(&line.text, MAX_DISPLAY_TEXT_BYTES);
+        let cut = if truncated { display.len() - '…'.len_utf8() } else { display.len() };
+        let snap = |i: usize| display.floor_char_boundary(i.min(cut));
+        let (anchor, head) = (snap(anchor), snap(head));
+        self.char_selection = (anchor != head).then_some(CharSelection { number, anchor, head });
+        cx.notify();
+    }
+
+    pub fn clear_char_selection(&mut self, cx: &mut Context<Self>) {
+        if self.char_selection.take().is_some() {
+            cx.notify();
+        }
     }
 
     /// Extends the selection from its anchor (the line selected before the first extension) to `number`.
@@ -283,6 +327,7 @@ impl LogViewState {
             self.range_anchor = Some(self.selected.unwrap_or(number));
         }
         self.selected = Some(number);
+        self.char_selection = None;
         cx.notify();
     }
 
@@ -384,6 +429,17 @@ impl LogViewState {
 
     /// The selected lines as text, one per line, gap rows skipped; `with_numbers` prefixes `number\t`.
     pub fn selected_text(&self, with_numbers: bool) -> Option<String> {
+        if !with_numbers
+            && let Some(c) = self.char_selection
+            && self.selection_range() == Some((c.number, c.number))
+        {
+            // The display text's kept prefix has the same bytes as the line (control chars become spaces one for one),
+            // so the offsets index the full line too.
+            let text = self.rows.copy_text(self.rows.row_for_number(c.number)?)?;
+            let r = c.range();
+            let end = text.floor_char_boundary(r.end.min(text.len()));
+            return Some(text[text.floor_char_boundary(r.start.min(end))..end].to_string());
+        }
         let (lo, hi) = self.selection_range()?;
         let first = self.rows.row_for_number(lo)?;
         let last = self.rows.row_for_number(hi)?;

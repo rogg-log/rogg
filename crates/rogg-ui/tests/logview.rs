@@ -810,3 +810,63 @@ fn user_scrolls_count_the_wheel_not_programmatic_scrolls(cx: &mut TestAppContext
     .unwrap();
     assert_eq!(state.read_with(cx, |s, _| s.user_scrolls()), 1);
 }
+
+#[gpui_kit::test]
+fn a_char_selection_copies_its_characters_and_clears_on_other_selections(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(rows(20, None))); // row i shows "line {i}", numbered 1000 + i
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1003), cx);
+        s.set_char_selection(1003, 5, 2, cx);
+    });
+    state.read_with(cx, |s, _| {
+        assert_eq!(s.char_selection().map(|c| c.range()), Some(2..5));
+        assert_eq!(s.selected_text(false).as_deref(), Some("ne "), "Copy takes just the characters");
+        assert_eq!(s.selected_text(true).as_deref(), Some("1003\tline 3\n"), "with line numbers copies whole rows");
+    });
+    state.update(cx, |s, cx| s.move_selection(1, false, cx));
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "a keyboard move clears it");
+    state.update(cx, |s, cx| {
+        s.set_char_selection(1004, 0, 4, cx);
+        s.set_rows(rows(20, None), cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "new rows (a filter change) clear it");
+    state.update(cx, |s, cx| {
+        s.set_char_selection(1004, 0, 4, cx);
+        s.set_selected(Some(1004), cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "a click (plain selection) clears it");
+    state.update(cx, |s, cx| s.set_char_selection(1004, 3, 3, cx));
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection()), None, "an empty range is no selection");
+}
+
+#[gpui_kit::test]
+fn char_selection_snaps_to_char_boundaries(cx: &mut TestAppContext) {
+    common::setup(cx);
+    // "a" 0..1, "é" 1..3, "日" 3..6, "b" 6..7
+    let line = LogRow::Line(LogLine { number: 1, text: "aé日b".into(), spans: vec![], pinned: false, context: false, tint: None });
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![line]))));
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1), cx);
+        s.set_char_selection(1, 2, 5, cx);
+    });
+    state.read_with(cx, |s, _| {
+        assert_eq!(s.char_selection().map(|c| c.range()), Some(1..3));
+        assert_eq!(s.selected_text(false).as_deref(), Some("é"));
+    });
+}
+
+#[gpui_kit::test]
+fn a_char_selection_stops_at_the_display_cut(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let text = "x".repeat(300 * 1024); // longer than the display cut, which ends in `…`
+    let line = LogRow::Line(LogLine { number: 1, text: text.into(), spans: vec![], pinned: false, context: false, tint: None });
+    let state = cx.new(|_| LogViewState::new(Rc::new(VecRows::new(vec![line]))));
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1), cx);
+        s.set_char_selection(1, 0, usize::MAX, cx);
+    });
+    let copied = state.read_with(cx, |s, _| s.selected_text(false)).unwrap();
+    assert!(copied.chars().all(|c| c == 'x'), "never the … marker");
+    assert_eq!(copied.len(), rogg_ui::logview::text::MAX_DISPLAY_TEXT_BYTES, "everything up to the cut");
+}

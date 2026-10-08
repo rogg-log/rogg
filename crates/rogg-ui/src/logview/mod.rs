@@ -7,7 +7,7 @@ pub mod text;
 
 pub use element::{LogViewElement, MAX_WRAPPED_LINES};
 pub use model::{LogLine, LogRow, LogRowSource, RowTint, Span, SpanStyle, VecRows};
-pub use state::{ContextTarget, HBAR_HOVER_ZONE, HBAR_LINGER, LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
+pub use state::{CharSelection, ContextTarget, HBAR_HOVER_ZONE, HBAR_LINGER, LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
 
 use crate::theme::ActiveRoggTheme;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
