@@ -7,7 +7,7 @@ use rogg_ui::controls::{ActionButton, CompactSelect, FindField, FlagButton, Icon
 use rogg_ui::dialogs;
 use rogg_ui::empty;
 use rogg_ui::filter::{ChipState, FilterBand, FilterChip};
-use rogg_ui::form::{EditableRuleRow, FormRow, PaletteSlot, SectionLabel, Stepper, Swatch, TextField, Toggle};
+use rogg_ui::form::{CustomColor, EditableRuleRow, FormRow, PaletteSlot, SectionLabel, Stepper, Swatch, TextField, Toggle};
 use rogg_ui::icons::IconName;
 use rogg_ui::logview::LogView;
 use rogg_ui::sidebar::{Sidebar, SidebarFooter};
@@ -159,6 +159,11 @@ fn controls(view: &GalleryView, p: &Palette) -> AnyElement {
         .child(section("Text and action buttons", text_buttons, p))
         .child(section("Fields", fields, p))
         .child(section("Form controls: toggles, stepper, swatches, text field", form, p))
+        .child(section(
+            "Custom colour picker (open, sliders tab)",
+            div().h(px(330.)).child(CustomColor::new("specimen-custom-color", &view.inputs.picker).featured(vec![p.error, p.amber, p.accent])),
+            p,
+        ))
         .into_any_element()
 }
 

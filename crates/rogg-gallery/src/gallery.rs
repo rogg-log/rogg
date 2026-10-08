@@ -1,11 +1,12 @@
 use crate::{fixtures, pages};
+use gpui_kit::component::color_picker::ColorPickerState;
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{AppContext, Context, Entity, FontWeight, SharedString, Window, div, px, relative};
 use rogg_core::settings::{DensitySetting, ThemeSetting};
 use rogg_ui::controls::{FindField, Segmented, TextButton};
 use rogg_ui::logview::{LogViewState, VecRows};
-use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density, RoggTheme, size};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color, Density, RoggTheme, size};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -81,6 +82,8 @@ pub struct Inputs {
     pub expression: Entity<InputState>,
     pub goto: Entity<InputState>,
     pub form_text: Entity<InputState>,
+    /// The `Custom…` colour picker of the controls page, held open for captures.
+    pub picker: Entity<ColorPickerState>,
 }
 
 pub struct GalleryView {
@@ -101,6 +104,12 @@ impl GalleryView {
             expression: cx.new(|cx| InputState::new(window, cx).default_value("error || timeout || healthcheck || retry")),
             goto: cx.new(|cx| InputState::new(window, cx).placeholder("Line number, e.g. 120492")),
             form_text: cx.new(|cx| InputState::new(window, cx).default_value("#e0c283")),
+            picker: cx.new(|cx| {
+                let mut state = ColorPickerState::new(window, cx).default_value(Color::rgb(0xe0c283).hsla());
+                state.set_active_tab(1, cx);
+                state.set_open(true, cx);
+                state
+            }),
         };
         let rows = Rc::new(VecRows::new(fixtures::log_rows()));
         let log_compact = cx.new(|_| LogViewState::new(rows.clone()));

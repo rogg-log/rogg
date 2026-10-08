@@ -379,3 +379,51 @@ fn custom_colours_are_written_as_hex_and_applied(cx: &mut TestAppContext) {
     assert_eq!((slot.fg.0.as_str(), slot.bg.0.as_str()), ("#112233", "#445566"));
     assert_eq!(slot.light_bg.map(|c| c.0).as_deref(), Some("#778899"));
 }
+
+#[gpui_kit::test]
+fn the_pickers_follow_the_field_and_open_on_the_sliders(cx: &mut TestAppContext) {
+    use gpui_kit::rgba;
+    use rogg_core::profile::derive_light;
+    use rogg_ui::theme::Color;
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-duplicate");
+    cx.update_window(f.w, |_, window, cx| f.editor.update(cx, |e, cx| e.select_rule(Some(0), window, cx))).unwrap();
+    let [color, light] = f.editor.read_with(cx, |e, _| e.rule_pickers()).unwrap();
+    assert_eq!(color.read_with(cx, |p, _| p.active_tab()), 1, "pickers open on the sliders, not the kit palette grid");
+    let shown = |p: &Entity<gpui_kit::component::color_picker::ColorPickerState>, cx: &mut TestAppContext| p.read_with(cx, |p, _| p.value().map(Color::from_hsla));
+
+    // Typing a hex into the colour field moves the picker, and the derived light variant follows.
+    let (_, color_input, light_input) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    type_into(&f, cx, &color_input, "#336699");
+    cx.run_until_parked();
+    assert_eq!(shown(&color, cx), Some(Color(0x336699ff)));
+    assert_eq!(shown(&light, cx), Some(Color(derive_light(0x336699ff, false))), "the light picker shows the derived variant");
+
+    // An override typed into the light field moves the light picker.
+    type_into(&f, cx, &light_input, "#445566");
+    cx.run_until_parked();
+    assert_eq!(shown(&light, cx), Some(Color(0x445566ff)));
+
+    // A token swatch moves the colour picker to the token colour and clears the override.
+    common::click(cx, f.w, "rule-swatch-hit-2");
+    cx.run_until_parked();
+    let token = cx.update(|cx| {
+        let p = rogg_ui::theme::ActiveRoggTheme::rogg(cx).palette;
+        rogg_app::profiles::resolve_color(&rogg_core::profile::ColorSpec::token("hit-2"), None, false, &p, rogg_ui::theme::Appearance::Dark)
+    });
+    assert_eq!(shown(&color, cx), Some(token));
+    assert_eq!(shown(&light, cx), Some(token), "a token has no light variant of its own");
+
+    // A pick through the picker is not undone by the echo.
+    cx.update_window(f.w, |_, window, cx| color.update(cx, |p, cx| p.select_color(rgba(0x112233ff).into(), window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(shown(&color, cx), Some(Color(0x112233ff)));
+
+    cx.update_window(f.w, |_, window, cx| f.editor.update(cx, |e, cx| e.select_slot(Some(0), window, cx))).unwrap();
+    let [fg, _, light_fg, _] = f.editor.read_with(cx, |e, _| e.slot_pickers()).unwrap();
+    let [fg_input, ..] = f.editor.read_with(cx, |e, _| e.slot_inputs()).unwrap();
+    type_into(&f, cx, &fg_input, "#778899");
+    cx.run_until_parked();
+    assert_eq!(shown(&fg, cx), Some(Color(0x778899ff)));
+    assert_eq!(shown(&light_fg, cx), Some(Color(derive_light(0x778899ff, false))));
+}

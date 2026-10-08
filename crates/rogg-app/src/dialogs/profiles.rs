@@ -234,28 +234,23 @@ impl ProfileEditor {
                         });
                     }
                 }),
-                cx.subscribe_in(&color, window, |e, input, ev: &InputEvent, _, cx| {
+                cx.subscribe_in(&color, window, |e, input, ev: &InputEvent, window, cx| {
                     if let InputEvent::Change = ev {
                         let text = input.read(cx).value().to_string();
-                        e.apply_rule_color(text, cx);
+                        e.apply_rule_color(text, window, cx);
                     }
                 }),
-                cx.subscribe_in(&light, window, |e, input, ev: &InputEvent, _, cx| {
+                cx.subscribe_in(&light, window, |e, input, ev: &InputEvent, window, cx| {
                     if let InputEvent::Change = ev {
                         let text = input.read(cx).value().to_string();
-                        e.apply_rule_light(text, cx);
+                        e.apply_rule_light(text, window, cx);
                     }
                 }),
             ];
             ([pattern, color, light], subs)
         });
         self.rule_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()).map(|rule| {
-            let (p, appearance) = (cx.rogg().palette, cx.rogg().appearance);
-            let current = [
-                crate::profiles::resolve_color(&rule.color, None, false, &p, appearance),
-                crate::profiles::resolve_color(&rule.color, rule.light.as_ref(), false, &p, Appearance::Light),
-            ];
-            let pickers = current.map(|c| cx.new(|cx| ColorPickerState::new(window, cx).default_value(c.hsla())));
+            let pickers = Self::rule_picker_colors(&rule, cx).map(|c| new_picker(c, window, cx));
             let subs = pickers
                 .iter()
                 .enumerate()
@@ -268,9 +263,9 @@ impl ProfileEditor {
                             input.update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
                         }
                         if field == 0 {
-                            e.apply_rule_color(hex, cx)
+                            e.apply_rule_color(hex, window, cx)
                         } else {
-                            e.apply_rule_light(hex, cx)
+                            e.apply_rule_light(hex, window, cx)
                         }
                     })
                 })
@@ -281,7 +276,7 @@ impl ProfileEditor {
     }
 
     /// The rule colour field's text changed: a token or hex colour is saved, anything else flags the field.
-    fn apply_rule_color(&mut self, text: String, cx: &mut Context<Self>) {
+    fn apply_rule_color(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(i) = self.selected_rule else { return };
         let spec = ColorSpec(text.trim().to_string());
         self.color_error = spec.parse().is_none();
@@ -292,11 +287,12 @@ impl ProfileEditor {
                 }
             });
         }
+        self.sync_rule_pickers(window, cx);
         cx.notify();
     }
 
     /// The rule's light-theme override changed: empty clears it, a valid colour is saved.
-    fn apply_rule_light(&mut self, text: String, cx: &mut Context<Self>) {
+    fn apply_rule_light(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(i) = self.selected_rule else { return };
         let text = text.trim().to_string();
         let spec = (!text.is_empty()).then_some(ColorSpec(text));
@@ -307,11 +303,12 @@ impl ProfileEditor {
                 }
             });
         }
+        self.sync_rule_pickers(window, cx);
     }
 
     /// A palette-slot field changed (0 fg, 1 bg, 2 light fg, 3 light bg): valid colours are saved; the light fields may
     /// be empty (derived).
-    fn apply_slot_field(&mut self, field: usize, text: String, cx: &mut Context<Self>) {
+    fn apply_slot_field(&mut self, field: usize, text: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(slot) = self.selected_slot else { return };
         let text = text.trim().to_string();
         let spec = ColorSpec(text.clone());
@@ -328,6 +325,45 @@ impl ProfileEditor {
                 _ => h.light_bg = (!text.is_empty()).then_some(spec),
             }
         });
+        self.sync_slot_pickers(window, cx);
+    }
+
+    /// The colours the rule's pickers show: the colour as written, and its light variant (override, else derived).
+    fn rule_picker_colors(rule: &LineRule, cx: &App) -> [Color; 2] {
+        let p = cx.rogg().palette;
+        [
+            crate::profiles::resolve_color(&rule.color, None, false, &p, Appearance::Dark),
+            crate::profiles::resolve_color(&rule.color, rule.light.as_ref(), false, &p, Appearance::Light),
+        ]
+    }
+
+    /// The colours the slot's pickers show: foreground, background, then their light variants.
+    fn slot_picker_colors(h: &HitEntry, cx: &App) -> [Color; 4] {
+        let p = cx.rogg().palette;
+        [
+            crate::profiles::resolve_color(&h.fg, None, false, &p, Appearance::Dark),
+            crate::profiles::resolve_color(&h.bg, None, true, &p, Appearance::Dark),
+            crate::profiles::resolve_color(&h.fg, h.light_fg.as_ref(), false, &p, Appearance::Light),
+            crate::profiles::resolve_color(&h.bg, h.light_bg.as_ref(), true, &p, Appearance::Light),
+        ]
+    }
+
+    /// Makes the rule's pickers show the stored colours again (after a typed hex, a token swatch or a changed derived
+    /// light variant). A picker already showing its colour is left alone, so a slider drag is not fought by its echo.
+    fn sync_rule_pickers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(([a, b], _)) = &self.rule_pickers else { return };
+        let Some(rule) = self.selected_rule.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()) else { return };
+        for (picker, color) in [a, b].into_iter().zip(Self::rule_picker_colors(&rule, cx)) {
+            show_color(picker, color, window, cx);
+        }
+    }
+
+    fn sync_slot_pickers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((pickers, _)) = &self.slot_pickers else { return };
+        let Some(h) = self.selected_slot.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()) else { return };
+        for (picker, color) in pickers.iter().zip(Self::slot_picker_colors(&h, cx)) {
+            show_color(picker, color, window, cx);
+        }
     }
 
     /// Selects palette slot `i` and opens its colour form (with fresh inputs showing its values).
@@ -347,10 +383,10 @@ impl ProfileEditor {
                 .iter()
                 .enumerate()
                 .map(|(field, input)| {
-                    cx.subscribe_in(input, window, move |e, input, ev: &InputEvent, _, cx| {
+                    cx.subscribe_in(input, window, move |e, input, ev: &InputEvent, window, cx| {
                         if let InputEvent::Change = ev {
                             let text = input.read(cx).value().to_string();
-                            e.apply_slot_field(field, text, cx);
+                            e.apply_slot_field(field, text, window, cx);
                         }
                     })
                 })
@@ -358,14 +394,7 @@ impl ProfileEditor {
             (inputs, subs)
         });
         self.slot_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()).map(|h| {
-            let (p, appearance) = (cx.rogg().palette, cx.rogg().appearance);
-            let current = [
-                crate::profiles::resolve_color(&h.fg, None, false, &p, appearance),
-                crate::profiles::resolve_color(&h.bg, None, true, &p, appearance),
-                crate::profiles::resolve_color(&h.fg, h.light_fg.as_ref(), false, &p, Appearance::Light),
-                crate::profiles::resolve_color(&h.bg, h.light_bg.as_ref(), true, &p, Appearance::Light),
-            ];
-            let pickers = current.map(|c| cx.new(|cx| ColorPickerState::new(window, cx).default_value(c.hsla())));
+            let pickers = Self::slot_picker_colors(&h, cx).map(|c| new_picker(c, window, cx));
             let subs = pickers
                 .iter()
                 .enumerate()
@@ -376,7 +405,7 @@ impl ProfileEditor {
                         if let Some((inputs, _)) = &e.slot_inputs {
                             inputs[field].update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
                         }
-                        e.apply_slot_field(field, hex, cx);
+                        e.apply_slot_field(field, hex, window, cx);
                     })
                 })
                 .collect();
@@ -421,6 +450,7 @@ impl ProfileEditor {
             color.update(cx, |c, cx| c.set_value(token, window, cx));
             light.update(cx, |l, cx| l.set_value("", window, cx));
         }
+        self.sync_rule_pickers(window, cx);
     }
 }
 
@@ -538,6 +568,25 @@ impl Render for ProfileEditor {
                         .child(ActionButton::new("profile-export", "Export…").on_click(ed(&this, |e, window, cx| e.export(window, cx)))),
                 ),
         )
+    }
+}
+
+/// A picker opened on its sliders (HSLA) tab, showing `color`: the palette tab is a fixed kit grid.
+fn new_picker(color: Color, window: &mut Window, cx: &mut Context<ProfileEditor>) -> Entity<ColorPickerState> {
+    cx.new(|cx| {
+        let mut state = ColorPickerState::new(window, cx).default_value(color.hsla());
+        state.set_active_tab(HSLA_TAB, cx);
+        state
+    })
+}
+
+/// The picker's sliders tab.
+const HSLA_TAB: usize = 1;
+
+/// Shows `color` in `picker` unless it already does (`set_value` does not emit).
+fn show_color(picker: &Entity<ColorPickerState>, color: Color, window: &mut Window, cx: &mut Context<ProfileEditor>) {
+    if picker.read(cx).value().map(Color::from_hsla) != Some(color) {
+        picker.update(cx, |p, cx| p.set_value(color.hsla(), window, cx));
     }
 }
 
