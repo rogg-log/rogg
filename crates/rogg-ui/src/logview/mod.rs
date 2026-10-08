@@ -5,7 +5,7 @@ pub mod scroll;
 mod state;
 pub mod text;
 
-pub use element::LogViewElement;
+pub use element::{LogViewElement, MAX_WRAPPED_LINES};
 pub use model::{LogLine, LogRow, LogRowSource, RowTint, Span, SpanStyle, VecRows};
 pub use state::{ContextTarget, HBAR_HOVER_ZONE, HBAR_LINGER, LogViewEvent, LogViewState, MAX_COPY_ROWS, RowGeometry, ScrollTo};
 

@@ -139,14 +139,30 @@ fn right_click_takes_the_word_under_the_pointer(cx: &mut HeadlessAppContext) {
     }
 }
 
+/// Spec B1: a long wrapped row is cut to 3 visual lines and marked clipped; a short wrapped row keeps its height.
+fn long_wrapped_rows_show_three_lines(cx: &mut HeadlessAppContext) {
+    use rogg_ui::theme::ActiveRoggTheme;
+    let (w, state) = open_state(cx, vec![line(1, "word ".repeat(400), vec![]), line(2, "two words", vec![])], true);
+    render(cx, w);
+    render(cx, w);
+    let row_h = cx.update(|cx| f32::from(cx.rogg().metrics.row_height));
+    let rows = cx.update(|cx| state.read(cx).last_rows().to_vec());
+    assert_eq!(f32::from(rows[0].bounds.size.height), row_h * 3., "capped at 3 lines");
+    assert!(rows[0].clipped);
+    assert_eq!(f32::from(rows[1].bounds.size.height), row_h, "a short row keeps one line");
+    assert!(!rows[1].clipped);
+    assert_eq!(rows[1].bounds.origin.y, rows[0].bounds.bottom(), "the next row starts right below the capped one");
+}
+
 type Case = (&'static str, fn(&mut HeadlessAppContext));
 
 fn main() {
     let mut cx = headless();
-    let cases: [Case; 3] = [
+    let cases: [Case; 4] = [
         ("spans_inside_multibyte_chars_render_without_panicking", spans_inside_multibyte_chars_render_without_panicking),
         ("dense_hit_line_renders_a_frame_quickly", dense_hit_line_renders_a_frame_quickly),
         ("right_click_takes_the_word_under_the_pointer", right_click_takes_the_word_under_the_pointer),
+        ("long_wrapped_rows_show_three_lines", long_wrapped_rows_show_three_lines),
     ];
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     for (name, case) in cases {

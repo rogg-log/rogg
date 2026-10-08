@@ -44,7 +44,18 @@ enum Shaped {
     Wrapped(Vec<WrappedLine>),
 }
 
+/// Wrapped rows show at most this many visual lines; the rest is clipped and the last one is marked with `…`.
+pub const MAX_WRAPPED_LINES: usize = 3;
+
 impl Shaped {
+    /// Visual lines after wrapping (1 for an unwrapped line).
+    fn visual_lines(&self) -> usize {
+        match self {
+            Shaped::Line(_) => 1,
+            Shaped::Wrapped(lines) => lines.iter().map(|l| l.wrap_boundaries().len() + 1).sum::<usize>().max(1),
+        }
+    }
+
     /// Height of a hit box: the font's ascent plus descent.
     fn box_height(&self) -> Pixels {
         match self {
@@ -274,6 +285,8 @@ enum RowBody {
         tint: Option<RowTint>,
         marks: Vec<(Range<usize>, Color)>,
         outlines: Vec<Range<usize>>,
+        /// A wrapped row cut to `MAX_WRAPPED_LINES`.
+        clipped: bool,
     },
 }
 
@@ -306,6 +319,8 @@ pub struct LogViewPrepaint {
     text_left: Pixels,
     scroll_x: Pixels,
     wrap_width: Option<Pixels>,
+    /// The faint `…` that ends the third line of a clipped row.
+    ellipsis: ShapedLine,
 }
 
 fn run(len: usize, font: &Font, fg: Color, bg: Option<Color>) -> TextRun {
@@ -363,7 +378,8 @@ fn shape_row(rows: &dyn LogRowSource, row: usize, theme: &RoggTheme, fonts: &Row
                 ),
                 None => Shaped::Line(Box::new(window.text_system().shape_line(display, font_size, &runs, None))),
             };
-            RowBody::Line { number: line.number, number_line, text, pinned: line.pinned, tint: line.tint, marks, outlines }
+            let clipped = text.visual_lines() > MAX_WRAPPED_LINES;
+            RowBody::Line { number: line.number, number_line, text, pinned: line.pinned, tint: line.tint, marks, outlines, clipped }
         }
     }
 }
@@ -374,7 +390,7 @@ fn body_height(body: &RowBody, row_h: Pixels) -> f32 {
         RowBody::Line { text: Shaped::Line(_), .. } => f32::from(row_h),
         RowBody::Line { text: Shaped::Wrapped(lines), .. } => {
             let h: f32 = lines.iter().map(|l| f32::from(l.size(row_h).height)).sum();
-            h.max(f32::from(row_h))
+            h.clamp(f32::from(row_h), f32::from(row_h) * MAX_WRAPPED_LINES as f32)
         }
     }
 }
@@ -474,7 +490,12 @@ impl Element for LogViewElement {
             let h = self.state.read(cx).height_of(row);
             let row_bounds = Bounds::new(point(bounds.left(), bounds.top() + px(y)), gsize(bounds.size.width, px(h)));
             let row_hitbox = window.insert_hitbox(row_bounds, HitboxBehavior::Normal);
-            geometry.push(RowGeometry { row, bounds: row_bounds, is_gap: matches!(body, RowBody::Gap(_)) });
+            geometry.push(RowGeometry {
+                row,
+                bounds: row_bounds,
+                is_gap: matches!(body, RowBody::Gap(_)),
+                clipped: matches!(body, RowBody::Line { clipped: true, .. }),
+            });
             rows.push(PaintRow { row, bounds: row_bounds, hitbox: row_hitbox, body });
         }
         self.state.update(cx, |s, _| s.last_rows = geometry);
@@ -489,7 +510,27 @@ impl Element for LogViewElement {
             )
         });
 
-        LogViewPrepaint { hitbox, rows, thumb, hbar, hbar_shown, theme, selection, force_hover_row, text_left, scroll_x: px(scroll_x), wrap_width: wrap.then(|| px(text_w)) }
+        let ellipsis = window.text_system().shape_line(
+            "…".into(),
+            theme.metrics.log_font_size,
+            &[run('…'.len_utf8(), &fonts.log, theme.palette.faint, None)],
+            None,
+        );
+
+        LogViewPrepaint {
+            hitbox,
+            rows,
+            thumb,
+            hbar,
+            hbar_shown,
+            theme,
+            selection,
+            force_hover_row,
+            text_left,
+            scroll_x: px(scroll_x),
+            wrap_width: wrap.then(|| px(text_w)),
+            ellipsis,
+        }
     }
 
     fn paint(
@@ -514,7 +555,7 @@ impl Element for LogViewElement {
                         let origin = point(row.bounds.left() + px(size::GAP_ROW_INSET), row.bounds.top());
                         label.paint(origin, row.bounds.size.height, TextAlign::Left, None, window, cx).ok();
                     }
-                    RowBody::Line { number, number_line, text, pinned, tint, marks, outlines } => {
+                    RowBody::Line { number, number_line, text, pinned, tint, marks, outlines, clipped } => {
                         let hovered = pre.force_hover_row == Some(row.row) || row.hitbox.is_hovered(window);
                         let selected = pre.selection.is_some_and(|(lo, hi)| (lo..=hi).contains(number));
                         let bg = if selected {
@@ -570,6 +611,11 @@ impl Element for LogViewElement {
                                 }
                             }
                             text.paint(origin, row_h, window, cx);
+                            // The marker sits in the right padding beside the last shown line.
+                            if *clipped && let Some(w) = pre.wrap_width {
+                                let at = point(pre.text_left + w + px(4.), row.bounds.top() + row_h * (MAX_WRAPPED_LINES - 1) as f32);
+                                pre.ellipsis.paint(at, row_h, TextAlign::Left, None, window, cx).ok();
+                            }
                             if let Some((geometry, bytes)) = &geometry {
                                 for range in in_window(outlines, |r| r, bytes) {
                                     geometry.boxes(range, |b| {

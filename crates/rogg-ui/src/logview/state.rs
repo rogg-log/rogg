@@ -22,6 +22,8 @@ pub struct RowGeometry {
     pub row: usize,
     pub bounds: Bounds<Pixels>,
     pub is_gap: bool,
+    /// A wrapped row cut to `MAX_WRAPPED_LINES`.
+    pub clipped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
