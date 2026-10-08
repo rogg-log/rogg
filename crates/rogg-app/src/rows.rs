@@ -35,6 +35,11 @@ pub fn display_line(text: &LogText, i: u64) -> SharedString {
     display.into()
 }
 
+/// Whether `display_line` cuts line `i` (the line is longer than `MAX_DISPLAY_BYTES`); looks at the length only.
+fn is_cut(text: &LogText, i: u64) -> bool {
+    text.line(i).len() > MAX_DISPLAY_BYTES
+}
+
 /// What decorates a row besides its filter hits: the active find, the profile styler, and which pane it is for.
 struct Decor<'a> {
     search: Option<&'a CompiledSearch>,
@@ -91,6 +96,10 @@ impl LogRowSource for FullRows {
     fn nearest_row(&self, number: u64) -> Option<usize> {
         let count = self.text.line_count();
         (count > 0).then(|| number.saturating_sub(self.base).min(count - 1) as usize)
+    }
+
+    fn is_display_cut(&self, ix: usize) -> bool {
+        (ix as u64) < self.text.line_count() && is_cut(&self.text, ix as u64)
     }
 
     fn copy_text(&self, ix: usize) -> Option<String> {
@@ -163,6 +172,10 @@ impl LogRowSource for FilteredRows {
         let line = number.saturating_sub(self.base);
         let i = shown.partition_point(|&l| l < line).min(shown.len() - 1);
         self.view.row_for_line(shown[i]).map(|r| r as usize)
+    }
+
+    fn is_display_cut(&self, ix: usize) -> bool {
+        matches!(self.view.row(ix as u64), Some(ViewRow::Line { number, .. }) if is_cut(&self.text, number))
     }
 
     fn copy_text(&self, ix: usize) -> Option<String> {
@@ -281,6 +294,17 @@ mod tests {
         let row = line(rows.row(0));
         assert!(row.spans.iter().all(|s| s.range.end <= row.text.len()), "spans stay inside the display text");
         assert_eq!(rows.copy_text(0).map(|s| s.len()), Some(long.len()));
+    }
+
+    #[test]
+    fn rows_report_which_lines_are_cut_for_display() {
+        let long = "a".repeat(MAX_DISPLAY_BYTES + 1);
+        let t = text(&["short", &long]);
+        let full = FullRows { text: t.clone(), base: 1, pins: Arc::new(BTreeSet::new()), search: None, styler: None };
+        assert!(!full.is_display_cut(0) && full.is_display_cut(1) && !full.is_display_cut(2));
+        let view = FilteredView::build(Arc::new(vec![0, 1]), &BTreeSet::new(), 0, 2, |_| false);
+        let filtered = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: None, search: None, styler: None };
+        assert!(!filtered.is_display_cut(0) && filtered.is_display_cut(1));
     }
 
     #[test]

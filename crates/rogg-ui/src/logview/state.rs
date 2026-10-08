@@ -306,9 +306,11 @@ impl LogViewState {
     /// Selects characters `anchor..head` of line `number` (a drag within one row). Offsets snap back to char boundaries
     /// and stop at the display cut (never inside the `…` marker); an empty range clears the selection.
     pub fn set_char_selection(&mut self, number: u64, anchor: usize, head: usize, cx: &mut Context<Self>) {
-        let Some(LogRow::Line(line)) = self.rows.row_for_number(number).map(|row| self.rows.row(row)) else { return };
+        let Some(ix) = self.rows.row_for_number(number) else { return };
+        let LogRow::Line(line) = self.rows.row(ix) else { return };
         let (display, truncated) = display_text(&line.text, MAX_DISPLAY_TEXT_BYTES);
-        let cut = if truncated { display.len() - '…'.len_utf8() } else { display.len() };
+        // The row producer may already have cut the line and added the marker itself.
+        let cut = if truncated || (self.rows.is_display_cut(ix) && display.ends_with('…')) { display.len() - '…'.len_utf8() } else { display.len() };
         let snap = |i: usize| display.floor_char_boundary(i.min(cut));
         let (anchor, head) = (snap(anchor), snap(head));
         self.char_selection = (anchor != head).then_some(CharSelection { number, anchor, head });

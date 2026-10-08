@@ -1,7 +1,7 @@
 mod common;
 use gpui_kit::prelude::*;
 use gpui_kit::{AppContext, Entity, ScrollDelta, TestAppContext, point, px};
-use rogg_ui::logview::{LogLine, LogRow, LogView, LogViewEvent, LogViewState, ScrollTo, VecRows};
+use rogg_ui::logview::{LogLine, LogRow, LogRowSource, LogView, LogViewEvent, LogViewState, ScrollTo, VecRows};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -869,4 +869,45 @@ fn a_char_selection_stops_at_the_display_cut(cx: &mut TestAppContext) {
     let copied = state.read_with(cx, |s, _| s.selected_text(false)).unwrap();
     assert!(copied.chars().all(|c| c == 'x'), "never the … marker");
     assert_eq!(copied.len(), rogg_ui::logview::text::MAX_DISPLAY_TEXT_BYTES, "everything up to the cut");
+}
+
+/// One row shaped like the app's `display_line` output: cut at 64 KB with the marker, the full line being longer.
+struct CutRow;
+
+impl LogRowSource for CutRow {
+    fn row_count(&self) -> usize {
+        1
+    }
+    fn row(&self, _: usize) -> LogRow {
+        let text = format!("{}…", "x".repeat(64 * 1024));
+        LogRow::Line(LogLine { number: 1, text: text.into(), spans: vec![], pinned: false, context: false, tint: None })
+    }
+    fn is_gap(&self, _: usize) -> bool {
+        false
+    }
+    fn longest_line_chars(&self) -> usize {
+        64 * 1024 + 1
+    }
+    fn row_for_number(&self, number: u64) -> Option<usize> {
+        (number == 1).then_some(0)
+    }
+    fn is_display_cut(&self, _: usize) -> bool {
+        true
+    }
+    fn copy_text(&self, _: usize) -> Option<String> {
+        Some("x".repeat(70 * 1024))
+    }
+}
+
+#[gpui_kit::test]
+fn a_char_selection_stops_before_the_marker_of_a_line_the_source_cut(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let state = cx.new(|_| LogViewState::new(Rc::new(CutRow)));
+    state.update(cx, |s, cx| {
+        s.set_selected(Some(1), cx);
+        s.set_char_selection(1, 0, usize::MAX, cx);
+    });
+    assert_eq!(state.read_with(cx, |s, _| s.char_selection().map(|c| c.range())), Some(0..64 * 1024));
+    let copied = state.read_with(cx, |s, _| s.selected_text(false)).unwrap();
+    assert_eq!(copied, "x".repeat(64 * 1024), "no marker, no extra bytes");
 }

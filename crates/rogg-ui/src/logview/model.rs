@@ -82,6 +82,11 @@ pub trait LogRowSource: 'static {
         self.row_for_number(number)
     }
 
+    /// Whether the row's text was cut for display (it ends with the `…` marker and the full line is longer).
+    fn is_display_cut(&self, _ix: usize) -> bool {
+        false
+    }
+
     /// Full text of the line at row `ix` for copying (rows may hold display-truncated text); None for gaps.
     fn copy_text(&self, ix: usize) -> Option<String> {
         if ix >= self.row_count() {
