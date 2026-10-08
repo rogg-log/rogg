@@ -109,6 +109,22 @@ fn history_dialog_restores_an_older_filter(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn restoring_history_closes_the_expression_editor(cx: &mut TestAppContext) {
+    let (_dir, w, ws) = open_two(cx);
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    doc.update(cx, |d, cx| d.set_expression("alpha", cx)).unwrap();
+    doc.update(cx, |d, cx| d.set_expression("gamma", cx)).unwrap();
+    cx.update_window(w, |_, window, cx| tab.update(cx, |t, cx| t.start_edit(window, cx))).unwrap();
+    assert!(tab.read_with(cx, |t, _| t.editing.is_some()));
+    common::click(cx, w, "history");
+    common::click(cx, w, "history-pick-1");
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.expression()), "alpha");
+    assert!(tab.read_with(cx, |t, _| t.editing.is_none()), "the editor showing the old expression is closed");
+}
+
+#[gpui_kit::test]
 fn all_tabs_dialog_activates_a_tab(cx: &mut TestAppContext) {
     let (_dir, w, ws) = open_two(cx);
     common::click(cx, w, "all-tabs");

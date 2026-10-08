@@ -454,9 +454,15 @@ impl Workspace {
     }
 
     /// History dialog pick: restores the entry's terms, states, flags and context on the active tab.
-    pub fn restore_history(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn restore_history(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let spec = cx.try_global::<HistoryStore>().and_then(|h| h.entries().get(index)).map(|e| e.to_spec());
         if let (Some(spec), Some(tab)) = (spec, self.active_tab()) {
+            // An open expression editor still shows the old filter: Enter would re-apply it.
+            tab.update(cx, |t, cx| {
+                if t.editing.is_some() {
+                    t.cancel_edit(window, cx);
+                }
+            });
             let doc = tab.read(cx).doc.clone();
             let _ = doc.update(cx, |d, cx| d.apply_spec(spec, cx));
         }

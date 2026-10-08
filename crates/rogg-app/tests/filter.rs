@@ -340,3 +340,23 @@ fn the_empty_filtered_view_offers_recent_filters(cx: &mut TestAppContext) {
     assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.expression()), "beta");
     assert!(!common::exists(cx, w, "empty-results"), "beta matches a line");
 }
+
+#[gpui_kit::test]
+fn a_recent_filter_pick_closes_the_expression_editor(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let log = common::write_log(dir.path(), "a.log", &["alpha one", "beta two"]);
+    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log] });
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    for expr in ["beta", "nothing-here"] {
+        doc.update(cx, |d, cx| d.set_expression(expr, cx)).unwrap();
+        common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    }
+    cx.update_window(w, |_, window, cx| tab.update(cx, |t, cx| t.start_edit(window, cx))).unwrap();
+    assert!(tab.read_with(cx, |t, _| t.editing.is_some()));
+    common::click(cx, w, "recent-filter-0");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.expression()), "beta");
+    assert!(tab.read_with(cx, |t, _| t.editing.is_none()), "the editor showing the old expression is closed, so Enter cannot re-apply it");
+}

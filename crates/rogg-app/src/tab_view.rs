@@ -169,8 +169,12 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                     .unwrap_or_default();
                 let items = recent.iter().map(|e| RecentFilter { expression: e.expression().into(), summary: e.summary().into() }).collect();
                 let specs: Vec<FilterSpec> = recent.iter().map(HistoryEntry::to_spec).collect();
-                let pick = tab_act_ix(tab, move |t, i, _, cx| {
+                let pick = tab_act_ix(tab, move |t, i, window, cx| {
                     if let Some(spec) = specs.get(i).cloned() {
+                        // An open expression editor still shows the old filter: Enter would re-apply it.
+                        if t.editing.is_some() {
+                            t.cancel_edit(window, cx);
+                        }
                         let _ = t.doc.update(cx, |d, cx| d.apply_spec(spec, cx));
                     }
                 });

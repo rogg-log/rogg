@@ -714,7 +714,7 @@ impl Workspace {
                     .try_global::<HistoryStore>()
                     .map(|h| h.entries().iter().map(|e| (SharedString::from(e.expression()), SharedString::from(e.summary()))).collect())
                     .unwrap_or_default();
-                dialogs::history_picker(&entries, Rc::new(act_ix(this, |ws, i, _, cx| ws.restore_history(i, cx))))
+                dialogs::history_picker(&entries, Rc::new(act_ix(this, |ws, i, window, cx| ws.restore_history(i, window, cx))))
                     .description("Restore an expression together with its term states and matching options.")
                     .on_close(close)
                     .into_any_element()
