@@ -609,6 +609,7 @@ impl Render for ProfileEditor {
             frame = frame.child(self.slot_form(slot, &profile, &this, cx));
         }
         // The note row of `DialogFrame::note`, with Import and Export at its end (the toolbar has no room for them).
+        let folder = cx.try_global::<crate::paths::AppPaths>().map(|p| p.profiles.clone()).unwrap_or_else(rogg_core::paths::profiles_dir);
         frame.child(
             div()
                 .flex()
@@ -622,7 +623,7 @@ impl Render for ProfileEditor {
                         .text_size(theme.text_scale().px(10.))
                         .line_height(px(17.))
                         .text_color(theme.palette.muted)
-                        .child("Profiles are saved in ~/Library/Application Support/rogg/profiles."),
+                        .child(format!("Profiles are saved in {}.", folder.display())),
                 )
                 .child(
                     div()

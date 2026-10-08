@@ -18,7 +18,7 @@ pub struct AppPaths {
 impl Global for AppPaths {}
 
 impl AppPaths {
-    /// `~/Library/Application Support/rogg/…` and `~/Library/Caches/rogg`.
+    /// The OS's config, data and cache folders for rogg (spec §3).
     pub fn system() -> Self {
         Self {
             history: rogg_core::paths::history_path(),

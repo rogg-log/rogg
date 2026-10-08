@@ -1,5 +1,5 @@
 //! Build details for the About dialog: the short git commit, the build date and the compiler version. Anything
-//! that cannot be found (no git checkout, no `date`) is left unset, and the app shows `unknown`.
+//! that cannot be found (no git checkout) is left unset, and the app shows `unknown`.
 use std::path::Path;
 use std::process::Command;
 
@@ -8,11 +8,32 @@ fn output(cmd: &str, args: &[&str]) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// Today's date (UTC) as `YYYY-MM-DD`, from the system clock: no external `date` command (Windows has none).
+fn today() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Days since 1970-01-01 to (year, month, day), Howard Hinnant's civil-from-days algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 fn main() {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let values = [
         ("ROGG_GIT_COMMIT", output("git", &["rev-parse", "--short", "HEAD"])),
-        ("ROGG_BUILD_DATE", output("date", &["+%Y-%m-%d"])),
+        ("ROGG_BUILD_DATE", Some(today())),
         ("ROGG_RUSTC_VERSION", output(&rustc, &["--version"])),
     ];
     for (key, value) in values {

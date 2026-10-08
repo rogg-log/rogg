@@ -1,7 +1,6 @@
 use rogg_core::cache::{Cache, DEFAULT_LIMIT_BYTES};
-use rogg_core::stream::{StreamCapture, fd_has_data, is_stream_path};
+use rogg_core::stream::StreamCapture;
 use std::io::Write;
-use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
 fn wait_for(mut done: impl FnMut() -> bool) {
@@ -17,7 +16,8 @@ fn a_pipe_is_copied_as_it_arrives() {
     let dir = tempfile::tempdir().unwrap();
     let cache = Cache::new(dir.path(), DEFAULT_LIMIT_BYTES);
     let (reader, mut writer) = std::io::pipe().unwrap();
-    assert!(fd_has_data(reader.as_raw_fd()), "a pipe carries data");
+    #[cfg(unix)]
+    assert!(rogg_core::stream::fd_has_data(std::os::fd::AsRawFd::as_raw_fd(&reader)), "a pipe carries data");
     let capture = StreamCapture::start(move || Ok(reader), &cache).unwrap();
     assert!(capture.path().starts_with(cache.streams_dir()));
     assert!(capture.path().exists(), "the capture file exists before any data arrives");
@@ -61,8 +61,11 @@ fn opening_errors_are_reported_not_raised() {
     assert!(capture.error().unwrap().contains("no writer"));
 }
 
+#[cfg(unix)]
 #[test]
 fn terminals_and_dev_null_carry_no_data_but_fifos_do() {
+    use rogg_core::stream::{fd_has_data, is_stream_path};
+    use std::os::fd::AsRawFd;
     let null = std::fs::File::open("/dev/null").unwrap();
     assert!(!fd_has_data(null.as_raw_fd()));
     let dir = tempfile::tempdir().unwrap();

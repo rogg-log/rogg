@@ -54,7 +54,7 @@ pub fn partial_path(dst: &Path) -> PathBuf {
 }
 
 /// The writer of a `<name>.<pid>.<n>.partial` file.
-fn partial_owner(name: &str) -> Option<i32> {
+fn partial_owner(name: &str) -> Option<u32> {
     let mut parts = name.strip_suffix(".partial")?.rsplitn(3, '.');
     parts.next()?.parse::<u64>().ok()?;
     let pid = parts.next()?.parse().ok()?;
@@ -62,17 +62,8 @@ fn partial_owner(name: &str) -> Option<i32> {
 }
 
 /// The writer of a `stream-<pid>-<n>.log` capture or a `derived-<pid>-<n>.log` tab text.
-fn stream_owner(name: &str) -> Option<i32> {
+fn stream_owner(name: &str) -> Option<u32> {
     name.strip_prefix("stream-").or_else(|| name.strip_prefix("derived-"))?.split('-').next()?.parse().ok()
-}
-
-fn process_alive(pid: i32) -> bool {
-    if pid <= 0 {
-        return false;
-    }
-    // SAFETY: signal 0 delivers nothing; it only checks that the process exists.
-    let alive = unsafe { libc::kill(pid, 0) } == 0;
-    alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// Marks a file as recently used (the LRU order is the modification time).
@@ -248,12 +239,12 @@ impl Cache {
     }
 }
 
-fn sweep(dir: &Path, owner: fn(&str) -> Option<i32>) -> usize {
+fn sweep(dir: &Path, owner: fn(&str) -> Option<u32>) -> usize {
     let Ok(read) = std::fs::read_dir(dir) else { return 0 };
     read.flatten()
         .filter(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            owner(&name).is_some_and(|pid| !process_alive(pid)) && std::fs::remove_file(e.path()).is_ok()
+            owner(&name).is_some_and(|pid| !crate::platform::process_alive(pid)) && std::fs::remove_file(e.path()).is_ok()
         })
         .count()
 }
@@ -267,9 +258,9 @@ mod tests {
         File::options().append(true).open(path).unwrap().set_modified(t).unwrap();
     }
 
-    fn dead_pid() -> i32 {
+    fn dead_pid() -> u32 {
         let mut child = std::process::Command::new("true").spawn().unwrap();
-        let pid = child.id() as i32;
+        let pid = child.id();
         child.wait().unwrap();
         pid
     }
@@ -374,7 +365,7 @@ mod tests {
         let (a, b) = (partial_path(dst), partial_path(dst));
         assert_ne!(a, b);
         let name = a.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(partial_owner(&name), Some(std::process::id() as i32));
+        assert_eq!(partial_owner(&name), Some(std::process::id()));
         assert_eq!(stream_owner("stream-42-7.log"), Some(42));
         assert_eq!(partial_owner("k.utf8"), None);
     }

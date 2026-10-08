@@ -1,58 +1,63 @@
-//! macOS locations for rogg's data (spec §4.2, §4.12, §6).
+//! Where rogg keeps its data on each OS (spec §3).
 
+use crate::platform::{self, Env, Os};
 use std::path::PathBuf;
 
+fn env() -> Env {
+    Env::from_process()
+}
+
+/// The user's home folder; the temp dir when unknown, so paths never become cwd-relative.
 pub fn home_dir() -> PathBuf {
-    home_from(std::env::var_os("HOME"))
+    platform::home(Os::current(), &env())
 }
 
-/// An unset or empty `HOME` falls back to the temp dir, so paths never become cwd-relative.
-fn home_from(home: Option<std::ffi::OsString>) -> PathBuf {
-    home.filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
+/// Settings and profiles (`~/Library/Application Support/rogg`, `~/.config/rogg`, `%APPDATA%\rogg`).
+pub fn config_dir() -> PathBuf {
+    platform::config_base(Os::current(), &env())
 }
 
-/// `~/Library/Application Support/rogg`
+/// History, recent files and the session.
+pub fn data_dir() -> PathBuf {
+    platform::data_base(Os::current(), &env())
+}
+
+/// Kept for callers: the config folder.
 pub fn app_support_dir() -> PathBuf {
-    home_dir().join("Library/Application Support/rogg")
+    config_dir()
 }
 
-/// `~/Library/Caches/rogg`
+/// Conversions, extracted members, stream captures.
 pub fn cache_dir() -> PathBuf {
-    home_dir().join("Library/Caches/rogg")
+    platform::cache_base(Os::current(), &env())
 }
 
 pub fn history_path() -> PathBuf {
-    app_support_dir().join("history.json")
+    data_dir().join("history.json")
 }
 
 pub fn recent_path() -> PathBuf {
-    app_support_dir().join("recent.json")
+    data_dir().join("recent.json")
 }
 
 pub fn settings_path() -> PathBuf {
-    app_support_dir().join("settings.toml")
+    config_dir().join("settings.toml")
 }
 
 /// One `<name>.toml` per highlighting profile (spec §6.1).
 pub fn profiles_dir() -> PathBuf {
-    app_support_dir().join("profiles")
+    config_dir().join("profiles")
 }
 
 pub fn session_path() -> PathBuf {
-    app_support_dir().join("session.json")
+    data_dir().join("session.json")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn empty_or_unset_home_falls_back_to_temp_dir() {
-        assert_eq!(home_from(None), std::env::temp_dir());
-        assert_eq!(home_from(Some("".into())), std::env::temp_dir());
-        assert_eq!(home_from(Some("/Users/x".into())), PathBuf::from("/Users/x"));
-    }
-
+    #[cfg(target_os = "macos")]
     #[test]
     fn macos_locations() {
         assert!(app_support_dir().ends_with("Library/Application Support/rogg"));
@@ -60,11 +65,27 @@ mod tests {
         assert!(history_path().ends_with("Library/Application Support/rogg/history.json"));
     }
 
+    /// Skipped when an `XDG_*` override is set, since it then decides the location.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_locations() {
+        if ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"].iter().any(|k| std::env::var_os(k).is_some()) {
+            return;
+        }
+        assert!(config_dir().ends_with(".config/rogg"));
+        assert!(data_dir().ends_with(".local/share/rogg"));
+        assert!(cache_dir().ends_with(".cache/rogg"));
+        assert!(history_path().ends_with(".local/share/rogg/history.json"));
+        assert!(settings_path().ends_with(".config/rogg/settings.toml"));
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn recent_path_is_in_app_support() {
         assert!(recent_path().ends_with("Library/Application Support/rogg/recent.json"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn m4_state_paths_are_in_app_support() {
         assert!(settings_path().ends_with("Application Support/rogg/settings.toml"));

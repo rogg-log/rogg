@@ -5,14 +5,15 @@ use crate::cache::Cache;
 use crate::error::CoreError;
 use std::fs::File;
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::fd::RawFd;
-use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Whether `fd` carries data to read: a pipe, FIFO, socket or regular file — not a terminal, `/dev/null` or other
 /// device (an app started from Finder has `/dev/null` on stdin).
+#[cfg(unix)]
 pub fn fd_has_data(fd: RawFd) -> bool {
     // SAFETY: `fstat` only writes into `st`; an invalid fd returns an error.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -24,12 +25,12 @@ pub fn fd_has_data(fd: RawFd) -> bool {
 
 /// stdin when something is piped or redirected into rogg.
 pub fn stdin_has_data() -> bool {
-    fd_has_data(libc::STDIN_FILENO)
+    crate::platform::stdin_has_data()
 }
 
 /// A FIFO or socket on disk (`mkfifo`, `<(cmd)` → `/dev/fd/63`): read it as a stream, never map it.
 pub fn is_stream_path(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.file_type().is_fifo() || m.file_type().is_socket())
+    crate::platform::is_stream_path(path)
 }
 
 pub struct StreamCapture {

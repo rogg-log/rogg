@@ -17,6 +17,7 @@ pub mod history;
 pub mod index;
 pub mod mapping;
 pub mod paths;
+pub mod platform;
 pub mod persist;
 pub mod profile;
 pub mod recent;

@@ -54,7 +54,7 @@ fn classify(path: &Path) -> PathKind {
         return PathKind::Folder;
     }
     // Before anything opens the file: opening a FIFO blocks until a writer appears.
-    if rogg_core::stream::is_stream_path(path) {
+    if rogg_core::platform::is_stream_path(path) {
         return PathKind::Stream;
     }
     match sniff(path) {
