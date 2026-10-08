@@ -35,3 +35,13 @@ Use `./dev demo`, then a real log with very long lines (for example `./dev genlo
 - [ ] **Live log:** run `./dev live` in a terminal and open its file. In the filtered pane, character-select part of a line while new lines arrive: the selection stays put, and ⌘C copies just those characters. Pinning a line or typing in Find keeps it too. Applying a different filter clears it.
 - [ ] **Click with a wiggle:** click a line with a small trackpad or mouse wiggle: the row is selected, not a single character.
 - [ ] **Huge full-line dialog:** open `Show full line…` on a line over 1 MB: the dialog opens and scrolls without a noticeable stall.
+
+## Iteration C — colours and recent filters
+
+- [ ] **Custom… picker:** open Highlighting (the info bar's Profile button), duplicate Default, and select a rule. The Colour row shows the preset swatches, then `Custom…` (a square in the rule's current colour), then the hex field. `Custom…` opens a popover in rogg's colours on the HSLA tab: hue, saturation, lightness and alpha sliders, plus hex. The Palette tab next to it shows gpui-kit's own swatch grid.
+- [ ] **Picking a colour:** dragging a slider or typing a hex in the popover recolours the matching lines at once. The hex field shows `#rrggbb`, or `#rrggbbaa` once alpha is below 100. Reopening Highlighting keeps the colour (it is saved).
+- [ ] **Light theme:** the Light theme row has its own `Custom…`. Leave it empty, and switching to the light theme shows the derived light variant. After a pick, the light theme shows exactly that colour.
+- [ ] **Palette slots:** in "Filter-match palette", select a slot. Text, background, and both light-theme fields each have their own `Custom…`, and a pick recolours the filter hits.
+- [ ] **Staying in sync:** typing a hex into the field or clicking a preset swatch moves the `Custom…` square and the popover's sliders to the new colour.
+- [ ] **Recent filters:** apply three or four filters, then one that matches nothing. Under `No matching lines`, `Recent filters` lists up to three earlier filters, newest first, each with its expression (mono) and summary. The current filter is not listed. Clicking one applies it, restoring terms, on/off states, `.*`, `Aa` and context, and the matches appear.
+- [ ] **No history:** with a fresh history, a filter that matches nothing shows the plain `No matching lines`.
