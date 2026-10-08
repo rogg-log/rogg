@@ -21,15 +21,21 @@ fn main() {
         }
     }
     // Rerun when HEAD moves (a checkout, or a commit on the current branch), so the commit stays current.
+    // A missing path makes cargo rerun on every build, so only name files that exist.
     println!("cargo:rerun-if-changed=build.rs");
-    if let Some(dir) = output("git", &["rev-parse", "--absolute-git-dir"]) {
+    let git_dir = output("git", &["rev-parse", "--absolute-git-dir"]);
+    if let Some(dir) = &git_dir {
         println!("cargo:rerun-if-changed={dir}/HEAD");
     }
-    if let (Some(common), Some(branch)) =
+    // The per-worktree HEAD reflog gets a line on every commit, amend, reset, rebase and checkout (detached HEAD
+    // too), whether or not the refs are packed. Without one (reflogs off), fall back to the branch ref itself.
+    let reflog = git_dir.as_ref().map(|dir| format!("{dir}/logs/HEAD")).filter(|p| Path::new(p).exists());
+    if let Some(reflog) = reflog {
+        println!("cargo:rerun-if-changed={reflog}");
+    } else if let (Some(common), Some(branch)) =
         (output("git", &["rev-parse", "--path-format=absolute", "--git-common-dir"]), output("git", &["symbolic-ref", "-q", "HEAD"]))
     {
-        // A missing path makes cargo rerun on every build, so only name files that exist. With packed refs (after
-        // `git gc`) the branch has no loose file; `packed-refs` changes when the branch moves instead.
+        // With packed refs (after `git gc`) the branch has no loose file; `packed-refs` changes when it moves instead.
         let loose = format!("{common}/{branch}");
         let packed = format!("{common}/packed-refs");
         if Path::new(&loose).exists() {
