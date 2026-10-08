@@ -10,10 +10,12 @@ fn every_bundled_font_is_embedded() {
     }
 }
 
+/// The test text system lists no families (`all_font_names` is empty even for installed fonts), so the families
+/// cannot be asserted by name; registration succeeding with all five files is what can be checked.
 #[gpui_kit::test]
 fn registering_the_fonts_succeeds(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        rogg_ui::fonts::register(cx);
+        rogg_ui::fonts::try_register(cx).expect("the five bundled fonts register");
     });
 }

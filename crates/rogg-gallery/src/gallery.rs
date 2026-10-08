@@ -219,12 +219,12 @@ impl Render for GalleryView {
             .child(div().text_size(px(15.)).font_weight(FontWeight(550.)).child(self.page.title()))
             .child(div().flex_1())
             .child(Segmented::new("gallery-appearance", vec!["Dark".into(), "Light".into()], appearance_ix).on_select(|i, _, cx| {
-                let density = cx.rogg().density;
-                RoggTheme::new(if i == 0 { Appearance::Dark } else { Appearance::Light }, density).install(cx);
+                let (density, chrome) = (cx.rogg().density, cx.rogg().chrome);
+                RoggTheme::new(if i == 0 { Appearance::Dark } else { Appearance::Light }, density).with_chrome(chrome).install(cx);
             }))
             .child(Segmented::new("gallery-density", vec!["Compact".into(), "Comfortable".into()], density_ix).on_select(|i, _, cx| {
-                let appearance = cx.rogg().appearance;
-                RoggTheme::new(appearance, if i == 0 { Density::Compact } else { Density::Comfortable }).install(cx);
+                let (appearance, chrome) = (cx.rogg().appearance, cx.rogg().chrome);
+                RoggTheme::new(appearance, if i == 0 { Density::Compact } else { Density::Comfortable }).with_chrome(chrome).install(cx);
             }));
         div()
             .size_full()

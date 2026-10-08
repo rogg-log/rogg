@@ -3,7 +3,7 @@
 use crate::cache::{CacheStore, evict_soon};
 use gpui_kit::{App, BorrowAppContext, Global, SharedString, WindowAppearance};
 use rogg_core::settings::{DEFAULT_LOG_FONT, DensitySetting, LOG_FONTS, Settings, ThemeSetting};
-use rogg_ui::theme::{Appearance, ChromeStyle, Density, JETBRAINS_MONO, MONO_FONT, RoggTheme};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, ChromeStyle, Density, JETBRAINS_MONO, MONO_FONT, RoggTheme};
 use std::path::PathBuf;
 
 pub struct SettingsStore {
@@ -116,9 +116,8 @@ fn find_log_fonts(cx: &App) -> Vec<String> {
 
 /// The theme for `settings`, with `theme` choosing light or dark and `density` the row density (the settings' choices,
 /// or a pinned pair).
-pub fn theme_with(settings: &Settings, theme: ThemeSetting, density: DensitySetting, window: WindowAppearance) -> RoggTheme {
+pub fn theme_with(settings: &Settings, theme: ThemeSetting, density: DensitySetting, window: WindowAppearance, chrome: ChromeStyle) -> RoggTheme {
     let a = &settings.appearance;
-    let chrome = ChromeStyle::resolved();
     // The chrome first: it resets the log font to the platform default, which the user's choice then replaces.
     RoggTheme::new(appearance_for(theme, window), density_for(density))
         .with_chrome(chrome)
@@ -126,14 +125,14 @@ pub fn theme_with(settings: &Settings, theme: ThemeSetting, density: DensitySett
         .with_ui_font_size(a.ui_font_size as f32)
 }
 
-pub fn theme_for(settings: &Settings, window: WindowAppearance) -> RoggTheme {
-    theme_with(settings, settings.appearance.theme, settings.appearance.density, window)
+pub fn theme_for(settings: &Settings, window: WindowAppearance, chrome: ChromeStyle) -> RoggTheme {
+    theme_with(settings, settings.appearance.theme, settings.appearance.density, window, chrome)
 }
 
 /// Installs the theme for the current settings (with `theme` deciding light or dark and `density` the density) unless
 /// it is already active; returns whether it changed.
 pub fn apply_theme(theme: ThemeSetting, density: DensitySetting, window: WindowAppearance, cx: &mut App) -> bool {
-    let next = theme_with(&SettingsStore::get(cx), theme, density, window);
+    let next = theme_with(&SettingsStore::get(cx), theme, density, window, cx.rogg().chrome);
     if cx.try_global::<RoggTheme>() == Some(&next) {
         return false;
     }
@@ -164,13 +163,13 @@ mod tests {
     #[test]
     fn theme_follows_the_settings() {
         let mut s = Settings::default();
-        assert_eq!(theme_for(&s, WindowAppearance::Dark).appearance, Appearance::Dark);
-        assert_eq!(theme_for(&s, WindowAppearance::Light).appearance, Appearance::Light);
+        assert_eq!(theme_for(&s, WindowAppearance::Dark, ChromeStyle::Mac).appearance, Appearance::Dark);
+        assert_eq!(theme_for(&s, WindowAppearance::Light, ChromeStyle::Mac).appearance, Appearance::Light);
         s.appearance.theme = ThemeSetting::Dark;
         s.appearance.log_font = "SF Mono".into();
-        let t = theme_for(&s, WindowAppearance::Light);
+        let t = theme_for(&s, WindowAppearance::Light, ChromeStyle::Mac);
         assert_eq!(t.appearance, Appearance::Dark);
         assert_eq!(t.fonts.log.as_ref(), rogg_ui::theme::MONO_FONT, "SF Mono is the system monospaced font");
-        assert_eq!(t, RoggTheme::new(Appearance::Dark, Density::Compact), "the defaults are the reference theme");
+        assert_eq!(t, RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(ChromeStyle::Mac), "the defaults are the reference theme");
     }
 }

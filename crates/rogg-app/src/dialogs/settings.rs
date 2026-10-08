@@ -9,8 +9,8 @@ use rogg_core::settings::{CACHE_LIMITS_GB, DEFAULT_LOG_FONT, DensitySetting, LOG
 use rogg_core::stats::noun;
 use rogg_ui::controls::{CompactSelect, Segmented};
 use rogg_ui::dialogs::DialogFrame;
-use rogg_ui::theme::ChromeStyle;
 use rogg_ui::form::{FormRow, SectionLabel, Stepper, Toggle};
+use rogg_ui::theme::{ActiveRoggTheme, ChromeStyle};
 
 pub const OTHER_FONT: &str = "Other…";
 
@@ -65,7 +65,7 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
     let s = SettingsStore::get(cx);
     let (a, b) = (&s.appearance, &s.behavior);
     let (font_options, font_selected) = log_font_options(&available_log_fonts(cx), &a.log_font);
-    let font_labels = log_font_labels(&font_options, ChromeStyle::resolved());
+    let font_labels = log_font_labels(&font_options, cx.rogg().chrome);
     let other = font_options.len() - 1;
     let profiles: Vec<String> = cx.try_global::<ProfileStore>().map(|p| p.names()).unwrap_or_else(|| vec![b.default_profile.clone()]);
     let profile_selected = profiles.iter().position(|n| *n == b.default_profile).unwrap_or(0);

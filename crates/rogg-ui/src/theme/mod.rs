@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn new_picks_palette_and_metrics() {
-        let t = RoggTheme::new(Appearance::Light, Density::Comfortable);
+        let t = RoggTheme::new(Appearance::Light, Density::Comfortable).with_chrome(ChromeStyle::Mac);
         assert_eq!(t.palette, Palette::light());
         assert_eq!(t.metrics, Density::Comfortable.metrics());
         assert_eq!(t.fonts.mono.as_ref(), MONO_FONT);
@@ -137,11 +137,11 @@ mod tests {
 
     #[test]
     fn log_font_overrides_family_and_metrics_only() {
-        let t = RoggTheme::new(Appearance::Dark, Density::Compact).with_log_font("Menlo".into(), 14.);
+        let t = RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(ChromeStyle::Mac).with_log_font("Menlo".into(), 14.);
         assert_eq!(t.fonts.log.as_ref(), "Menlo");
         assert_eq!(t.fonts.mono.as_ref(), MONO_FONT, "chips, dialogs and the gutter keep SF Mono");
         assert_eq!(t.metrics, Density::Compact.metrics_for(14.));
-        assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).fonts.log.as_ref(), MONO_FONT);
+        assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(ChromeStyle::Mac).fonts.log.as_ref(), MONO_FONT);
     }
 
     #[test]
