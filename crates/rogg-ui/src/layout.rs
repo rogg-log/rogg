@@ -213,7 +213,9 @@ impl RenderOnce for MainWindowLayout {
                         .flex_basis(relative(0.))
                         .min_h_0()
                         .child(header)
-                        .child(div().flex_1().min_h_0().child(body))
+                        // Clipped: a body taller than a short pane (the empty view's recent filters) must not paint or
+                        // take clicks over the header, the band or the status bar.
+                        .child(div().flex_1().min_h_0().overflow_hidden().child(body))
                 };
                 let band = div().relative().flex_none().child(parts.band).when_some(self.measure.clone(), |d, m| d.child(recorder(m, true)));
                 root.child(parts.titlebar)

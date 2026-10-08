@@ -87,3 +87,49 @@ fn measure_records_main_and_band_and_handles_exist(cx: &mut gpui_kit::TestAppCon
     assert!((split - MainWindowParts::DEFAULT_SPLIT).abs() < 0.01, "band top maps back to the current split, got {split}");
     assert_eq!(top.top(), px(42. + 33.));
 }
+
+#[gpui_kit::test]
+fn a_short_filtered_pane_keeps_recent_filters_inside_it(cx: &mut gpui_kit::TestAppContext) {
+    use rogg_ui::empty::{RecentFilter, no_matches_with_recent};
+    use std::cell::Cell;
+    common::setup(cx);
+    let picked = Rc::new(Cell::new(None));
+    let hits = Rc::new(Cell::new((0, 0)));
+    let (p, h) = (picked.clone(), hits.clone());
+    let w = common::open(cx, 1000., 700., move |_, _| {
+        let part = |id: &'static str, height: f32| div().id(id).test_support().h(px(height)).into_any_element();
+        let (h1, h2) = (h.clone(), h.clone());
+        let p = p.clone();
+        let recent = (0..3).map(|i| RecentFilter { expression: format!("term-{i}").into(), summary: "1 include".into() }).collect();
+        MainWindowLayout::new(MainWindowParts {
+            titlebar: part("t", 42.),
+            sidebar: None,
+            info_bar: part("i", 33.),
+            top_header: part("th", 35.),
+            top_body: div().into_any_element(),
+            band: FilterBand::new(vec![]).into_any_element(),
+            bottom_header: div().id("bh").test_support().h(px(35.)).on_click(move |_, _, _| h1.set((h1.get().0 + 1, h1.get().1))).into_any_element(),
+            bottom_body: no_matches_with_recent("empty-results", recent, Rc::new(move |i, _, _| p.set(Some(i)))).into_any_element(),
+            status: div().id("s").test_support().h(px(29.)).on_click(move |_, _, _| h2.set((h2.get().0, h2.get().1 + 1))).into_any_element(),
+            overlay: None,
+            split: 0.7,
+        })
+        .into_any_element()
+    });
+    let body = common::bounds(cx, w, "empty-results");
+    assert!(body.size.height < px(180.), "a short filtered pane: {body:?}");
+    common::click(cx, w, "bh");
+    common::click(cx, w, "s");
+    assert_eq!(picked.get(), None, "no recent filter spills over the pane header or the status bar");
+    assert_eq!(hits.get(), (1, 1), "the header and the status bar keep their clicks");
+    assert!(common::bounds(cx, w, "recent-filters").top() >= body.top(), "the list starts inside the pane, under its title");
+    // The rest of the list scrolls into view.
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.scroll("empty-results", gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-300.))), cx);
+    })
+    .unwrap();
+    assert!(common::bounds(cx, w, "recent-filter-2").bottom() <= body.bottom(), "scrolled to the end of the list");
+    common::click(cx, w, "recent-filter-2");
+    assert_eq!(picked.get(), Some(2));
+}

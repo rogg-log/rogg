@@ -7,7 +7,8 @@ use crate::{Callback, IndexCallback};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, FontWeight, SharedString, TestSupportExt, Window, div, px, relative};
 
-/// `.empty`: centred column with a 15px title, 12px muted body and optional actions.
+/// `.empty`: centred column with a 15px title, 12px muted body and optional actions. In a box too short for it the
+/// column starts at the top and scrolls, so it never spills out of its box.
 #[derive(IntoElement)]
 pub struct EmptyState {
     id: SharedString,
@@ -41,17 +42,26 @@ impl RenderOnce for EmptyState {
             .id(self.id)
             .test_support()
             .size_full()
+            .overflow_y_scroll()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(10.))
             .font_family(t.fonts.ui.clone())
             .text_size(s.px(12.))
             .text_color(p.muted)
-            .child(div().text_size(s.px(15.)).font_weight(FontWeight::MEDIUM).text_color(p.text).child(self.title))
-            .when_some(self.body, |d, b| d.child(b))
-            .children(self.children)
+            .child(
+                // Auto margins centre the column when it fits and are zero when it does not (unlike `justify_center`,
+                // which would push its top out of the box).
+                div()
+                    .my_auto()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(div().text_size(s.px(15.)).font_weight(FontWeight::MEDIUM).text_color(p.text).child(self.title))
+                    .when_some(self.body, |d, b| d.child(b))
+                    .children(self.children),
+            )
     }
 }
 
