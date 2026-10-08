@@ -60,7 +60,9 @@ pub struct ContextTarget {
 /// A mouse drag in progress, started by a press on a row or a scrollbar thumb.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Drag {
-    Select,
+    /// `chars`: the start row's number and the byte index the press landed on, while the drag stays in that row
+    /// (a character selection); None once it left the row, and for shift-clicks and gutter presses.
+    Select { chars: Option<(u64, usize)> },
     /// `grab`: pointer offset from the thumb's top (or left) edge.
     VThumb { grab: f32 },
     HThumb { grab: f32 },

@@ -154,15 +154,64 @@ fn long_wrapped_rows_show_three_lines(cx: &mut HeadlessAppContext) {
     assert_eq!(rows[1].bounds.origin.y, rows[0].bounds.bottom(), "the next row starts right below the capped one");
 }
 
+fn press_move_release(cx: &mut HeadlessAppContext, w: AnyWindowHandle, from: Point<gpui_kit::Pixels>, to: Point<gpui_kit::Pixels>) {
+    use gpui_kit::{InputEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.dispatch_event(MouseMoveEvent { position: from, pressed_button: None, modifiers: Default::default() }.to_platform_input(), cx);
+        window.render_frame(cx);
+        window.dispatch_event(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: Default::default(), click_count: 1, first_mouse: false }.to_platform_input(), cx);
+        window.render_frame(cx);
+        if to != from {
+            window.dispatch_event(MouseMoveEvent { position: to, pressed_button: Some(MouseButton::Left), modifiers: Default::default() }.to_platform_input(), cx);
+            window.render_frame(cx);
+        }
+        window.dispatch_event(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: Default::default(), click_count: 1 }.to_platform_input(), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+/// Spec B3: a drag inside one row selects characters (wrapped or not); crossing rows selects whole rows; a click clears.
+fn dragging_within_a_row_selects_characters(cx: &mut HeadlessAppContext) {
+    use gpui_kit::point;
+    use rogg_ui::theme::size::{GUTTER_NUMBER_W, GUTTER_PIN_W};
+    let left = GUTTER_PIN_W + GUTTER_NUMBER_W;
+    let text = "alpha beta gamma";
+    for wrap in [false, true] {
+        let (w, state) = open_state(cx, vec![line(1, text, vec![]), line(2, "second row", vec![])], wrap);
+        render(cx, w);
+        let y1 = 4. + 11.;
+        press_move_release(cx, w, point(px(left + 1.), px(y1)), point(px(left + 40.), px(y1)));
+        let (sel, copied) = cx.update(|cx| (state.read(cx).char_selection(), state.read(cx).selected_text(false)));
+        let range = sel.expect("characters selected").range();
+        assert!(range.start == 0 && range.end > 0 && range.end < text.len(), "wrap={wrap}: {range:?}");
+        assert_eq!(copied.as_deref(), Some(&text[range.clone()]), "wrap={wrap}");
+        // Past the end of the text selects to the end.
+        press_move_release(cx, w, point(px(left + 1.), px(y1)), point(px(850.), px(y1)));
+        assert_eq!(cx.update(|cx| state.read(cx).char_selection().map(|c| c.range())), Some(0..text.len()), "wrap={wrap}");
+        // Into the next row: whole rows.
+        let row2_top = cx.update(|cx| state.read(cx).last_rows()[1].bounds.origin.y);
+        press_move_release(cx, w, point(px(left + 1.), px(y1)), point(px(left + 20.), row2_top + px(5.)));
+        let (sel, range) = cx.update(|cx| (state.read(cx).char_selection(), state.read(cx).selection_range()));
+        assert_eq!((sel, range), (None, Some((1, 2))), "wrap={wrap}");
+        // A click clears any character selection.
+        press_move_release(cx, w, point(px(left + 1.), px(y1)), point(px(left + 40.), px(y1)));
+        press_move_release(cx, w, point(px(left + 20.), px(y1)), point(px(left + 20.), px(y1)));
+        assert_eq!(cx.update(|cx| state.read(cx).char_selection()), None, "wrap={wrap}");
+    }
+}
+
 type Case = (&'static str, fn(&mut HeadlessAppContext));
 
 fn main() {
     let mut cx = headless();
-    let cases: [Case; 4] = [
+    let cases: [Case; 5] = [
         ("spans_inside_multibyte_chars_render_without_panicking", spans_inside_multibyte_chars_render_without_panicking),
         ("dense_hit_line_renders_a_frame_quickly", dense_hit_line_renders_a_frame_quickly),
         ("right_click_takes_the_word_under_the_pointer", right_click_takes_the_word_under_the_pointer),
         ("long_wrapped_rows_show_three_lines", long_wrapped_rows_show_three_lines),
+        ("dragging_within_a_row_selects_characters", dragging_within_a_row_selects_characters),
     ];
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     for (name, case) in cases {

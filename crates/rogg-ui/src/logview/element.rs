@@ -1,5 +1,5 @@
 use super::model::{LogRow, LogRowSource, Span};
-use super::state::{ContextTarget, Drag, HBAR_HOVER_ZONE, LogViewEvent, LogViewState, RowGeometry};
+use super::state::{CharSelection, ContextTarget, Drag, HBAR_HOVER_ZONE, LogViewEvent, LogViewState, RowGeometry};
 use super::text::{MAX_DISPLAY_BYTES, MAX_DISPLAY_TEXT_BYTES, Segment, display_text, segments, token_at};
 use crate::icons::IconName;
 use crate::theme::{ActiveRoggTheme, Color, RoggTheme, size};
@@ -14,6 +14,7 @@ use gpui_kit::{
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ops::Range;
+use std::rc::Rc;
 
 pub struct LogViewElement {
     state: Entity<LogViewState>,
@@ -265,8 +266,28 @@ fn index_at(display: &SharedString, at: Point<Pixels>, font: &Font, font_size: P
     }
 }
 
-/// A painted line row, kept for the right-click handler.
-struct MenuTarget {
+/// Byte index in `display` nearest to `at` (relative to the text origin), on a char boundary: left of the text gives
+/// 0, past the end of a (visual) line gives its end. Re-shapes the one row under the pointer.
+#[allow(clippy::too_many_arguments)]
+fn closest_index(display: &SharedString, at: Point<Pixels>, font: &Font, font_size: Pixels, wrap: Option<Pixels>, row_h: Pixels, color: Color, window: &mut Window) -> usize {
+    if display.is_empty() {
+        return 0;
+    }
+    let runs = [run(display.len(), font, color, None)];
+    let index = match wrap {
+        None => window.text_system().shape_line(display.clone(), font_size, &runs, None).closest_index_for_x(at.x),
+        Some(w) => window
+            .text_system()
+            .shape_text(display.clone(), font_size, &runs, Some(w), None)
+            .ok()
+            .and_then(|lines| lines.first().map(|l| l.closest_index_for_position(at, row_h).unwrap_or_else(|i| i)))
+            .unwrap_or(0),
+    };
+    display.floor_char_boundary(index.min(display.len()))
+}
+
+/// A painted line row, kept for the mouse handlers (press, drag and right-click).
+struct TextTarget {
     hitbox: Hitbox,
     row: usize,
     number: u64,
@@ -315,6 +336,7 @@ pub struct LogViewPrepaint {
     hbar_shown: bool,
     theme: RoggTheme,
     selection: Option<(u64, u64)>,
+    char_selection: Option<CharSelection>,
     force_hover_row: Option<usize>,
     text_left: Pixels,
     scroll_x: Pixels,
@@ -476,9 +498,9 @@ impl Element for LogViewElement {
         });
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let (visible, rows_src, selection, force_hover_row, scroll_x, thumb) = {
+        let (visible, rows_src, selection, char_selection, force_hover_row, scroll_x, thumb) = {
             let s = self.state.read(cx);
-            (s.visible_rows(), s.rows().clone(), s.selection_range(), s.force_hover_row, s.scroll_x, s.thumb())
+            (s.visible_rows(), s.rows().clone(), s.selection_range(), s.char_selection(), s.force_hover_row, s.scroll_x, s.thumb())
         };
         let mut rows = Vec::with_capacity(visible.len());
         let mut geometry = Vec::with_capacity(visible.len());
@@ -525,6 +547,7 @@ impl Element for LogViewElement {
             hbar_shown,
             theme,
             selection,
+            char_selection,
             force_hover_row,
             text_left,
             scroll_x: px(scroll_x),
@@ -558,7 +581,9 @@ impl Element for LogViewElement {
                     RowBody::Line { number, number_line, text, pinned, tint, marks, outlines, clipped } => {
                         let hovered = pre.force_hover_row == Some(row.row) || row.hitbox.is_hovered(window);
                         let selected = pre.selection.is_some_and(|(lo, hi)| (lo..=hi).contains(number));
-                        let bg = if selected {
+                        let chars = pre.char_selection.filter(|c| c.number == *number).map(|c| c.range());
+                        // A row with selected characters is not painted as selected: the characters carry the selection colour.
+                        let bg = if selected && chars.is_none() {
                             Some(p.selection)
                         } else if let Some(t) = tint {
                             Some(t.resolve(&p))
@@ -595,11 +620,20 @@ impl Element for LogViewElement {
                             // look at the marks in the visible byte window.
                             let visible = window.content_mask().bounds;
                             let box_h = text.box_height();
-                            let geometry = (!marks.is_empty() || !outlines.is_empty()).then(|| {
+                            let geometry = (!marks.is_empty() || !outlines.is_empty() || chars.is_some()).then(|| {
                                 let geometry = text.geometry();
                                 let bytes = geometry.visible_bytes(Bounds::new(visible.origin - origin, visible.size), row_h);
                                 (geometry, bytes)
                             });
+                            // Selected characters fill the whole visual-line height, under the hit marks.
+                            if let (Some(range), Some((geometry, _))) = (&chars, &geometry) {
+                                geometry.boxes(range, |(visual, x0, x1)| {
+                                    let b = Bounds::new(point(origin.x + x0, origin.y + row_h * visual as f32), gsize(x1 - x0, row_h));
+                                    if b.intersects(&visible) {
+                                        window.paint_quad(fill(b, p.selection));
+                                    }
+                                });
+                            }
                             if let Some((geometry, bytes)) = &geometry {
                                 for (range, color) in in_window(marks, |m| &m.0, bytes) {
                                     geometry.boxes(range, |b| {
@@ -657,14 +691,24 @@ impl Element for LogViewElement {
             cx.stop_propagation();
         });
 
-        let targets: Vec<(Hitbox, usize, u64)> = pre
-            .rows
-            .iter()
-            .filter_map(|r| match r.body {
-                RowBody::Line { number, .. } => Some((r.hitbox.clone(), r.row, number)),
-                RowBody::Gap(_) => None,
-            })
-            .collect();
+        let targets: Rc<Vec<TextTarget>> = Rc::new(
+            pre.rows
+                .iter()
+                .filter_map(|r| match &r.body {
+                    RowBody::Line { number, pinned, text, .. } => Some(TextTarget {
+                        hitbox: r.hitbox.clone(),
+                        row: r.row,
+                        number: *number,
+                        pinned: *pinned,
+                        display: text.text(),
+                        origin: point(pre.text_left - pre.scroll_x, r.bounds.top()),
+                    }),
+                    RowBody::Gap(_) => None,
+                })
+                .collect(),
+        );
+        let mono = font(pre.theme.fonts.log.clone());
+        let (font_size, wrap_width, text_color, text_left) = (m.log_font_size, pre.wrap_width, p.log_text, pre.text_left);
         let vthumb = pre.thumb;
         let hbar = pre.hbar;
         // A hidden horizontal bar has no click area: the bottom row stays fully clickable.
@@ -677,6 +721,7 @@ impl Element for LogViewElement {
         let hitbox = pre.hitbox.clone();
         let focus = self.focus.clone();
         let down_targets = targets.clone();
+        let down_font = mono.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left || !hitbox.is_hovered(window) {
                 return;
@@ -712,9 +757,12 @@ impl Element for LogViewElement {
                 cx.stop_propagation();
                 return;
             }
-            if let Some((hb, row, number)) = down_targets.iter().find(|(hb, _, _)| hb.is_hovered(window)) {
-                let in_gutter = e.position.x < hb.bounds.left() + px(size::GUTTER_PIN_W);
-                let (row, number, shift) = (*row, *number, e.modifiers.shift);
+            if let Some(t) = down_targets.iter().find(|t| t.hitbox.is_hovered(window)) {
+                let in_gutter = e.position.x < t.hitbox.bounds.left() + px(size::GUTTER_PIN_W);
+                let (row, number, shift) = (t.row, t.number, e.modifiers.shift);
+                // A plain press on the text may start a character selection; the number gutter never does.
+                let anchor = (!in_gutter && !shift && e.position.x >= text_left)
+                    .then(|| closest_index(&t.display, e.position - t.origin, &down_font, font_size, wrap_width, row_h, text_color, window));
                 state.update(cx, |s, cx| {
                     if in_gutter {
                         cx.emit(LogViewEvent::TogglePin { number });
@@ -724,7 +772,7 @@ impl Element for LogViewElement {
                         } else {
                             s.set_selected(Some(number), cx);
                         }
-                        s.drag = Some(Drag::Select);
+                        s.drag = Some(Drag::Select { chars: anchor.map(|a| (number, a)) });
                         cx.emit(LogViewEvent::Selected { row, number });
                     }
                     cx.notify();
@@ -738,6 +786,8 @@ impl Element for LogViewElement {
         let state = self.state.clone();
         let panel = pre.hitbox.clone();
         let has_hbar = pre.hbar.is_some();
+        let move_targets = targets.clone();
+        let move_font = mono.clone();
         window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -765,18 +815,34 @@ impl Element for LogViewElement {
                             });
                         }
                     }
-                    Drag::Select => {
-                        if let Some((_, row, number)) = targets.iter().find(|(hb, _, _)| hb.is_hovered(window)) {
-                            let (row, number) = (*row, *number);
-                            state.update(cx, |s, cx| {
-                                if s.selected != Some(number) {
-                                    s.extend_selection(number, cx);
-                                    cx.emit(LogViewEvent::Selected { row, number });
-                                }
-                            });
+                    Drag::Select { chars } => {
+                        if let Some(t) = move_targets.iter().find(|t| t.hitbox.is_hovered(window)) {
+                            let (row, number) = (t.row, t.number);
+                            if let Some((start, anchor)) = chars
+                                && start == number
+                            {
+                                // Still inside the start row: select characters.
+                                let head = closest_index(&t.display, e.position - t.origin, &move_font, font_size, wrap_width, row_h, text_color, window);
+                                state.update(cx, |s, cx| s.set_char_selection(number, anchor, head, cx));
+                            } else {
+                                // Another row: whole rows until release.
+                                state.update(cx, |s, cx| {
+                                    s.drag = Some(Drag::Select { chars: None });
+                                    s.clear_char_selection(cx);
+                                    if s.selected != Some(number) {
+                                        s.extend_selection(number, cx);
+                                        cx.emit(LogViewEvent::Selected { row, number });
+                                    }
+                                });
+                            }
                         } else if e.position.y < track_top || e.position.y > track_bottom {
                             let down = e.position.y > track_bottom;
-                            state.update(cx, |s, cx| s.autoscroll_select(down, cx));
+                            state.update(cx, |s, cx| {
+                                // Leaving the panel leaves the start row: autoscroll extends whole rows.
+                                s.drag = Some(Drag::Select { chars: None });
+                                s.clear_char_selection(cx);
+                                s.autoscroll_select(down, cx);
+                            });
                         }
                     }
                 }
@@ -810,23 +876,7 @@ impl Element for LogViewElement {
             }
         });
 
-        let menu_targets: Vec<MenuTarget> = pre
-            .rows
-            .iter()
-            .filter_map(|r| match &r.body {
-                RowBody::Line { number, pinned, text, .. } => Some(MenuTarget {
-                    hitbox: r.hitbox.clone(),
-                    row: r.row,
-                    number: *number,
-                    pinned: *pinned,
-                    display: text.text(),
-                    origin: point(pre.text_left - pre.scroll_x, r.bounds.top()),
-                }),
-                RowBody::Gap(_) => None,
-            })
-            .collect();
-        let mono = font(pre.theme.fonts.log.clone());
-        let (font_size, wrap_width, text_color, text_left) = (m.log_font_size, pre.wrap_width, p.log_text, pre.text_left);
+        let menu_targets = targets;
         let state = self.state.clone();
         let focus = self.focus.clone();
         let panel = pre.hitbox.clone();
