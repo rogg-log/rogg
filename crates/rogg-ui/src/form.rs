@@ -516,15 +516,17 @@ impl RenderOnce for CustomColor {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
         let fill = self.state.read(cx).value().map(Color::from_hsla);
-        let ink = pen_ink(fill.unwrap_or(p.raised), p.text);
+        let shown = fill.unwrap_or(p.raised);
+        let ink = pen_ink(shown, p.text);
         let pen_id = SharedString::from(format!("{}-pen", self.id));
+        let fill_id = SharedString::from(format!("{}-fill", self.id));
         let trigger = KitIcon::default().path(IconName::Edit.path()).size(px(21.)).text_color(gpui_kit::hsla(0., 0., 0., 0.));
         div()
             .id(self.id)
             .test_support()
             .relative()
             .flex_none()
-            .size(px(21.))
+            // No explicit size: the root measures the kit trigger, so a label or a mis-sized trigger shows in its bounds.
             .child(
                 ColorPicker::new(&self.state)
                     .small()
@@ -533,7 +535,11 @@ impl RenderOnce for CustomColor {
                     .featured_colors(self.featured.iter().map(|c| c.hsla()).collect()),
             )
             .child(
+                // `aria_value` publishes the painted colours (`#rrggbbaa`) so tests can read them back.
                 div()
+                    .id(fill_id)
+                    .test_support()
+                    .aria_value(format!("#{:08x}", shown.0))
                     .absolute()
                     .top_0()
                     .left_0()
@@ -541,11 +547,17 @@ impl RenderOnce for CustomColor {
                     .rounded(px(4.))
                     .border_1()
                     .border_color(p.swatch_border)
-                    .bg(fill.unwrap_or(p.raised))
+                    .bg(shown)
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(div().id(pen_id).test_support().child(icon(IconName::Edit).size(px(11.)).text_color(ink))),
+                    .child(
+                        div()
+                            .id(pen_id)
+                            .test_support()
+                            .aria_value(format!("#{:08x}", ink.0))
+                            .child(icon(IconName::Edit).size(px(11.)).text_color(ink)),
+                    ),
             )
     }
 }

@@ -132,3 +132,135 @@ fn custom_colour_is_a_swatch_sized_square_with_a_pen_and_still_opens_the_picker(
     common::click(cx, w, "rule-custom");
     assert!(cx.read_entity(&state, |s, _| s.is_open()), "clicking the square opens the popover");
 }
+
+/// The square at (20, 20) in an 80x60 host, so clicks just outside it still land on the host.
+fn custom_in_host(
+    cx: &mut TestAppContext,
+    default: Option<gpui_kit::Hsla>,
+) -> (gpui_kit::AnyWindowHandle, gpui_kit::Entity<gpui_kit::component::color_picker::ColorPickerState>) {
+    use gpui_kit::component::color_picker::ColorPickerState;
+    use gpui_kit::TestSupportExt;
+    use rogg_ui::form::CustomColor;
+    common::setup(cx);
+    let slot: Rc<RefCell<Option<gpui_kit::Entity<ColorPickerState>>>> = Rc::default();
+    let s = slot.clone();
+    let w = common::open(cx, 400., 200., move |window, cx| {
+        let state = s
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                cx.new(|cx| {
+                    let st = ColorPickerState::new(window, cx);
+                    match default {
+                        Some(c) => st.default_value(c),
+                        None => st,
+                    }
+                })
+            })
+            .clone();
+        div()
+            .id("host")
+            .test_support()
+            .flex()
+            .items_start()
+            .size(px(80.))
+            .pl(px(20.))
+            .pt(px(20.))
+            .child(CustomColor::new("rule-custom", &state))
+            .into_any_element()
+    });
+    let state = slot.borrow().clone().unwrap();
+    (w, state)
+}
+
+/// A click at `at` (relative to the host) and whether the popover opened; it is closed again afterwards.
+fn click_opens(
+    cx: &mut TestAppContext,
+    w: gpui_kit::AnyWindowHandle,
+    state: &gpui_kit::Entity<gpui_kit::component::color_picker::ColorPickerState>,
+    at: (f32, f32),
+) -> bool {
+    use gpui_kit::point;
+    use gpui_kit::test::TestWindowExt;
+    cx.update_window(w, |_, window, cx| {
+        window.render_frame(cx);
+        window.click_at("host", point(px(at.0), px(at.1)), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let open = cx.read_entity(state, |s, _| s.is_open());
+    cx.update_window(w, |_, window, cx| {
+        state.update(cx, |s, cx| s.set_open(false, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    open
+}
+
+#[gpui_kit::test]
+fn custom_colour_opens_from_its_whole_square_and_only_from_it(cx: &mut TestAppContext) {
+    let (w, state) = custom_in_host(cx, None);
+    // The square spans 20..41 on both axes. Corners and edges, 2 px in, all open the popover.
+    for at in [(22., 22.), (39., 22.), (22., 39.), (39., 39.), (30., 22.), (22., 30.), (39., 30.), (30., 39.)] {
+        assert!(click_opens(cx, w, &state, at), "a click at {at:?} inside the square opens the popover");
+    }
+    // Just outside, and where a text label or a bigger trigger would have been, it does not.
+    for at in [(18., 30.), (30., 18.), (43., 30.), (30., 43.), (60., 30.), (30., 55.)] {
+        assert!(!click_opens(cx, w, &state, at), "a click at {at:?} outside the square must not open the popover");
+    }
+}
+
+#[gpui_kit::test]
+fn custom_colour_shows_the_picked_colour_and_a_contrasting_pen(cx: &mut TestAppContext) {
+    use rogg_ui::form::{pen_ink, PEN_DARK, PEN_LIGHT};
+    use rogg_ui::theme::ActiveRoggTheme;
+    let hex = |c: Color| format!("#{:08x}", c.0);
+    let read = |cx: &mut TestAppContext, w, id: &'static str| {
+        cx.update_window(w, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.find(id).value().map(str::to_string)
+        })
+        .unwrap()
+    };
+    let text = |cx: &mut TestAppContext| cx.update(|cx| cx.rogg().palette.text);
+
+    // A dark picked colour: that fill, light pen.
+    let navy = Color::rgb(0x1a2b4c);
+    let (w, state) = custom_in_host(cx, Some(navy.hsla()));
+    assert_eq!(read(cx, w, "rule-custom-fill"), Some(hex(navy)));
+    assert_eq!(read(cx, w, "rule-custom-pen"), Some(hex(PEN_LIGHT)));
+
+    // Changing the value repaints: a light colour gets the dark pen.
+    let cream = Color::rgb(0xf3e5ab);
+    cx.update_window(w, |_, window, cx| state.update(cx, |s, cx| s.select_color(cream.hsla(), window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(read(cx, w, "rule-custom-fill"), Some(hex(cream)));
+    assert_eq!(read(cx, w, "rule-custom-pen"), Some(hex(PEN_DARK)));
+    assert_eq!(read(cx, w, "rule-custom-pen"), Some(hex(pen_ink(cream, Color::TRANSPARENT))));
+
+    // A mostly transparent colour shows the panel: the pen takes the theme text colour.
+    let ghost = Color::rgb(0xf3e5ab).with_alpha(0x20);
+    cx.update_window(w, |_, window, cx| state.update(cx, |s, cx| s.select_color(ghost.hsla(), window, cx))).unwrap();
+    cx.run_until_parked();
+    let t = text(cx);
+    assert_eq!(read(cx, w, "rule-custom-pen"), Some(hex(t)));
+}
+
+#[gpui_kit::test]
+fn custom_colour_without_a_value_is_a_neutral_square_with_a_visible_pen(cx: &mut TestAppContext) {
+    use rogg_ui::form::pen_ink;
+    use rogg_ui::theme::ActiveRoggTheme;
+    let (w, _) = custom_in_host(cx, None);
+    let (raised, text) = cx.update(|cx| (cx.rogg().palette.raised, cx.rogg().palette.text));
+    let read = |cx: &mut TestAppContext, id: &'static str| {
+        cx.update_window(w, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt;
+            window.render_frame(cx);
+            window.find(id).value().map(str::to_string)
+        })
+        .unwrap()
+    };
+    assert_eq!(read(cx, "rule-custom-fill"), Some(format!("#{:08x}", raised.0)));
+    assert_eq!(read(cx, "rule-custom-pen"), Some(format!("#{:08x}", pen_ink(raised, text).0)));
+}
