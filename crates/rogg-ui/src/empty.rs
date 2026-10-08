@@ -63,6 +63,64 @@ pub fn no_matches(id: impl Into<SharedString>) -> EmptyState {
     EmptyState::new(id, "No matching lines").body("Enable an include filter or pin a line in the full log.")
 }
 
+/// A recent filter in the empty filtered view: its expression and its summary (`2 include · 1 exclude · regex · ±2`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecentFilter {
+    pub expression: SharedString,
+    pub summary: SharedString,
+}
+
+/// `No matching lines`, then up to three recent filters (spec C2); a click applies one. Without any, the view is
+/// `no_matches` unchanged.
+pub fn no_matches_with_recent(id: impl Into<SharedString>, recent: Vec<RecentFilter>, on_pick: IndexCallback) -> EmptyState {
+    let state = no_matches(id);
+    if recent.is_empty() {
+        return state;
+    }
+    state.child(RecentFilters { items: recent, on_pick })
+}
+
+#[derive(IntoElement)]
+struct RecentFilters {
+    items: Vec<RecentFilter>,
+    on_pick: IndexCallback,
+}
+
+impl RenderOnce for RecentFilters {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let t = cx.rogg().clone();
+        let s = t.text_scale();
+        let p = t.palette;
+        let on_pick = self.on_pick;
+        div()
+            .id("recent-filters")
+            .test_support()
+            .mt(px(14.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .w(px(360.))
+            .child(div().px(px(10.)).pb(px(4.)).text_size(s.px(10.)).text_color(p.faint).child("Recent filters"))
+            .children(self.items.into_iter().enumerate().map(move |(i, f)| {
+                let on_pick = on_pick.clone();
+                div()
+                    .id(SharedString::from(format!("recent-filter-{i}")))
+                    .test_support()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .px(px(10.))
+                    .py(px(7.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(p.hover))
+                    .child(div().truncate().font_family(t.fonts.mono.clone()).text_size(s.px(12.)).text_color(p.text).child(f.expression))
+                    .child(div().text_size(s.px(10.)).text_color(p.muted).child(f.summary))
+                    .on_click(move |_, w, cx| on_pick(i, w, cx))
+            }))
+    }
+}
+
 pub fn welcome(recent: Vec<RecentItem>, on_open_file: Callback, on_open_folder: Callback, on_recent: IndexCallback) -> EmptyState {
     let mut state = EmptyState::new("welcome", "Open a log to start")
         .body("Drop files, folders or archives here, or pipe into rogg from a terminal.")

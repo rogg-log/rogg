@@ -8,6 +8,15 @@ use std::path::Path;
 
 pub const HISTORY_LIMIT: usize = 100;
 
+/// Recent filters offered in the empty filtered view.
+pub const RECENT_IN_EMPTY_VIEW: usize = 3;
+
+/// Up to `n` entries, newest first, without the one equal to `current` (the filter already applied).
+pub fn recent_except(entries: &[HistoryEntry], current: &FilterSpec, n: usize) -> Vec<HistoryEntry> {
+    let current = HistoryEntry::from_spec(current);
+    entries.iter().filter(|e| **e != current).take(n).cloned().collect()
+}
+
 /// Optional fields default when missing so older or hand-edited history files still load.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -125,6 +134,18 @@ mod tests {
 
     fn entry(expr: &str) -> HistoryEntry {
         HistoryEntry::from_spec(&FilterSpec::from_expression(expr))
+    }
+
+    #[test]
+    fn recent_except_skips_the_current_filter_and_keeps_the_newest() {
+        let mut h = History::default();
+        for e in ["a", "b", "c", "d", "e"] {
+            h.record(entry(e));
+        }
+        let names = |v: Vec<HistoryEntry>| v.iter().map(HistoryEntry::expression).collect::<Vec<_>>();
+        assert_eq!(names(recent_except(h.entries(), &entry("e").to_spec(), 3)), ["d", "c", "b"], "newest first, current skipped");
+        assert_eq!(names(recent_except(h.entries(), &entry("zzz").to_spec(), 3)), ["e", "d", "c"]);
+        assert!(recent_except(&[entry("only")], &entry("only").to_spec(), 3).is_empty());
     }
 
     #[test]

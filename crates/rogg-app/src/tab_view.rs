@@ -3,14 +3,16 @@
 
 use crate::actions::FILTER_CONTEXT;
 use crate::document::{LoadState, Pane, Source};
+use crate::history::HistoryStore;
 use crate::tab::{Tab, TabEvent};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Context, Entity, SharedString, Window, div};
-use rogg_core::filter::TermState;
+use rogg_core::filter::{FilterSpec, TermState};
+use rogg_core::history::{HistoryEntry, RECENT_IN_EMPTY_VIEW, recent_except};
 use rogg_core::stats::{FilterStats, group_digits, noun};
 use rogg_ui::chrome::{InfoBar, PaneHeader, Progress, StatPart, StatusBar};
 use rogg_ui::controls::{FindField, ToolButton};
-use rogg_ui::empty;
+use rogg_ui::empty::{self, RecentFilter};
 use rogg_ui::filter::{ChipState, FilterBand};
 use rogg_ui::icons::IconName;
 use rogg_ui::logview::LogView;
@@ -160,7 +162,19 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
             let band = div().track_focus(&t.focus[1]).when(t.editing.is_none(), |d| d.key_context(FILTER_CONTEXT)).child(band).into_any_element();
             let top_body = LogView::new("log-top", t.full.clone()).focus(t.focus[0].clone()).into_any_element();
             let bottom_body = if shown == 0 && d.filter.progress.is_none() {
-                empty::no_matches("empty-results").into_any_element()
+                // Only the few entries the view can show are copied out of the global history.
+                let recent = cx
+                    .try_global::<HistoryStore>()
+                    .map(|h| recent_except(h.entries(), &d.filter.spec, RECENT_IN_EMPTY_VIEW))
+                    .unwrap_or_default();
+                let items = recent.iter().map(|e| RecentFilter { expression: e.expression().into(), summary: e.summary().into() }).collect();
+                let specs: Vec<FilterSpec> = recent.iter().map(HistoryEntry::to_spec).collect();
+                let pick = tab_act_ix(tab, move |t, i, _, cx| {
+                    if let Some(spec) = specs.get(i).cloned() {
+                        let _ = t.doc.update(cx, |d, cx| d.apply_spec(spec, cx));
+                    }
+                });
+                empty::no_matches_with_recent("empty-results", items, Rc::new(pick)).into_any_element()
             } else {
                 LogView::new("log-bottom", t.filtered.clone()).focus(t.focus[2].clone()).into_any_element()
             };

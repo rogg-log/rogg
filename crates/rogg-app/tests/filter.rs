@@ -314,3 +314,29 @@ fn one_view_build_runs_at_a_time_and_the_newest_state_wins(cx: &mut TestAppConte
     assert_eq!(context, 800, "the final view has the newest context");
     assert!((1..=2).contains(&builds), "one build in flight plus one for the newest state, not one per request ({builds})");
 }
+
+#[gpui_kit::test]
+fn the_empty_filtered_view_offers_recent_filters(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let log = common::write_log(dir.path(), "a.log", &["alpha one", "beta two"]);
+    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log] });
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    let doc = tab.read_with(cx, |t, _| t.doc.clone());
+    let apply = |cx: &mut TestAppContext, expr: &str| {
+        doc.update(cx, |d, cx| d.set_expression(expr, cx)).unwrap();
+        common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    };
+    apply(cx, "nothing-here");
+    assert!(common::exists(cx, w, "empty-results"));
+    assert!(!common::exists(cx, w, "recent-filters"), "the only history entry is the current filter");
+    for expr in ["alpha", "beta", "gamma", "zzz"] {
+        apply(cx, expr);
+    }
+    // History, newest first: zzz (current, skipped), gamma, beta, alpha, nothing-here.
+    assert!(common::exists(cx, w, "recent-filter-2") && !common::exists(cx, w, "recent-filter-3"), "at most three");
+    common::click(cx, w, "recent-filter-1");
+    common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.filter.progress.is_none()));
+    assert_eq!(doc.read_with(cx, |d, _| d.filter.spec.expression()), "beta");
+    assert!(!common::exists(cx, w, "empty-results"), "beta matches a line");
+}

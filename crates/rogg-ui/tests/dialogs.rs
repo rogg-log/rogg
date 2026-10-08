@@ -142,3 +142,24 @@ fn about_lists_build_data_and_credit_rows(cx: &mut TestAppContext) {
     common::click(cx, w, "about-reveal-1");
     assert_eq!(revealed.get(), Some(1));
 }
+
+#[gpui_kit::test]
+fn no_matches_lists_recent_filters_and_reports_a_pick(cx: &mut TestAppContext) {
+    use rogg_ui::empty::{RecentFilter, no_matches_with_recent};
+    common::setup(cx);
+    let picked = Rc::new(Cell::new(None));
+    let p = picked.clone();
+    let recent = vec![
+        RecentFilter { expression: "error || timeout".into(), summary: "2 include".into() },
+        RecentFilter { expression: "warn".into(), summary: "1 include · regex".into() },
+    ];
+    let w = common::open(cx, 600., 400., move |_, _| {
+        let p = p.clone();
+        no_matches_with_recent("empty-results", recent.clone(), Rc::new(move |i, _, _| p.set(Some(i)))).into_any_element()
+    });
+    assert!(common::exists(cx, w, "recent-filters") && common::exists(cx, w, "recent-filter-1"));
+    common::click(cx, w, "recent-filter-1");
+    assert_eq!(picked.get(), Some(1));
+    let empty = common::open(cx, 600., 400., |_, _| no_matches_with_recent("empty-results", vec![], Rc::new(|_, _, _| {})).into_any_element());
+    assert!(common::exists(cx, empty, "empty-results") && !common::exists(cx, empty, "recent-filters"), "no list without history");
+}
