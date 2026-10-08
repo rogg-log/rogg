@@ -3,7 +3,7 @@
 use crate::cache::{CacheStore, evict_soon};
 use gpui_kit::{App, BorrowAppContext, Global, SharedString, WindowAppearance};
 use rogg_core::settings::{DEFAULT_LOG_FONT, DensitySetting, LOG_FONTS, Settings, ThemeSetting};
-use rogg_ui::theme::{Appearance, Density, MONO_FONT, RoggTheme};
+use rogg_ui::theme::{Appearance, ChromeStyle, Density, JETBRAINS_MONO, MONO_FONT, RoggTheme};
 use std::path::PathBuf;
 
 pub struct SettingsStore {
@@ -70,10 +70,20 @@ pub fn density_for(density: DensitySetting) -> Density {
     }
 }
 
-/// The font family for a log font setting. "SF Mono" is the system monospaced font, whose family name is
-/// `.AppleSystemUIFontMonospaced` (the name "SF Mono" silently falls back to Helvetica in gpui).
-pub fn log_font_family(name: &str) -> SharedString {
-    if name == DEFAULT_LOG_FONT { MONO_FONT.into() } else { SharedString::from(name.to_string()) }
+/// The font family for a log font setting. The default entry ("SF Mono" in the file, so settings carry across
+/// platforms) is the platform's monospaced font: on Mac the system one, whose family name is
+/// `.AppleSystemUIFontMonospaced` (the name "SF Mono" silently falls back to Helvetica in gpui), elsewhere the bundled
+/// JetBrains Mono.
+pub fn log_font_family_for(name: &str, chrome: ChromeStyle) -> SharedString {
+    if name != DEFAULT_LOG_FONT {
+        return SharedString::from(name.to_string());
+    }
+    if chrome.is_mac() { MONO_FONT.into() } else { JETBRAINS_MONO.into() }
+}
+
+/// What the Settings font picker calls the default entry.
+pub fn default_log_font_label(chrome: ChromeStyle) -> &'static str {
+    if chrome.is_mac() { "SF Mono" } else { "JetBrains Mono" }
 }
 
 /// The curated log fonts installed on this Mac, looked up once per run (`all_font_names` lists every installed family:
@@ -108,8 +118,11 @@ fn find_log_fonts(cx: &App) -> Vec<String> {
 /// or a pinned pair).
 pub fn theme_with(settings: &Settings, theme: ThemeSetting, density: DensitySetting, window: WindowAppearance) -> RoggTheme {
     let a = &settings.appearance;
+    let chrome = ChromeStyle::resolved();
+    // The chrome first: it resets the log font to the platform default, which the user's choice then replaces.
     RoggTheme::new(appearance_for(theme, window), density_for(density))
-        .with_log_font(log_font_family(&a.log_font), a.log_font_size as f32)
+        .with_chrome(chrome)
+        .with_log_font(log_font_family_for(&a.log_font, chrome), a.log_font_size as f32)
         .with_ui_font_size(a.ui_font_size as f32)
 }
 
@@ -137,6 +150,16 @@ pub fn apply_cache_limit(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_log_font_token_maps_to_the_platform_mono() {
+        assert_eq!(log_font_family_for(DEFAULT_LOG_FONT, ChromeStyle::Mac).as_ref(), MONO_FONT);
+        assert_eq!(log_font_family_for(DEFAULT_LOG_FONT, ChromeStyle::Linux).as_ref(), JETBRAINS_MONO);
+        assert_eq!(log_font_family_for(DEFAULT_LOG_FONT, ChromeStyle::Windows).as_ref(), JETBRAINS_MONO);
+        assert_eq!(log_font_family_for("Menlo", ChromeStyle::Linux).as_ref(), "Menlo");
+        assert_eq!(default_log_font_label(ChromeStyle::Mac), "SF Mono");
+        assert_eq!(default_log_font_label(ChromeStyle::Linux), "JetBrains Mono");
+    }
 
     #[test]
     fn theme_follows_the_settings() {

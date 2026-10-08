@@ -28,12 +28,19 @@ fn main() {
         .and_then(|s| Page::from_slug(s))
         .unwrap_or(Page::Tokens);
 
+    let chrome = args.iter().position(|a| a == "--chrome").and_then(|i| args.get(i + 1)).map(String::as_str);
+    let chrome = rogg_gallery::capture::parse_chrome(chrome).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+
     gpui_kit::application()
         .with_assets(rogg_ui::assets::Assets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
-            RoggTheme::new(Appearance::Dark, Density::Compact).install(cx);
+            rogg_ui::fonts::register(cx);
+            RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(chrome).install(cx);
             let state = std::env::temp_dir().join(format!("rogg-gallery-{}", std::process::id()));
             rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(&state));
             let bounds = Bounds::centered(None, size(px(1640.), px(1000.)), cx);

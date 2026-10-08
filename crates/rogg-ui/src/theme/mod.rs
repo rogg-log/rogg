@@ -1,8 +1,10 @@
+mod chrome;
 mod color;
 mod kit;
 mod metrics;
 mod palette;
 
+pub use chrome::{CHROME_ENV, ChromeStyle};
 pub use color::Color;
 pub use metrics::{Density, Metrics, size};
 pub use palette::{ChipColor, HitColor, Palette};
@@ -13,6 +15,10 @@ use gpui_kit::{App, Global, Pixels, SharedString, px};
 pub const UI_FONT: &str = ".SystemUIFont";
 /// System monospaced font (SF Mono). The family name "SF Mono" silently falls back to Helvetica in gpui.
 pub const MONO_FONT: &str = ".AppleSystemUIFontMonospaced";
+/// The bundled UI font of the Linux and Windows chrome (registered by `fonts::register`).
+pub const INTER: &str = "Inter";
+/// The bundled monospaced font of the Linux and Windows chrome.
+pub const JETBRAINS_MONO: &str = "JetBrains Mono";
 
 /// UI text sizes relative to the reference's 13 px system font (spec §6.2 "UI font size"); `px(11.)` at 13 px stays 11.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,6 +56,7 @@ pub struct RoggTheme {
     pub palette: Palette,
     pub metrics: Metrics,
     pub fonts: Fonts,
+    pub chrome: ChromeStyle,
 }
 
 impl Global for RoggTheme {}
@@ -66,7 +73,20 @@ impl RoggTheme {
             palette,
             metrics: density.metrics(),
             fonts: Fonts { ui: UI_FONT.into(), mono: MONO_FONT.into(), log: MONO_FONT.into(), ui_size: px(13.) },
+            chrome: ChromeStyle::Mac,
         }
+        .with_chrome(ChromeStyle::current())
+    }
+
+    /// The chrome style and its font pair (SF on Mac; the bundled Inter and JetBrains Mono elsewhere). A custom log
+    /// font (`with_log_font`) set before this is replaced, so call `with_chrome` first.
+    pub fn with_chrome(mut self, chrome: ChromeStyle) -> Self {
+        self.chrome = chrome;
+        let (ui, mono) = if chrome.is_mac() { (UI_FONT, MONO_FONT) } else { (INTER, JETBRAINS_MONO) };
+        self.fonts.ui = ui.into();
+        self.fonts.mono = mono.into();
+        self.fonts.log = mono.into();
+        self
     }
 
     /// The log font family and compact size from the settings (spec §6.2).
@@ -122,6 +142,22 @@ mod tests {
         assert_eq!(t.fonts.mono.as_ref(), MONO_FONT, "chips, dialogs and the gutter keep SF Mono");
         assert_eq!(t.metrics, Density::Compact.metrics_for(14.));
         assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).fonts.log.as_ref(), MONO_FONT);
+    }
+
+    #[test]
+    fn the_font_pair_follows_the_chrome_style() {
+        let mac = RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(ChromeStyle::Mac);
+        assert_eq!((mac.fonts.ui.as_ref(), mac.fonts.mono.as_ref(), mac.fonts.log.as_ref()), (UI_FONT, MONO_FONT, MONO_FONT));
+        for style in [ChromeStyle::Linux, ChromeStyle::Windows] {
+            let t = RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(style);
+            assert_eq!((t.fonts.ui.as_ref(), t.fonts.mono.as_ref(), t.fonts.log.as_ref()), (INTER, JETBRAINS_MONO, JETBRAINS_MONO), "{style:?}");
+            assert_eq!(t.chrome, style);
+        }
+    }
+
+    #[test]
+    fn new_uses_the_build_os_style() {
+        assert_eq!(RoggTheme::new(Appearance::Dark, Density::Compact).chrome, ChromeStyle::current());
     }
 
     #[test]

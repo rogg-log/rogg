@@ -1,7 +1,7 @@
 use crate::gallery::{GalleryView, Page};
 use crate::replica::ReplicaDialog;
 use gpui_kit::{AppContext, Bounds, ElementId, Entity, HeadlessAppContext, Point, Window, WindowBounds, WindowOptions, px, size};
-use rogg_ui::theme::{Appearance, Density, RoggTheme};
+use rogg_ui::theme::{Appearance, ChromeStyle, Density, RoggTheme};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,6 +13,7 @@ pub struct CaptureOptions {
     pub dialog: Option<ReplicaDialog>,
     pub appearance: Appearance,
     pub density: Density,
+    pub chrome: ChromeStyle,
     pub width: f32,
     pub height: f32,
     pub out: PathBuf,
@@ -38,6 +39,7 @@ impl CaptureOptions {
             Some("comfortable") => Density::Comfortable,
             Some(other) => return Err(format!("unknown density `{other}`")),
         };
+        let chrome = parse_chrome(value("--chrome").as_deref())?;
         let (width, height) = match value("--size") {
             None => (1440., 900.),
             Some(s) => {
@@ -46,7 +48,15 @@ impl CaptureOptions {
             }
         };
         let out = PathBuf::from(value("--out").ok_or("--out <png> is required")?);
-        Ok(Self { page, dialog, appearance, density, width, height, out, geometry: value("--geometry").map(PathBuf::from) })
+        Ok(Self { page, dialog, appearance, density, chrome, width, height, out, geometry: value("--geometry").map(PathBuf::from) })
+    }
+}
+
+/// `--chrome mac|linux|windows`; the build OS style when absent.
+pub fn parse_chrome(value: Option<&str>) -> Result<ChromeStyle, String> {
+    match value {
+        None => Ok(ChromeStyle::current()),
+        Some(v) => ChromeStyle::from_env_value(v).ok_or_else(|| format!("unknown chrome `{v}` (mac, linux or windows)")),
     }
 }
 
@@ -101,11 +111,12 @@ pub fn run(opts: CaptureOptions) -> anyhow::Result<()> {
         Arc::new(rogg_ui::assets::Assets),
         gpui_kit::platform::current_headless_renderer,
     );
-    let (appearance, density) = (opts.appearance, opts.density);
+    let (appearance, density, chrome) = (opts.appearance, opts.density, opts.chrome);
     let app_state = if opts.page == Page::App { Some(seed_app_state()?) } else { None };
     cx.update(|cx| {
         gpui_kit::init(cx);
-        RoggTheme::new(appearance, density).install(cx);
+        rogg_ui::fonts::register(cx);
+        RoggTheme::new(appearance, density).with_chrome(chrome).install(cx);
         if let Some(dir) = &app_state {
             rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(dir.path()));
         }
@@ -164,6 +175,10 @@ mod tests {
         assert_eq!((o.page, o.appearance, o.density, o.width, o.height), (Page::Replica, Appearance::Dark, Density::Compact, 1440., 900.));
         let o = CaptureOptions::parse(&args("--capture tabs --theme light --density comfortable --size 800x600 --dialog history --out b.png --geometry b.json")).unwrap();
         assert_eq!((o.appearance, o.density, o.width, o.dialog), (Appearance::Light, Density::Comfortable, 800., Some(ReplicaDialog::History)));
+        assert_eq!(o.chrome, ChromeStyle::current());
+        let o = CaptureOptions::parse(&args("--capture tabs --chrome linux --out c.png")).unwrap();
+        assert_eq!(o.chrome, ChromeStyle::Linux);
+        assert!(CaptureOptions::parse(&args("--capture tabs --chrome bsd --out c.png")).unwrap_err().contains("unknown chrome"));
         assert!(CaptureOptions::parse(&args("--capture nope --out x.png")).unwrap_err().contains("unknown page"));
         assert!(CaptureOptions::parse(&args("--capture tabs")).unwrap_err().contains("--out"));
     }

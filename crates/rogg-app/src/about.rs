@@ -27,7 +27,7 @@ pub fn describe(commit: Option<&'static str>, date: Option<&'static str>, rustc:
 }
 
 /// The main open-source crates and their licenses, copied from each crate's manifest on 2026-10-08.
-pub const CREDITS: [(&str, &str); 14] = [
+pub const CREDITS: [(&str, &str); 16] = [
     ("gpui-kit", "Apache-2.0"),
     ("regex", "MIT OR Apache-2.0"),
     ("aho-corasick", "Unlicense OR MIT"),
@@ -42,6 +42,8 @@ pub const CREDITS: [(&str, &str); 14] = [
     ("serde", "MIT OR Apache-2.0"),
     ("serde_json", "MIT OR Apache-2.0"),
     ("toml", "MIT OR Apache-2.0"),
+    ("Inter (font)", "OFL-1.1"),
+    ("JetBrains Mono (font)", "OFL-1.1"),
 ];
 
 /// The folders the About dialog offers to show in Finder: the one holding settings, profiles, session, history and
@@ -82,7 +84,7 @@ mod tests {
         let names: Vec<&str> = CREDITS.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            ["gpui-kit", "regex", "aho-corasick", "memchr", "memmap2", "rayon", "notify", "flate2", "zip", "tar", "encoding_rs", "serde", "serde_json", "toml"]
+            ["gpui-kit", "regex", "aho-corasick", "memchr", "memmap2", "rayon", "notify", "flate2", "zip", "tar", "encoding_rs", "serde", "serde_json", "toml", "Inter (font)", "JetBrains Mono (font)"]
         );
         assert!(CREDITS.iter().all(|(_, license)| !license.is_empty()));
     }

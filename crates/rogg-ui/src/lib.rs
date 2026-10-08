@@ -5,6 +5,7 @@ extern crate gpui_kit as gpui;
 
 pub mod theme;
 pub mod assets;
+pub mod fonts;
 pub mod icons;
 
 pub use theme::{ActiveRoggTheme, RoggTheme};

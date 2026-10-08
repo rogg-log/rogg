@@ -4,6 +4,7 @@ use std::borrow::Cow;
 #[derive(rust_embed::RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
+#[include = "fonts/**/*.ttf"]
 struct Embedded;
 
 /// rogg's icons first, then gpui-kit's default icons. The kit source errors on unknown paths, so it must come last.

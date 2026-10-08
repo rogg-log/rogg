@@ -47,6 +47,7 @@ pub fn run(args: args::Args) {
 /// Full initialisation: gpui-kit, the default theme, app globals and key bindings, menus.
 pub fn init_with(cx: &mut App, paths: AppPaths) {
     gpui_kit::init(cx);
+    rogg_ui::fonts::register(cx);
     let settings = settings::SettingsStore::load(paths.settings.clone());
     settings::theme_for(settings.settings(), cx.window_appearance()).install(cx);
     cx.set_global(settings);
