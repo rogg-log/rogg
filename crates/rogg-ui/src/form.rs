@@ -5,6 +5,7 @@ use crate::controls::pressed;
 use crate::theme::{ActiveRoggTheme, Color};
 use crate::Callback;
 use gpui_kit::component::Sizable;
+use gpui_kit::component::color_picker::{ColorPicker, ColorPickerState};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, FontWeight, SharedString, TestSupportExt, Window, div, px};
@@ -464,5 +465,37 @@ impl RenderOnce for PaletteSlot {
             .cursor_pointer()
             .child(format!("term {}", self.index + 1));
         stop(el, self.on_click)
+    }
+}
+
+/// The `Custom…` swatch (spec C1): gpui-kit's colour picker in a popover — the preset colours as featured colours,
+/// the kit palette, hue, saturation, lightness and alpha sliders, and a hex field. Styled by the kit theme mirror.
+#[derive(IntoElement)]
+pub struct CustomColor {
+    id: SharedString,
+    state: Entity<ColorPickerState>,
+    featured: Vec<Color>,
+}
+
+impl CustomColor {
+    pub fn new(id: impl Into<SharedString>, state: &Entity<ColorPickerState>) -> Self {
+        Self { id: id.into(), state: state.clone(), featured: vec![] }
+    }
+
+    pub fn featured(mut self, colors: Vec<Color>) -> Self {
+        self.featured = colors;
+        self
+    }
+}
+
+impl RenderOnce for CustomColor {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        div().id(self.id).test_support().flex_none().child(
+            ColorPicker::new(&self.state)
+                .small()
+                .label("Custom…")
+                .accessibility_label("Custom colour")
+                .featured_colors(self.featured.iter().map(|c| c.hsla()).collect()),
+        )
     }
 }

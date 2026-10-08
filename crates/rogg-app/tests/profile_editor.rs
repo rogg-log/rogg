@@ -351,3 +351,31 @@ fn profiles_import_and_export(cx: &mut TestAppContext) {
     f.editor.update(cx, |e, cx| e.import_profile_from(&out, cx));
     f.ws.read_with(cx, |ws, _| assert!(ws.toasts.iter().any(|(_, t)| t.contains("shared.roggprofile")), "{:?}", ws.toasts));
 }
+
+#[gpui_kit::test]
+fn custom_colours_are_written_as_hex_and_applied(cx: &mut TestAppContext) {
+    use gpui_kit::rgba;
+    let f = open_editor(cx);
+    common::click(cx, f.w, "profile-duplicate"); // "Default copy": an editable profile with rules
+    let name = f.editor.read_with(cx, |e, _| e.profile_name().to_string());
+    cx.update_window(f.w, |_, window, cx| f.editor.update(cx, |e, cx| e.select_rule(Some(0), window, cx))).unwrap();
+    let [color, light] = f.editor.read_with(cx, |e, _| e.rule_pickers()).expect("the rule form has pickers");
+    cx.update_window(f.w, |_, window, cx| color.update(cx, |p, cx| p.select_color(rgba(0x336699ff).into(), window, cx))).unwrap();
+    cx.update_window(f.w, |_, window, cx| light.update(cx, |p, cx| p.select_color(rgba(0x33669980).into(), window, cx))).unwrap();
+    cx.run_until_parked();
+    let rule = cx.update(|cx| cx.global::<ProfileStore>().get(&name).rules[0].clone());
+    assert_eq!(rule.color.0, "#336699");
+    assert_eq!(rule.light.map(|l| l.0).as_deref(), Some("#33669980"), "alpha below 1 is kept as #rrggbbaa");
+    let (_, color_input, _) = f.editor.read_with(cx, |e, _| e.rule_inputs()).unwrap();
+    assert_eq!(color_input.read_with(cx, |i, _| i.value().to_string()), "#336699", "the hex field shows the picked colour");
+
+    cx.update_window(f.w, |_, window, cx| f.editor.update(cx, |e, cx| e.select_slot(Some(0), window, cx))).unwrap();
+    let [fg, bg, _, light_bg] = f.editor.read_with(cx, |e, _| e.slot_pickers()).expect("the slot form has pickers");
+    for (picker, value) in [(&fg, 0x112233ff_u32), (&bg, 0x445566ff), (&light_bg, 0x778899ff)] {
+        cx.update_window(f.w, |_, window, cx| picker.update(cx, |p, cx| p.select_color(rgba(value).into(), window, cx))).unwrap();
+    }
+    cx.run_until_parked();
+    let slot = cx.update(|cx| cx.global::<ProfileStore>().get(&name).hit_palette[0].clone());
+    assert_eq!((slot.fg.0.as_str(), slot.bg.0.as_str()), ("#112233", "#445566"));
+    assert_eq!(slot.light_bg.map(|c| c.0).as_deref(), Some("#778899"));
+}

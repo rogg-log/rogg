@@ -89,3 +89,16 @@ fn palette_slots_are_clickable(cx: &mut TestAppContext) {
     common::click(cx, w, "palette-slot-2");
     assert_eq!(*events.borrow(), ["slot"]);
 }
+
+#[gpui_kit::test]
+fn custom_colour_renders_a_picker_trigger(cx: &mut TestAppContext) {
+    use gpui_kit::component::color_picker::ColorPickerState;
+    use rogg_ui::form::CustomColor;
+    common::setup(cx);
+    let slot: Rc<RefCell<Option<gpui_kit::Entity<ColorPickerState>>>> = Rc::default();
+    let w = common::open(cx, 400., 200., move |window, cx| {
+        let state = slot.borrow_mut().get_or_insert_with(|| cx.new(|cx| ColorPickerState::new(window, cx))).clone();
+        CustomColor::new("rule-custom", &state).featured(vec![Color::rgb(0xff0000)]).into_any_element()
+    });
+    assert!(common::exists(cx, w, "rule-custom"));
+}

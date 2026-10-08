@@ -4,6 +4,7 @@
 
 use crate::profiles::{ProfileStore, RowStyler};
 use crate::tab::Tab;
+use gpui_kit::component::color_picker::{ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, BorrowAppContext, Context, Entity, EventEmitter, SharedString, Subscription, TestSupportExt, WeakEntity, Window, div, px};
@@ -12,8 +13,8 @@ use rogg_core::profile::{
 };
 use rogg_ui::controls::{ActionButton, CompactSelect, FlagButton, Segmented};
 use rogg_ui::dialogs::DialogFrame;
-use rogg_ui::form::{EditableRuleRow, PaletteSlot, SectionLabel, Swatch, TextField};
-use rogg_ui::theme::ActiveRoggTheme;
+use rogg_ui::form::{CustomColor, EditableRuleRow, PaletteSlot, SectionLabel, Swatch, TextField};
+use rogg_ui::theme::{ActiveRoggTheme, Appearance, Color};
 use std::path::Path;
 
 pub enum ProfileEditorEvent {
@@ -36,6 +37,9 @@ pub struct ProfileEditor {
     rule_inputs: Option<([Entity<InputState>; 3], Vec<Subscription>)>,
     /// Foreground, background and their light overrides of the selected palette slot.
     slot_inputs: Option<([Entity<InputState>; 4], Vec<Subscription>)>,
+    /// The `Custom…` pickers of the selected rule (colour, light override) and palette slot (fg, bg, light fg, light bg).
+    rule_pickers: Option<([Entity<ColorPickerState>; 2], Vec<Subscription>)>,
+    slot_pickers: Option<([Entity<ColorPickerState>; 4], Vec<Subscription>)>,
     color_error: bool,
 }
 
@@ -49,7 +53,7 @@ fn ed(this: &Entity<ProfileEditor>, f: impl Fn(&mut ProfileEditor, &mut Window, 
 
 impl ProfileEditor {
     pub fn new(tab: Option<WeakEntity<Tab>>, profile: String) -> Self {
-        Self { tab, profile, selected_rule: None, selected_slot: None, rename: None, rename_error: None, rule_inputs: None, slot_inputs: None, color_error: false }
+        Self { tab, profile, selected_rule: None, selected_slot: None, rename: None, rename_error: None, rule_inputs: None, slot_inputs: None, rule_pickers: None, slot_pickers: None, color_error: false }
     }
 
     pub fn profile_name(&self) -> &str {
@@ -89,6 +93,8 @@ impl ProfileEditor {
         self.rename_error = None;
         self.rule_inputs = None;
         self.slot_inputs = None;
+        self.rule_pickers = None;
+        self.slot_pickers = None;
         self.color_error = false;
         if let Some(tab) = self.tab.as_ref().and_then(WeakEntity::upgrade) {
             let name = SharedString::from(name.to_string());
@@ -229,36 +235,99 @@ impl ProfileEditor {
                     }
                 }),
                 cx.subscribe_in(&color, window, |e, input, ev: &InputEvent, _, cx| {
-                    if let (InputEvent::Change, Some(i)) = (ev, e.selected_rule) {
-                        let spec = ColorSpec(input.read(cx).value().trim().to_string());
-                        e.color_error = spec.parse().is_none();
-                        if !e.color_error {
-                            e.edit(cx, |p| {
-                                if let Some(r) = p.rules.get_mut(i) {
-                                    r.color = spec;
-                                }
-                            });
-                        }
-                        cx.notify();
+                    if let InputEvent::Change = ev {
+                        let text = input.read(cx).value().to_string();
+                        e.apply_rule_color(text, cx);
                     }
                 }),
                 cx.subscribe_in(&light, window, |e, input, ev: &InputEvent, _, cx| {
-                    if let (InputEvent::Change, Some(i)) = (ev, e.selected_rule) {
-                        let text = input.read(cx).value().trim().to_string();
-                        let spec = (!text.is_empty()).then_some(ColorSpec(text));
-                        if spec.as_ref().is_none_or(|s| s.parse().is_some()) {
-                            e.edit(cx, |p| {
-                                if let Some(r) = p.rules.get_mut(i) {
-                                    r.light = spec;
-                                }
-                            });
-                        }
+                    if let InputEvent::Change = ev {
+                        let text = input.read(cx).value().to_string();
+                        e.apply_rule_light(text, cx);
                     }
                 }),
             ];
             ([pattern, color, light], subs)
         });
+        self.rule_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).rules.get(i).cloned()).map(|rule| {
+            let (p, appearance) = (cx.rogg().palette, cx.rogg().appearance);
+            let current = [
+                crate::profiles::resolve_color(&rule.color, None, false, &p, appearance),
+                crate::profiles::resolve_color(&rule.color, rule.light.as_ref(), false, &p, Appearance::Light),
+            ];
+            let pickers = current.map(|c| cx.new(|cx| ColorPickerState::new(window, cx).default_value(c.hsla())));
+            let subs = pickers
+                .iter()
+                .enumerate()
+                .map(|(field, picker)| {
+                    cx.subscribe_in(picker, window, move |e, _, ev: &ColorPickerEvent, window, cx| {
+                        let ColorPickerEvent::Change(Some(h)) = ev else { return };
+                        let hex = ColorSpec::hex(Color::from_hsla(*h).0).0;
+                        if let Some(([_, color, light], _)) = &e.rule_inputs {
+                            let input = if field == 0 { color } else { light };
+                            input.update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
+                        }
+                        if field == 0 {
+                            e.apply_rule_color(hex, cx)
+                        } else {
+                            e.apply_rule_light(hex, cx)
+                        }
+                    })
+                })
+                .collect();
+            (pickers, subs)
+        });
         cx.notify();
+    }
+
+    /// The rule colour field's text changed: a token or hex colour is saved, anything else flags the field.
+    fn apply_rule_color(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some(i) = self.selected_rule else { return };
+        let spec = ColorSpec(text.trim().to_string());
+        self.color_error = spec.parse().is_none();
+        if !self.color_error {
+            self.edit(cx, |p| {
+                if let Some(r) = p.rules.get_mut(i) {
+                    r.color = spec;
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    /// The rule's light-theme override changed: empty clears it, a valid colour is saved.
+    fn apply_rule_light(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some(i) = self.selected_rule else { return };
+        let text = text.trim().to_string();
+        let spec = (!text.is_empty()).then_some(ColorSpec(text));
+        if spec.as_ref().is_none_or(|s| s.parse().is_some()) {
+            self.edit(cx, |p| {
+                if let Some(r) = p.rules.get_mut(i) {
+                    r.light = spec;
+                }
+            });
+        }
+    }
+
+    /// A palette-slot field changed (0 fg, 1 bg, 2 light fg, 3 light bg): valid colours are saved; the light fields may
+    /// be empty (derived).
+    fn apply_slot_field(&mut self, field: usize, text: String, cx: &mut Context<Self>) {
+        let Some(slot) = self.selected_slot else { return };
+        let text = text.trim().to_string();
+        let spec = ColorSpec(text.clone());
+        let optional = field >= 2;
+        if !(spec.parse().is_some() || (optional && text.is_empty())) {
+            return;
+        }
+        self.edit(cx, |p| {
+            let Some(h) = p.hit_palette.get_mut(slot) else { return };
+            match field {
+                0 => h.fg = spec,
+                1 => h.bg = spec,
+                2 => h.light_fg = (!text.is_empty()).then_some(spec),
+                _ => h.light_bg = (!text.is_empty()).then_some(spec),
+            }
+        });
     }
 
     /// Selects palette slot `i` and opens its colour form (with fresh inputs showing its values).
@@ -279,32 +348,55 @@ impl ProfileEditor {
                 .enumerate()
                 .map(|(field, input)| {
                     cx.subscribe_in(input, window, move |e, input, ev: &InputEvent, _, cx| {
-                        let (InputEvent::Change, Some(slot)) = (ev, e.selected_slot) else { return };
-                        let text = input.read(cx).value().trim().to_string();
-                        let spec = ColorSpec(text.clone());
-                        let optional = field >= 2;
-                        if !(spec.parse().is_some() || (optional && text.is_empty())) {
-                            return;
+                        if let InputEvent::Change = ev {
+                            let text = input.read(cx).value().to_string();
+                            e.apply_slot_field(field, text, cx);
                         }
-                        e.edit(cx, |p| {
-                            let Some(h) = p.hit_palette.get_mut(slot) else { return };
-                            match field {
-                                0 => h.fg = spec,
-                                1 => h.bg = spec,
-                                2 => h.light_fg = (!text.is_empty()).then_some(spec),
-                                _ => h.light_bg = (!text.is_empty()).then_some(spec),
-                            }
-                        });
                     })
                 })
                 .collect();
             (inputs, subs)
+        });
+        self.slot_pickers = i.and_then(|i| cx.global::<ProfileStore>().get(&self.profile).hit_palette.get(i).cloned()).map(|h| {
+            let (p, appearance) = (cx.rogg().palette, cx.rogg().appearance);
+            let current = [
+                crate::profiles::resolve_color(&h.fg, None, false, &p, appearance),
+                crate::profiles::resolve_color(&h.bg, None, true, &p, appearance),
+                crate::profiles::resolve_color(&h.fg, h.light_fg.as_ref(), false, &p, Appearance::Light),
+                crate::profiles::resolve_color(&h.bg, h.light_bg.as_ref(), true, &p, Appearance::Light),
+            ];
+            let pickers = current.map(|c| cx.new(|cx| ColorPickerState::new(window, cx).default_value(c.hsla())));
+            let subs = pickers
+                .iter()
+                .enumerate()
+                .map(|(field, picker)| {
+                    cx.subscribe_in(picker, window, move |e, _, ev: &ColorPickerEvent, window, cx| {
+                        let ColorPickerEvent::Change(Some(c)) = ev else { return };
+                        let hex = ColorSpec::hex(Color::from_hsla(*c).0).0;
+                        if let Some((inputs, _)) = &e.slot_inputs {
+                            inputs[field].update(cx, |i, cx| i.set_value(hex.clone(), window, cx));
+                        }
+                        e.apply_slot_field(field, hex, cx);
+                    })
+                })
+                .collect();
+            (pickers, subs)
         });
         cx.notify();
     }
 
     pub fn rule_inputs(&self) -> Option<(Entity<InputState>, Entity<InputState>, Entity<InputState>)> {
         self.rule_inputs.as_ref().map(|([p, c, l], _)| (p.clone(), c.clone(), l.clone()))
+    }
+
+    /// The `Custom…` pickers of the rule form: colour and light-theme override.
+    pub fn rule_pickers(&self) -> Option<[Entity<ColorPickerState>; 2]> {
+        self.rule_pickers.as_ref().map(|(pickers, _)| pickers.clone())
+    }
+
+    /// The `Custom…` pickers of the slot form: foreground, background, light foreground and light background.
+    pub fn slot_pickers(&self) -> Option<[Entity<ColorPickerState>; 4]> {
+        self.slot_pickers.as_ref().map(|(pickers, _)| pickers.clone())
     }
 
     pub fn slot_inputs(&self) -> Option<[Entity<InputState>; 4]> {
@@ -464,6 +556,7 @@ fn form_line(label: &'static str, cx: &App) -> gpui_kit::Div {
 impl ProfileEditor {
     fn rule_form(&self, i: usize, rule: &LineRule, this: &Entity<Self>, cx: &App) -> gpui_kit::AnyElement {
         let Some(([pattern, color, light], _)) = &self.rule_inputs else { return div().into_any_element() };
+        let Some(([color_picker, light_picker], _)) = &self.rule_pickers else { return div().into_any_element() };
         let p = cx.rogg().palette;
         let has_error = cx.global::<ProfileStore>().errors(&self.profile).iter().any(|e| e.rule == i);
         let flag = |id: &'static str, label: &'static str, on: bool, f: fn(&mut LineRule)| {
@@ -479,6 +572,8 @@ impl ProfileEditor {
             Some(ColorValue::Rgba(v)) => format!("auto · {}", ColorSpec::hex(derive_light(v, false)).0),
             _ => "follows the theme".to_string(),
         };
+        let featured: Vec<Color> =
+            SWATCH_TOKENS.iter().map(|token| crate::profiles::resolve_color(&ColorSpec::token(token), None, false, &p, cx.rogg().appearance)).collect();
         let panes = [Panes::Full, Panes::Filtered, Panes::Both];
         div()
             .id("rule-form")
@@ -524,11 +619,13 @@ impl ProfileEditor {
                             .selected(rule.color == ColorSpec::token(token))
                             .on_click(ed(this, move |e, window, cx| e.set_token(i, token, window, cx)))
                     }))
+                    .child(CustomColor::new("rule-custom", color_picker).featured(featured))
                     .child(TextField::new("rule-color", color.clone()).mono(true).width(96.).error(self.color_error)),
             )
             .child(
                 form_line("Light theme", cx)
                     .child(TextField::new("rule-light", light.clone()).mono(true).width(96.))
+                    .child(CustomColor::new("rule-light-custom", light_picker))
                     .child(div().text_size(cx.rogg().text_scale().px(10.)).text_color(p.faint).child(derived)),
             )
             .child(div().flex().child(ActionButton::new("rule-delete", "Delete rule").on_click(ed(this, move |e, window, cx| e.delete_rule(i, window, cx)))))
@@ -537,6 +634,7 @@ impl ProfileEditor {
 
     fn slot_form(&self, slot: usize, profile: &Profile, this: &Entity<Self>, cx: &App) -> gpui_kit::AnyElement {
         let Some(([fg, bg, light_fg, light_bg], _)) = &self.slot_inputs else { return div().into_any_element() };
+        let Some(([fg_picker, bg_picker, light_fg_picker, light_bg_picker], _)) = &self.slot_pickers else { return div().into_any_element() };
         let len = profile.hit_palette.len();
         div()
             .id("slot-form")
@@ -545,11 +643,19 @@ impl ProfileEditor {
             .flex_col()
             .gap(px(8.))
             .pt(px(10.))
-            .child(form_line("Colours", cx).child(TextField::new("slot-fg", fg.clone()).mono(true).width(96.)).child(TextField::new("slot-bg", bg.clone()).mono(true).width(96.)))
+            .child(
+                form_line("Colours", cx)
+                    .child(TextField::new("slot-fg", fg.clone()).mono(true).width(96.))
+                    .child(CustomColor::new("slot-fg-custom", fg_picker))
+                    .child(TextField::new("slot-bg", bg.clone()).mono(true).width(96.))
+                    .child(CustomColor::new("slot-bg-custom", bg_picker)),
+            )
             .child(
                 form_line("Light theme", cx)
                     .child(TextField::new("slot-light-fg", light_fg.clone()).mono(true).width(96.))
-                    .child(TextField::new("slot-light-bg", light_bg.clone()).mono(true).width(96.)),
+                    .child(CustomColor::new("slot-light-fg-custom", light_fg_picker))
+                    .child(TextField::new("slot-light-bg", light_bg.clone()).mono(true).width(96.))
+                    .child(CustomColor::new("slot-light-bg-custom", light_bg_picker)),
             )
             .child(
                 div()

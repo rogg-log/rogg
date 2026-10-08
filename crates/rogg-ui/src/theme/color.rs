@@ -23,6 +23,13 @@ impl Color {
         rgba(self.0).into()
     }
 
+    /// The colour as `0xRRGGBBAA`, rounding each channel to 8 bits.
+    pub fn from_hsla(h: Hsla) -> Color {
+        let c = gpui_kit::Rgba::from(h);
+        let ch = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+        Color((ch(c.r) << 24) | (ch(c.g) << 16) | (ch(c.b) << 8) | ch(c.a))
+    }
+
     /// Parses `#rgb`, `#rgba`, `#rrggbb` and `#rrggbbaa`.
     pub fn parse_css(s: &str) -> Option<Self> {
         let hex = s.strip_prefix('#')?;
@@ -72,6 +79,13 @@ mod tests {
         assert_eq!(Color::parse_css("191c1f"), None);
         assert_eq!(Color::parse_css("#12"), None);
         assert_eq!(Color::parse_css("#zzzzzz"), None);
+    }
+
+    #[test]
+    fn from_hsla_round_trips_8_bit_colours() {
+        for c in [0xff0000ff, 0xffffffff, 0x000000ff, 0x336699ff, 0x3fa7ff80, 0x00000000] {
+            assert_eq!(Color::from_hsla(Color(c).hsla()), Color(c), "{c:#010x}");
+        }
     }
 
     #[test]
