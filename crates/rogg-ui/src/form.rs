@@ -2,9 +2,10 @@
 //! `.profile-rule` rows, `button[aria-pressed]` states, `.swatch` squares.
 
 use crate::controls::pressed;
+use crate::icons::{icon, IconName};
 use crate::theme::{ActiveRoggTheme, Color};
 use crate::Callback;
-use gpui_kit::component::Sizable;
+use gpui_kit::component::{Icon as KitIcon, Sizable};
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerState};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::*;
@@ -468,8 +469,31 @@ impl RenderOnce for PaletteSlot {
     }
 }
 
-/// The `Custom…` swatch (spec C1): gpui-kit's colour picker in a popover — the preset colours as featured colours,
-/// the kit palette, hue, saturation, lightness and alpha sliders, and a hex field. Styled by the kit theme mirror.
+/// Pen ink on a light fill (near-black).
+pub const PEN_DARK: Color = Color::rgb(0x14171c);
+/// Pen ink on a dark fill (near-white).
+pub const PEN_LIGHT: Color = Color::rgb(0xf5f6f8);
+
+/// The pen's colour over `fill`: dark ink on a light fill, light ink on a dark one (WCAG relative luminance, split where
+/// both inks contrast equally). A mostly transparent fill (alpha below one half) shows the panel, so it gets `text`.
+pub fn pen_ink(fill: Color, text: Color) -> Color {
+    if (fill.0 & 0xff) < 0x80 {
+        return text;
+    }
+    let lin = |c: u32| {
+        let v = (c & 0xff) as f32 / 255.;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let lum = 0.2126 * lin(fill.0 >> 24) + 0.7152 * lin(fill.0 >> 16) + 0.0722 * lin(fill.0 >> 8);
+    if lum > 0.179 { PEN_DARK } else { PEN_LIGHT }
+}
+
+/// The custom-colour button (spec C1): a swatch-sized square filled with the picker's current colour and a small pen on
+/// it, opening gpui-kit's colour picker in a popover: the preset colours as featured colours, the kit palette, hue,
+/// saturation, lightness and alpha sliders, and a hex field. Styled by the kit theme mirror.
+///
+/// The kit trigger is an invisible 21 px icon (so the click target is exactly the square); rogg paints the visible
+/// square and pen over it in a non-interactive overlay.
 #[derive(IntoElement)]
 pub struct CustomColor {
     id: SharedString,
@@ -489,13 +513,55 @@ impl CustomColor {
 }
 
 impl RenderOnce for CustomColor {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        div().id(self.id).test_support().flex_none().child(
-            ColorPicker::new(&self.state)
-                .small()
-                .label("Custom…")
-                .accessibility_label("Custom colour")
-                .featured_colors(self.featured.iter().map(|c| c.hsla()).collect()),
-        )
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = cx.rogg().palette;
+        let fill = self.state.read(cx).value().map(Color::from_hsla);
+        let ink = pen_ink(fill.unwrap_or(p.raised), p.text);
+        let pen_id = SharedString::from(format!("{}-pen", self.id));
+        let trigger = KitIcon::default().path(IconName::Edit.path()).size(px(21.)).text_color(gpui_kit::hsla(0., 0., 0., 0.));
+        div()
+            .id(self.id)
+            .test_support()
+            .relative()
+            .flex_none()
+            .size(px(21.))
+            .child(
+                ColorPicker::new(&self.state)
+                    .small()
+                    .icon(trigger)
+                    .accessibility_label("Custom colour")
+                    .featured_colors(self.featured.iter().map(|c| c.hsla()).collect()),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size(px(21.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(p.swatch_border)
+                    .bg(fill.unwrap_or(p.raised))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().id(pen_id).test_support().child(icon(IconName::Edit).size(px(11.)).text_color(ink))),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pen_ink_contrasts_with_the_fill() {
+        let text = Color::rgb(0x123456);
+        assert_eq!(pen_ink(Color::rgb(0xffffff), text), PEN_DARK);
+        assert_eq!(pen_ink(Color::rgb(0x000000), text), PEN_LIGHT);
+        assert_eq!(pen_ink(Color::TRANSPARENT, text), text);
+        assert_eq!(pen_ink(Color::rgb(0xffffff).with_alpha(0x40), text), text);
+        assert_eq!(pen_ink(Color::rgb(0xffff00), text), PEN_DARK);
+        assert_eq!(pen_ink(Color::rgb(0x0000ff), text), PEN_LIGHT);
     }
 }

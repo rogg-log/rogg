@@ -102,3 +102,33 @@ fn custom_colour_renders_a_picker_trigger(cx: &mut TestAppContext) {
     });
     assert!(common::exists(cx, w, "rule-custom"));
 }
+
+#[gpui_kit::test]
+fn custom_colour_is_a_swatch_sized_square_with_a_pen_and_still_opens_the_picker(cx: &mut TestAppContext) {
+    use gpui_kit::component::color_picker::ColorPickerState;
+    use rogg_ui::form::{CustomColor, Swatch};
+    common::setup(cx);
+    let slot: Rc<RefCell<Option<gpui_kit::Entity<ColorPickerState>>>> = Rc::default();
+    let s = slot.clone();
+    let w = common::open(cx, 400., 200., move |window, cx| {
+        let state = s.borrow_mut().get_or_insert_with(|| cx.new(|cx| ColorPickerState::new(window, cx))).clone();
+        div()
+            .flex()
+            .gap(px(8.))
+            .child(Swatch::new("preset", Color::rgb(0xff0000)))
+            .child(CustomColor::new("rule-custom", &state))
+            .into_any_element()
+    });
+    let swatch = common::bounds(cx, w, "preset");
+    let custom = common::bounds(cx, w, "rule-custom");
+    assert_eq!(custom.size, swatch.size);
+    assert_eq!(custom.size, size(px(21.), px(21.)));
+    assert_eq!(custom.origin.y, swatch.origin.y, "lines up with the preset row");
+    let pen = common::bounds(cx, w, "rule-custom-pen");
+    assert_eq!(pen.size, size(px(11.), px(11.)));
+    assert!(custom.contains(&pen.center()), "the pen sits inside the square");
+    let state = slot.borrow().clone().unwrap();
+    assert!(!cx.read_entity(&state, |s, _| s.is_open()));
+    common::click(cx, w, "rule-custom");
+    assert!(cx.read_entity(&state, |s, _| s.is_open()), "clicking the square opens the popover");
+}
