@@ -23,6 +23,8 @@ fn icon_buttons_use_reference_box_sizes(cx: &mut TestAppContext) {
     assert_eq!(common::bounds(cx, w, "settings").size, size(px(27.), px(25.)));
     assert_eq!(common::bounds(cx, w, "all-tabs").size.height, px(25.));
     assert!(common::bounds(cx, w, "all-tabs").size.width >= px(25.));
+    // The all-tabs chevron is drawn in its open (rotated) state.
+    assert!(common::exists(cx, w, "chevron-open"));
 }
 
 #[gpui_kit::test]

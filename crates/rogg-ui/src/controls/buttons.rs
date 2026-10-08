@@ -83,7 +83,12 @@ impl RenderOnce for IconButton {
             .child(match self.content {
                 ButtonContent::Icon(name) => icon(name).size(px(15.)).text_color(p.muted).into_any_element(),
                 ButtonContent::Glyph(g) => div().child(g).into_any_element(),
-                ButtonContent::ChevronDown => chevron(true).size(px(13.)).text_color(p.muted).into_any_element(),
+                ButtonContent::ChevronDown => div()
+                    .id("chevron-open")
+                    .test_support()
+                    .flex_none()
+                    .child(chevron(true).size(px(13.)).text_color(p.muted))
+                    .into_any_element(),
             })
             .when_some(self.on_click, |d, f| d.on_click(move |_, window, cx| f(window, cx)))
     }

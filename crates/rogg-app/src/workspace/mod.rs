@@ -92,6 +92,7 @@ pub struct Workspace {
     /// The folder last shown in Finder (About › Show in Finder), remembered for tests.
     last_revealed: Option<PathBuf>,
     /// Whether `reveal` asks the OS to show the folder. Tests turn it off: gpui's test platform panics on it.
+    #[doc(hidden)]
     pub reveal_in_finder: bool,
 }
 

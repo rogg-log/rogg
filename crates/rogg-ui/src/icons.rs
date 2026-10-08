@@ -34,8 +34,7 @@ impl IconName {
         IconName::File, IconName::Folder, IconName::Search, IconName::Wrap, IconName::Pin, IconName::PinFilled,
         IconName::Filter, IconName::Follow, IconName::Check, IconName::Off, IconName::Minus, IconName::History,
         IconName::Edit, IconName::Export, IconName::Sun, IconName::Settings, IconName::Side, IconName::OpenTab,
-        IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::ChevronRight,
-        IconName::SelectCaret,
+        IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::ChevronRight, IconName::SelectCaret,
     ];
 
     pub fn path(self) -> &'static str {
@@ -62,7 +61,7 @@ impl IconName {
             IconName::Close => "icons/rogg/close.svg",
             IconName::ChevronDown => "icons/rogg/chevron-down.svg",
             IconName::ChevronRight => "icons/rogg/chevron-right.svg",
-            IconName::SelectCaret =>"icons/rogg/select-caret.svg",
+            IconName::SelectCaret => "icons/rogg/select-caret.svg",
         }
     }
 }
