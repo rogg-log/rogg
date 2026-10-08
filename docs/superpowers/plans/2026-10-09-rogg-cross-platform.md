@@ -999,14 +999,22 @@ fn linux_style_draws_round_controls_with_gaps(cx: &mut TestAppContext) {
         let menus = app_menus(&[RecentEntry::file("/var/log/a.log")]);
         let native: Vec<String> = menus.iter().flat_map(|m| m.items.iter()).filter_map(item_label).collect();
         let popup: Vec<String> = popup_entries(&menus).into_iter().filter(|l| !l.is_empty()).collect();
-        for label in &native {
+        for label in native.iter().filter(|l| !MAC_ONLY_ITEMS.contains(&l.as_str())) {
             assert!(popup.contains(label), "☰ menu lacks {label}");
         }
-        assert!(popup.contains(&"About rogg".to_string()) && popup.contains(&"Open Recent".to_string()));
+        for label in MAC_ONLY_ITEMS {
+            assert!(!popup.iter().any(|l| l == label), "☰ menu has the macOS-only {label}");
+        }
+        // Spec §4.3 order: About, Settings…, the File…Window submenus, Quit last.
+        assert_eq!(popup.first().map(String::as_str), Some("About rogg"));
+        assert_eq!(popup.last().map(String::as_str), Some("Quit rogg"));
+        let at = |l: &str| popup.iter().position(|p| p == l).unwrap_or_else(|| panic!("{l} missing"));
+        assert!(at("Settings…") < at("File") && at("File") < at("Edit") && at("Edit") < at("View") && at("View") < at("Window"));
+        assert!(at("Open Recent") > at("File"));
     }
 ```
 
-`popup_entries(&[Menu]) -> Vec<String>` is a pure helper in `menus.rs`. It lists the labels the ☰ menu will show, in order, with submenu names and their items flattened, and `""` for separators. `popup_menu` builds the `PopupMenu` from the same walk. `item_label(&MenuItem) -> Option<String>` returns an action's or submenu's name.
+`popup_entries(&[Menu]) -> Vec<String>` is a pure helper in `menus.rs`. It lists the labels the ☰ menu will show, in order, with submenu names and their items flattened, and `""` for separators. `popup_menu` builds the `PopupMenu` from the same walk. `item_label(&MenuItem) -> Option<String>` returns an action's or submenu's name. `const MAC_ONLY_ITEMS: [&str; 3] = ["Hide rogg", "Hide Others", "Show All"]` names the items the ☰ menu leaves out. Use the exact labels `menus.rs` uses, and check "Settings…" and "Quit rogg" against them.
 
 `crates/rogg-app/tests/app.rs`:
 
@@ -1091,8 +1099,11 @@ fn window_controls(chrome: ChromeStyle, maximized: bool, p: Palette) -> AnyEleme
 
 `crates/rogg-app/src/menus.rs`:
 - `popup_entries(menus)` and `popup_menu(menus, menu)`;
-- walk `menus` in order: the first menu's (rogg) items go at the top level, and every later menu becomes a `PopupMenu::submenu(name, …)` entry;
-- actions become `menu.menu(name, action.boxed_clone())`, so gpui-kit shows each item's key binding from the active keymap;
+- walk `menus` in order:
+  - the first menu's (rogg) items go at the top level, except `MAC_ONLY_ITEMS` and the Quit item; collapse the separators those leave behind (no leading, trailing or doubled separators);
+  - every later menu becomes a `PopupMenu::submenu(name, …)` entry;
+  - then a separator and Quit come last (spec §4.3);
+- actions become `menu.menu(name, action.boxed_clone())`, so gpui-kit shows each item's key binding from the active keymap. Spec §4.4 wants the ☰ menu's shortcuts in the formatter's style (`Ctrl+O`). Check gpui-kit's rendering in the Task 4 capture and the Task 6 screenshot. If it differs from `shortcut_label`'s output (for example `Ctrl-O` or `⌃O`), build the items with a label element plus a right-aligned `shortcut_label(display, chrome)` suffix instead. Look up the display from `actions::shortcuts()` by action type name (`action.name()`). Report which path was taken;
 - separators become `menu.separator()`;
 - the "Open Recent" submenu keeps its entries.
 
@@ -1444,7 +1455,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | §1 success 2 (Linux build, tests, screenshots) | 5, 6 |
 | §1 success 3 (Windows cross-build plus tests) | 1 (Windows code paths), 7 |
 | §1 success 4 (gallery captures in the other styles) | 4 |
-| §3 OS layer: folders, process check, stdin, reveal, UI text | 1. Reveal stays gpui's `reveal_path`, which has a backend per OS |
+| §3 OS layer: folders, process check, stdin, reveal, UI text | 1. Reveal stays gpui's `reveal_path`: on Linux, gpui 0.3.8 already falls back from the desktop portal to opening the parent folder (`gpui-pre-linux` `reveal_path_internal`), so no rogg code is needed |
 | §3 `windows-sys` dependency | 1 |
 | §4.1 `ChromeStyle`, `ROGG_CHROME`, `--chrome` | 2, 4 |
 | §4.2 title bar, controls, resize | 4 |
