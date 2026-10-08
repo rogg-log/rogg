@@ -17,3 +17,18 @@ Run them in `./dev demo` (release build with the sample data) unless a check say
   - under Credits, the "Built with" line and 14 crates with their licenses.
 - [ ] **Show in Finder:** the first data row opens Finder at `~/Library/Application Support/rogg`; the second opens `~/Library/Caches/rogg`, which is created first if it is missing.
 - [ ] **Dialog dismissal:** Escape, the ✕ button, and a click outside each close About.
+
+## Iteration B — long rows, full line, character selection
+
+Use `./dev demo`, then a real log with very long lines (for example `./dev genlog`, or any file with lines over a few thousand characters).
+
+- [ ] **3-line cap:** turn Wrap on. A line that wraps past three lines shows exactly three, with a faint `…` just right of the third. The next line starts right below it, and scrolling past it is smooth with no jumps. Lines of one to three wrapped lines look as before, and Wrap off is unchanged.
+- [ ] **Show full line…:** right-click any line (Wrap on or off, either pane): the menu has `Show full line…` after `Copy with line numbers`. It opens `Line <n>` with the whole line in the log font and size, wrapped, scrollable and selectable (⌘A and ⌘C work inside). `Copy` copies the whole line, including the part past the 64 KB display cut. Escape and ✕ close it.
+- [ ] **Very long line:** a line over 1 MB shows the first 1 MB and the note. Copy still pastes the whole line.
+- [ ] **Character drag:** press on a line's text and drag within that line: the characters are highlighted in the selection colour, and that row's selection background is gone (the accent bar stays). ⌘C pastes just those characters, and so does the right-click menu's `Copy`. `Copy with line numbers` copies the whole row.
+- [ ] **Non-ASCII:** the same drag across `é`, `日` or emoji never splits a character.
+- [ ] **Into another row:** drag from one line into the next: whole rows are selected, as before. Coming back to the first line keeps whole rows until you release.
+- [ ] **Clearing:** a plain click, an arrow key, or a new filter clears the character selection.
+- [ ] **Wrapped rows:** in a wrapped row, drag from its first visual line onto its second: the highlight follows across both visual lines.
+- [ ] **Cut line:** on a line cut at 64 KB (it ends in `…`), dragging to the end stops before the `…`.
+- [ ] **Pointer:** the pointer stays the arrow throughout and never turns into an I-beam.
