@@ -32,3 +32,6 @@ Use `./dev demo`, then a real log with very long lines (for example `./dev genlo
 - [ ] **Wrapped rows:** in a wrapped row, drag from its first visual line onto its second: the highlight follows across both visual lines.
 - [ ] **Cut line:** on a line cut at 64 KB (it ends in `…`), dragging to the end stops before the `…`.
 - [ ] **Pointer:** the pointer stays the arrow throughout and never turns into an I-beam.
+- [ ] **Live log:** run `./dev live` in a terminal and open its file. In the filtered pane, character-select part of a line while new lines arrive: the selection stays put, and ⌘C copies just those characters. Pinning a line or typing in Find keeps it too. Applying a different filter clears it.
+- [ ] **Click with a wiggle:** click a line with a small trackpad or mouse wiggle: the row is selected, not a single character.
+- [ ] **Huge full-line dialog:** open `Show full line…` on a line over 1 MB: the dialog opens and scrolls without a noticeable stall.
