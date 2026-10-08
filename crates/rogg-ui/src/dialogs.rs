@@ -468,10 +468,16 @@ impl RenderOnce for FullLineText {
             .border_1()
             .border_color(t.palette.border)
             .rounded(px(5.))
-            .font_family(t.fonts.log.clone())
-            .text_size(t.metrics.log_font_size)
-            .text_color(t.palette.log_text)
-            .child(Textarea::new(&self.view).readonly(true).appearance(false).h(relative(1.)))
+            // The style goes on the Textarea itself: its Input root sets its own text size, which would override an inherited one.
+            .child(
+                Textarea::new(&self.view)
+                    .readonly(true)
+                    .appearance(false)
+                    .h(relative(1.))
+                    .font_family(t.fonts.log.clone())
+                    .text_size(t.metrics.log_font_size)
+                    .text_color(t.palette.log_text),
+            )
     }
 }
 
