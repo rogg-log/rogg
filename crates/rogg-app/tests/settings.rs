@@ -213,6 +213,31 @@ fn monospace_detection_and_font_options() {
     assert_eq!([context_label(0), context_label(1), context_label(7)], ["None", "±1 line", "±7 lines"]);
 }
 
+#[test]
+fn the_default_log_font_is_labelled_for_the_platform_but_stored_as_the_token() {
+    use rogg_app::dialogs::settings::{log_font_labels, log_font_options};
+    use rogg_ui::theme::ChromeStyle;
+    let (options, _) = log_font_options(&["SF Mono".into(), "Menlo".into()], "SF Mono");
+    let labels = |c| log_font_labels(&options, c).iter().map(|l| l.to_string()).collect::<Vec<_>>();
+    assert_eq!(labels(ChromeStyle::Mac), ["SF Mono", "Menlo", "Other…"]);
+    assert_eq!(labels(ChromeStyle::Linux), ["JetBrains Mono", "Menlo", "Other…"]);
+    assert_eq!(options[0].as_ref(), rogg_core::settings::DEFAULT_LOG_FONT, "the value behind the label is the token");
+}
+
+#[gpui_kit::test]
+fn choosing_the_default_log_font_stores_the_token(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    cx.update_window(w, |_, window, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.pick_log_font("Menlo", window, cx);
+            ws.pick_log_font(rogg_core::settings::DEFAULT_LOG_FONT, window, cx);
+        })
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(SettingsStore::get(cx).appearance.log_font, rogg_core::settings::DEFAULT_LOG_FONT));
+}
+
 fn gap_rows(tab: &Entity<Tab>, cx: &mut TestAppContext) -> usize {
     tab.read_with(cx, |t, cx| {
         let state = t.filtered.read(cx);

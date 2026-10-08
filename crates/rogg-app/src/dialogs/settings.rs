@@ -1,14 +1,15 @@
 //! The Settings dialog (spec §6.2): appearance and behaviour. Every change is applied and saved at once.
 
 use crate::profiles::ProfileStore;
-use crate::settings::{SettingsStore, available_log_fonts};
+use crate::settings::{SettingsStore, available_log_fonts, default_log_font_label};
 use crate::workspace::{Dialog, Workspace};
 use gpui_kit::{App, Entity, SharedString, Window};
 use rogg_core::filter::MAX_CONTEXT;
-use rogg_core::settings::{CACHE_LIMITS_GB, DensitySetting, LOG_FONT_SIZES, SCAN_DEPTHS, Settings, ThemeSetting, UI_FONT_SIZES, step_cache_limit};
+use rogg_core::settings::{CACHE_LIMITS_GB, DEFAULT_LOG_FONT, DensitySetting, LOG_FONT_SIZES, SCAN_DEPTHS, Settings, ThemeSetting, UI_FONT_SIZES, step_cache_limit};
 use rogg_core::stats::noun;
 use rogg_ui::controls::{CompactSelect, Segmented};
 use rogg_ui::dialogs::DialogFrame;
+use rogg_ui::theme::ChromeStyle;
 use rogg_ui::form::{FormRow, SectionLabel, Stepper, Toggle};
 
 pub const OTHER_FONT: &str = "Other…";
@@ -30,6 +31,12 @@ pub fn log_font_options(available: &[String], current: &str) -> (Vec<SharedStrin
     };
     options.push(OTHER_FONT.into());
     (options, selected)
+}
+
+/// The select's labels for `options` (stored values): the default entry reads as the platform's default font, the
+/// others as they are. Choosing an entry still stores its value.
+pub fn log_font_labels(options: &[SharedString], chrome: ChromeStyle) -> Vec<SharedString> {
+    options.iter().map(|o| if o.as_ref() == DEFAULT_LOG_FONT { default_log_font_label(chrome).into() } else { o.clone() }).collect()
 }
 
 fn change(this: &Entity<Workspace>, f: impl Fn(&mut Settings) + 'static) -> impl Fn(&mut Window, &mut App) + 'static {
@@ -58,6 +65,7 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
     let s = SettingsStore::get(cx);
     let (a, b) = (&s.appearance, &s.behavior);
     let (font_options, font_selected) = log_font_options(&available_log_fonts(cx), &a.log_font);
+    let font_labels = log_font_labels(&font_options, ChromeStyle::resolved());
     let other = font_options.len() - 1;
     let profiles: Vec<String> = cx.try_global::<ProfileStore>().map(|p| p.names()).unwrap_or_else(|| vec![b.default_profile.clone()]);
     let profile_selected = profiles.iter().position(|n| *n == b.default_profile).unwrap_or(0);
@@ -86,7 +94,7 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
                 .bounds(a.ui_font_size > *UI_FONT_SIZES.start(), a.ui_font_size < *UI_FONT_SIZES.end())
                 .on_step(step(this, |s, up| s.appearance.ui_font_size = bump(s.appearance.ui_font_size, up))),
         ))
-        .child(FormRow::new("row-log-font", "Log font").control(CompactSelect::new("setting-log-font", font_options, font_selected).on_select(pick_font)))
+        .child(FormRow::new("row-log-font", "Log font").control(CompactSelect::new("setting-log-font", font_labels, font_selected).on_select(pick_font)))
         .child(FormRow::new("row-log-size", "Log font size").hint("Comfortable line spacing adds 1 px").control(
             Stepper::new("setting-log-size", format!("{} px", a.log_font_size))
                 .bounds(a.log_font_size > *LOG_FONT_SIZES.start(), a.log_font_size < *LOG_FONT_SIZES.end())
