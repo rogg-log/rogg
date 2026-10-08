@@ -124,7 +124,8 @@ impl FilteredView {
         k > 0 && self.shown[k] > self.shown[k - 1] + 1
     }
 
-    fn line_row(&self, number: u64) -> ViewRow {
+    /// The row of line `number` (matched / pinned flags only; the line need not be shown).
+    pub fn line_row(&self, number: u64) -> ViewRow {
         ViewRow::Line { number, matched: self.matches.binary_search(&number).is_ok(), pinned: self.pins.contains(&number) }
     }
 

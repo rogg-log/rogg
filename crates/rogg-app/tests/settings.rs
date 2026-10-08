@@ -1,8 +1,9 @@
 mod common;
-use gpui_kit::{AppContext, TestAppContext, px};
+use gpui_kit::{AppContext, Entity, TestAppContext, px};
 use rogg_app::args::Args;
 use rogg_app::cache::CacheStore;
 use rogg_app::settings::SettingsStore;
+use rogg_app::tab::Tab;
 use rogg_core::settings::{DensitySetting, ThemeSetting};
 use rogg_ui::theme::{ActiveRoggTheme, Appearance, Density};
 
@@ -210,4 +211,97 @@ fn monospace_detection_and_font_options() {
     assert_eq!(options.iter().map(|o| o.as_ref()).collect::<Vec<_>>(), ["SF Mono", "Iosevka", "Other…"]);
     assert_eq!(selected, 1);
     assert_eq!([context_label(0), context_label(1), context_label(7)], ["None", "±1 line", "±7 lines"]);
+}
+
+fn gap_rows(tab: &Entity<Tab>, cx: &mut TestAppContext) -> usize {
+    tab.read_with(cx, |t, cx| {
+        let state = t.filtered.read(cx);
+        let rows = state.rows();
+        (0..rows.row_count()).filter(|&i| rows.is_gap(i)).count()
+    })
+}
+
+/// A log of 20 lines with "needle" on lines 3 and 16 (display numbers), so the filtered view has one gap.
+fn open_gapped(cx: &mut TestAppContext, w: gpui_kit::AnyWindowHandle, ws: &Entity<rogg_app::workspace::Workspace>, dir: &std::path::Path, name: &str) -> Entity<Tab> {
+    let lines: Vec<String> = (1..=20).map(|n| if n == 3 || n == 16 { format!("needle {n}") } else { format!("line {n}") }).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let log = common::write_log(dir, name, &refs);
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_paths(vec![log], window, cx))).unwrap();
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    tab.read_with(cx, |t, _| t.doc.clone()).update(cx, |d, cx| d.set_expression("needle", cx)).unwrap();
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.filtered.read(cx).rows().row_count() == 3));
+    tab
+}
+
+fn set_markers(cx: &mut TestAppContext, w: gpui_kit::AnyWindowHandle, ws: &Entity<rogg_app::workspace::Workspace>, on: bool) {
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.change_settings(|s| s.behavior.omitted_markers = on, window, cx))).unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn omitted_markers_are_on_by_default_and_toggle_live_in_every_tab(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    cx.update(|cx| assert!(SettingsStore::get(cx).behavior.omitted_markers));
+    let first = open_gapped(cx, w, &ws, dir.path(), "a.log");
+    let second = open_gapped(cx, w, &ws, dir.path(), "b.log");
+    for tab in [&first, &second] {
+        assert_eq!(gap_rows(tab, cx), 1);
+    }
+    // Select the second match (display number 16) in both tabs.
+    for tab in [&first, &second] {
+        tab.update(cx, |t, cx| t.filtered.update(cx, |s, cx| s.set_selected(Some(16), cx)));
+    }
+    set_markers(cx, w, &ws, false);
+    for tab in [&first, &second] {
+        assert_eq!(gap_rows(tab, cx), 0, "no gap rows when off");
+        tab.read_with(cx, |t, cx| {
+            let state = t.filtered.read(cx);
+            assert_eq!(state.rows().row_count(), 2, "the two matches back to back");
+            assert_eq!(state.selected(), Some(16), "the selection stays on its line");
+            assert_eq!(state.rows().number_at(1), Some(16));
+            assert_eq!(t.full.read(cx).rows().row_count(), 20, "the full log is unchanged");
+        });
+    }
+    let (saved, _) = rogg_core::settings::Settings::load(&dir.path().join("settings.toml")).unwrap();
+    assert!(!saved.behavior.omitted_markers, "saved");
+    set_markers(cx, w, &ws, true);
+    for tab in [&first, &second] {
+        assert_eq!(gap_rows(tab, cx), 1, "the gap rows return");
+        tab.read_with(cx, |t, cx| {
+            let state = t.filtered.read(cx);
+            assert_eq!((state.rows().row_count(), state.selected()), (3, Some(16)));
+        });
+    }
+}
+
+#[gpui_kit::test]
+fn a_tab_opened_with_the_markers_off_has_no_gap_rows(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    set_markers(cx, w, &ws, false);
+    let lines: Vec<String> = (1..=20).map(|n| if n == 3 || n == 16 { format!("needle {n}") } else { format!("line {n}") }).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let log = common::write_log(dir.path(), "c.log", &refs);
+    cx.update_window(w, |_, window, cx| ws.update(cx, |ws, cx| ws.open_paths(vec![log], window, cx))).unwrap();
+    let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    tab.read_with(cx, |t, _| t.doc.clone()).update(cx, |d, cx| d.set_expression("needle", cx)).unwrap();
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.filtered.read(cx).rows().row_count() == 2));
+    assert_eq!(gap_rows(&tab, cx), 0);
+}
+
+#[gpui_kit::test]
+fn the_settings_dialog_toggles_the_omitted_markers(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, _ws) = common::open_workspace(cx, Args::default());
+    common::press(cx, w, "cmd-,");
+    assert!(common::exists(cx, w, "row-omitted") && common::exists(cx, w, "setting-omitted"));
+    common::click(cx, w, "setting-omitted");
+    cx.update(|cx| assert!(!SettingsStore::get(cx).behavior.omitted_markers));
+    let (saved, _) = rogg_core::settings::Settings::load(&dir.path().join("settings.toml")).unwrap();
+    assert!(!saved.behavior.omitted_markers);
+    common::click(cx, w, "setting-omitted");
+    cx.update(|cx| assert!(SettingsStore::get(cx).behavior.omitted_markers));
 }

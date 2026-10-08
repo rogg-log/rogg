@@ -107,6 +107,8 @@ struct Applied {
     filter: u64,
     search: [u64; 2],
     style: u64,
+    /// Whether the filtered rows were built with gap rows (the omitted-markers setting).
+    gaps: bool,
 }
 
 pub struct Tab {
@@ -359,11 +361,12 @@ impl Tab {
                 filter: doc.filter.revision,
                 search: [doc.search(Pane::Full).revision, doc.search(Pane::Filtered).revision],
                 style: self.style_revision,
+                gaps: SettingsStore::get(cx).behavior.omitted_markers,
             };
             let a = self.applied;
             let full_changed = now.text != a.text || now.pins != a.pins || now.search[0] != a.search[0] || now.style != a.style;
-            let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1] || now.style != a.style;
-            (now, full_changed.then(|| doc.full_rows(self.styler.clone())).flatten(), filtered_changed.then(|| doc.filtered_rows(self.styler.clone())).flatten())
+            let filtered_changed = now.text != a.text || now.filter != a.filter || now.search[1] != a.search[1] || now.style != a.style || now.gaps != a.gaps;
+            (now, full_changed.then(|| doc.full_rows(self.styler.clone())).flatten(), filtered_changed.then(|| doc.filtered_rows(self.styler.clone(), now.gaps)).flatten())
         };
         let spec_changed = {
             let spec = &self.doc.read(cx).filter.spec;

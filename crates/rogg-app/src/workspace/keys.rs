@@ -122,6 +122,11 @@ impl Workspace {
         if before.behavior.cache_limit_gb != after.behavior.cache_limit_gb {
             crate::settings::apply_cache_limit(cx);
         }
+        if before.behavior.omitted_markers != after.behavior.omitted_markers {
+            for tab in self.tabs.clone() {
+                tab.update(cx, |t, cx| t.sync_rows(cx));
+            }
+        }
         self.report_settings_error(cx);
         cx.notify();
     }

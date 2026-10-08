@@ -115,37 +115,49 @@ pub struct FilteredRows {
     pub highlighter: Option<Arc<Highlighter>>,
     pub search: Option<Arc<CompiledSearch>>,
     pub styler: Option<Arc<RowStyler>>,
+    /// Whether gap rows (`··· N lines omitted`) separate the shown lines; without them the rows are the shown lines.
+    pub gaps: bool,
+}
+
+impl FilteredRows {
+    /// A shown line, decorated: filter hits, pin and context flags, find, and the profile styler.
+    fn line_row(&self, number: u64, matched: bool, pinned: bool) -> LogRow {
+        let display = display_line(&self.text, number);
+        let hits = self
+            .highlighter
+            .as_ref()
+            .map(|h| {
+                let slots = self.styler.as_ref().map_or(HIT_SLOTS, |s| s.palette_len());
+                h.spans(&display, slots)
+                    .into_iter()
+                    .map(|(range, slot)| Span { range, style: self.styler.as_ref().map_or(SpanStyle::Hit(slot), |s| s.hit(slot)) })
+                    .collect()
+            })
+            .unwrap_or_default();
+        LogRow::Line(decorated(display, self.base + number, pinned, !matched && !pinned, hits, Decor { search: self.search.as_deref(), styler: self.styler.as_deref(), filtered: true }))
+    }
+
+    /// The row at `ix`: with gaps, the view's row; without, the `ix`-th shown line.
+    fn view_row(&self, ix: usize) -> Option<ViewRow> {
+        if self.gaps { self.view.row(ix as u64) } else { self.view.shown_lines().get(ix).map(|&line| self.view.line_row(line)) }
+    }
 }
 
 impl LogRowSource for FilteredRows {
     fn row_count(&self) -> usize {
-        self.view.row_count() as usize
+        if self.gaps { self.view.row_count() as usize } else { self.view.shown_lines().len() }
     }
 
     fn row(&self, ix: usize) -> LogRow {
-        match self.view.row(ix as u64) {
-            Some(ViewRow::Line { number, matched, pinned }) => {
-                let display = display_line(&self.text, number);
-                let hits = self
-                    .highlighter
-                    .as_ref()
-                    .map(|h| {
-                        let slots = self.styler.as_ref().map_or(HIT_SLOTS, |s| s.palette_len());
-                        h.spans(&display, slots)
-                            .into_iter()
-                            .map(|(range, slot)| Span { range, style: self.styler.as_ref().map_or(SpanStyle::Hit(slot), |s| s.hit(slot)) })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                LogRow::Line(decorated(display, self.base + number, pinned, !matched && !pinned, hits, Decor { search: self.search.as_deref(), styler: self.styler.as_deref(), filtered: true }))
-            }
+        match self.view_row(ix) {
+            Some(ViewRow::Line { number, matched, pinned }) => self.line_row(number, matched, pinned),
             Some(ViewRow::Gap { omitted }) => LogRow::Gap { omitted },
             None => LogRow::Gap { omitted: 0 },
         }
     }
 
     fn is_gap(&self, ix: usize) -> bool {
-        matches!(self.view.row(ix as u64), Some(ViewRow::Gap { .. }))
+        matches!(self.view_row(ix), Some(ViewRow::Gap { .. }))
     }
 
     fn longest_line_chars(&self) -> usize {
@@ -154,11 +166,11 @@ impl LogRowSource for FilteredRows {
 
     fn row_for_number(&self, number: u64) -> Option<usize> {
         let line = number.checked_sub(self.base)?;
-        self.view.row_for_line(line).map(|r| r as usize)
+        if self.gaps { self.view.row_for_line(line).map(|r| r as usize) } else { self.view.shown_lines().binary_search(&line).ok() }
     }
 
     fn number_at(&self, ix: usize) -> Option<u64> {
-        match self.view.row(ix as u64) {
+        match self.view_row(ix) {
             Some(ViewRow::Line { number, .. }) => Some(self.base + number),
             _ => None,
         }
@@ -171,15 +183,15 @@ impl LogRowSource for FilteredRows {
         }
         let line = number.saturating_sub(self.base);
         let i = shown.partition_point(|&l| l < line).min(shown.len() - 1);
-        self.view.row_for_line(shown[i]).map(|r| r as usize)
+        if self.gaps { self.view.row_for_line(shown[i]).map(|r| r as usize) } else { Some(i) }
     }
 
     fn is_display_cut(&self, ix: usize) -> bool {
-        matches!(self.view.row(ix as u64), Some(ViewRow::Line { number, .. }) if is_cut(&self.text, number))
+        matches!(self.view_row(ix), Some(ViewRow::Line { number, .. }) if is_cut(&self.text, number))
     }
 
     fn copy_text(&self, ix: usize) -> Option<String> {
-        match self.view.row(ix as u64) {
+        match self.view_row(ix) {
             Some(ViewRow::Line { number, .. }) => Some(self.text.line_text(number).into_owned()),
             _ => None,
         }
@@ -193,8 +205,8 @@ impl Document {
         Some(Rc::new(FullRows { text, base: self.number_base(), pins: Arc::new(self.filter.pins.clone()), search: self.search(Pane::Full).compiled.clone(), styler }))
     }
 
-    /// Rows for the filtered log pane; None until the text is loaded.
-    pub fn filtered_rows(&self, styler: Option<Arc<RowStyler>>) -> Option<Rc<FilteredRows>> {
+    /// Rows for the filtered log pane (with gap rows when `gaps`); None until the text is loaded.
+    pub fn filtered_rows(&self, styler: Option<Arc<RowStyler>>, gaps: bool) -> Option<Rc<FilteredRows>> {
         let text = self.text()?.clone();
         Some(Rc::new(FilteredRows {
             text,
@@ -203,6 +215,7 @@ impl Document {
             highlighter: self.filter.highlighter.clone(),
             search: self.search(Pane::Filtered).compiled.clone(),
             styler,
+            gaps,
         }))
     }
 }
@@ -250,7 +263,7 @@ mod tests {
         let t = text(&["a", "ERROR disk full", "b", "c", "d", "pinned line", "e", "f"]);
         let spec = FilterSpec::from_expression("disk");
         let view = FilteredView::build(Arc::new(vec![1]), &BTreeSet::from([5]), 0, 8, |_| false);
-        let rows = FilteredRows { text: t.clone(), base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: None, styler: None };
+        let rows = FilteredRows { text: t.clone(), base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: None, styler: None, gaps: true };
         // shown lines 1 and 5 with a gap of three between them
         assert_eq!(rows.row_count(), 3);
         let hit = line(rows.row(0));
@@ -267,8 +280,51 @@ mod tests {
         assert_eq!(rows.copy_text(2).as_deref(), Some("pinned line"));
 
         let ctx = FilteredView::build(Arc::new(vec![1]), &BTreeSet::new(), 1, 8, |_| false);
-        let rows = FilteredRows { text: t, base: 1, view: Arc::new(ctx), highlighter: None, search: None, styler: None };
+        let rows = FilteredRows { text: t, base: 1, view: Arc::new(ctx), highlighter: None, search: None, styler: None, gaps: true };
         assert!(line(rows.row(0)).context && !line(rows.row(1)).context && line(rows.row(2)).context);
+    }
+
+    #[test]
+    fn without_gaps_the_rows_are_the_shown_lines_back_to_back() {
+        let t = text(&["a", "ERROR disk full", "b", "c", "d", "pinned line", "e", "f"]);
+        let spec = FilterSpec::from_expression("disk");
+        let view = Arc::new(FilteredView::build(Arc::new(vec![1]), &BTreeSet::from([5]), 0, 8, |_| false));
+        let make = |gaps| FilteredRows { text: t.clone(), base: 1, view: view.clone(), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: None, styler: None, gaps };
+        let (on, off) = (make(true), make(false));
+        assert_eq!((on.row_count(), off.row_count()), (3, 2), "the gap row is the difference");
+        assert!((0..on.row_count()).any(|i| on.is_gap(i)));
+        assert!((0..off.row_count()).all(|i| !off.is_gap(i) && matches!(off.row(i), LogRow::Line(_))));
+        let hit = line(off.row(0));
+        assert_eq!(hit.number, 2);
+        assert!(hit.spans.iter().any(|s| s.range == (6..10) && s.style == SpanStyle::Hit(0)), "decorated as before");
+        let pinned = line(off.row(1));
+        assert!(pinned.pinned && !pinned.context && pinned.number == 6);
+        assert_eq!(off.row_for_number(2), Some(0));
+        assert_eq!(off.row_for_number(6), Some(1));
+        assert_eq!(off.row_for_number(3), None, "hidden lines have no row");
+        assert_eq!(off.row_for_number(0), None);
+        for ix in 0..off.row_count() {
+            assert_eq!(off.row_for_number(off.number_at(ix).unwrap()), Some(ix), "round trip");
+        }
+        assert_eq!(off.number_at(2), None);
+        assert_eq!(off.nearest_row(3), Some(1), "the next shown line");
+        assert_eq!(off.nearest_row(1), Some(0));
+        assert_eq!(off.nearest_row(500), Some(1), "past the end: the last row");
+        assert_eq!(off.copy_text(1).as_deref(), Some("pinned line"));
+        assert_eq!(off.copy_text(2), None);
+        let empty = FilteredRows { view: Arc::new(FilteredView::build(Arc::new(vec![]), &BTreeSet::new(), 0, 8, |_| false)), ..make(false) };
+        assert_eq!((empty.row_count(), empty.nearest_row(3)), (0, None));
+    }
+
+    #[test]
+    fn without_gaps_the_display_cut_follows_the_shown_lines() {
+        let long = "a".repeat(MAX_DISPLAY_BYTES + 1);
+        let t = text(&["short", "x", &long]);
+        let view = FilteredView::build(Arc::new(vec![0, 2]), &BTreeSet::new(), 0, 3, |_| false);
+        let rows = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: None, search: None, styler: None, gaps: false };
+        assert_eq!(rows.row_count(), 2);
+        assert!(!rows.is_display_cut(0) && rows.is_display_cut(1) && !rows.is_display_cut(2));
+        assert_eq!(rows.copy_text(1).map(|s| s.len()), Some(MAX_DISPLAY_BYTES + 1));
     }
 
     #[test]
@@ -290,7 +346,7 @@ mod tests {
         let spec = FilterSpec::from_expression("needle || a");
         let view = FilteredView::build(Arc::new(vec![0]), &BTreeSet::new(), 0, 1, |_| false);
         let search = Arc::new(SearchQuery { text: "aaa".into(), regex: false, case_sensitive: false }.compile().unwrap());
-        let rows = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: Some(search), styler: None };
+        let rows = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: Some(Arc::new(Highlighter::new(&spec).unwrap())), search: Some(search), styler: None, gaps: true };
         let row = line(rows.row(0));
         assert!(row.spans.iter().all(|s| s.range.end <= row.text.len()), "spans stay inside the display text");
         assert_eq!(rows.copy_text(0).map(|s| s.len()), Some(long.len()));
@@ -303,7 +359,7 @@ mod tests {
         let full = FullRows { text: t.clone(), base: 1, pins: Arc::new(BTreeSet::new()), search: None, styler: None };
         assert!(!full.is_display_cut(0) && full.is_display_cut(1) && !full.is_display_cut(2));
         let view = FilteredView::build(Arc::new(vec![0, 1]), &BTreeSet::new(), 0, 2, |_| false);
-        let filtered = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: None, search: None, styler: None };
+        let filtered = FilteredRows { text: t, base: 1, view: Arc::new(view), highlighter: None, search: None, styler: None, gaps: true };
         assert!(!filtered.is_display_cut(0) && filtered.is_display_cut(1));
     }
 

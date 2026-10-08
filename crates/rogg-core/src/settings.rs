@@ -72,6 +72,8 @@ pub struct BehaviorSettings {
     pub cache_limit_gb: u64,
     pub scan_depth: u32,
     pub default_profile: String,
+    /// Whether the filtered log shows `··· N lines omitted` rows between shown lines.
+    pub omitted_markers: bool,
 }
 
 impl Default for BehaviorSettings {
@@ -86,6 +88,7 @@ impl Default for BehaviorSettings {
             cache_limit_gb: DEFAULT_CACHE_LIMIT_GB,
             scan_depth: crate::folder::DEFAULT_SCAN_DEPTH as u32,
             default_profile: DEFAULT_PROFILE_NAME.into(),
+            omitted_markers: true,
         }
     }
 }
@@ -154,6 +157,7 @@ mod tests {
         assert_eq!(s.appearance.density, DensitySetting::Compact);
         let b = &s.behavior;
         assert!(!b.wrap && b.follow_selection && !b.regex && !b.case_sensitive && b.restore_session);
+        assert!(b.omitted_markers);
         assert_eq!((b.context, b.cache_limit_gb, b.scan_depth), (0, 20, 4));
         assert_eq!(b.default_profile, "Default");
         assert_eq!(s.cache_limit_bytes(), crate::cache::DEFAULT_LIMIT_BYTES);
@@ -192,6 +196,21 @@ mod tests {
         assert!(dir.path().join("settings.toml.bak").exists());
         std::fs::write(&path, "[appearance]\ntheme = \"purple\"\n").unwrap();
         assert!(Settings::load(&path).unwrap().1, "an unknown theme is unparseable, so the file is set aside");
+    }
+
+    #[test]
+    fn a_settings_file_without_omitted_markers_loads_with_them_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "[behavior]\nwrap = true\n").unwrap();
+        let (s, recovered) = Settings::load(&path).unwrap();
+        assert!(!recovered && s.behavior.wrap && s.behavior.omitted_markers);
+        std::fs::write(&path, "[behavior]\nomitted_markers = false\n").unwrap();
+        assert!(!Settings::load(&path).unwrap().0.behavior.omitted_markers);
+        let mut s = Settings::default();
+        s.behavior.omitted_markers = false;
+        s.save(&path).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("omitted_markers = false"));
     }
 
     #[test]

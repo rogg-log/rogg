@@ -110,6 +110,9 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
         .child(FormRow::new("row-case", "Case-sensitive filters in new tabs").control(
             Toggle::new("setting-case", b.case_sensitive).on_click(change(this, |s| s.behavior.case_sensitive = !s.behavior.case_sensitive)),
         ))
+        .child(FormRow::new("row-omitted", "Show omitted-line markers in the filtered log").control(
+            Toggle::new("setting-omitted", b.omitted_markers).on_click(change(this, |s| s.behavior.omitted_markers = !s.behavior.omitted_markers)),
+        ))
         .child(FormRow::new("row-restore", "Restore session on launch").control(
             Toggle::new("setting-restore", b.restore_session).on_click(change(this, |s| s.behavior.restore_session = !s.behavior.restore_session)),
         ))
