@@ -38,13 +38,13 @@ Use `./dev demo`, then a real log with very long lines (for example `./dev genlo
 
 ## Iteration C — colours and recent filters
 
-- [ ] **Custom… picker:** open Highlighting (the info bar's Profile button), duplicate Default, and select a rule. The Colour row shows the preset swatches, then `Custom…` (a square in the rule's current colour), then the hex field. `Custom…` opens a popover in rogg's colours on the HSLA tab: hue, saturation, lightness and alpha sliders, plus hex. The Palette tab next to it shows rogg's preset colours on top, then gpui-kit's own swatch grid; every `Custom…` (rule, light theme, palette slots) has presets there.
+- [ ] **Custom colour picker:** open Highlighting (the info bar's Profile button), duplicate Default, and select a rule. The Colour row shows the preset swatches, then the custom-colour swatch (a square in the rule's current colour with a small pen, no label), then the hex field. It opens a popover in rogg's colours on the HSLA tab: hue, saturation, lightness and alpha sliders, plus hex. The Palette tab next to it shows rogg's preset colours on top, then gpui-kit's own swatch grid; every pen swatch (rule, light theme, palette slots) has presets there.
 - [ ] **Picking a colour:** dragging a slider or typing a hex in the popover recolours the matching lines at once. The hex field shows `#rrggbb`, or `#rrggbbaa` once alpha is below 100. Reopening Highlighting keeps the colour (it is saved).
-- [ ] **Light theme:** the Light theme row has its own `Custom…`. Leave it empty, and switching to the light theme shows the derived light variant. After a pick, the light theme shows exactly that colour.
-- [ ] **Palette slots:** in "Filter-match palette", select a slot. Text, background, and both light-theme fields each have their own `Custom…`, and a pick recolours the filter hits.
+- [ ] **Light theme:** the Light theme row has its own pen swatch. Leave it empty, and switching to the light theme shows the derived light variant. After a pick, the light theme shows exactly that colour.
+- [ ] **Palette slots:** in "Filter-match palette", select a slot. Text, background, and both light-theme fields each have their own pen swatch, and a pick recolours the filter hits.
 - [ ] **Saving a drag:** dragging a slider recolours the log live; the profile file (`~/Library/Application Support/rogg/profiles/…toml`) changes once, on release, not on every move.
 - [ ] **Short window:** at the minimum window height (or with the split dragged low), the recent-filters list stays inside the filtered pane and never covers the pane header or the filter band.
 - [ ] **Editor open:** with the expression editor open (⌘L) on a filter that matches nothing, clicking a recent filter closes the editor and applies the pick.
-- [ ] **Staying in sync:** typing a hex into the field or clicking a preset swatch moves the `Custom…` square and the popover's sliders to the new colour.
+- [ ] **Staying in sync:** typing a hex into the field or clicking a preset swatch moves the pen swatch and the popover's sliders to the new colour.
 - [ ] **Recent filters:** apply three or four filters, then one that matches nothing. Under `No matching lines`, `Recent filters` lists up to three earlier filters, newest first, each with its expression (mono) and summary. The current filter is not listed. Clicking one applies it, restoring terms, on/off states, `.*`, `Aa` and context, and the matches appear.
 - [ ] **No history:** with a fresh history, a filter that matches nothing shows the plain `No matching lines`.
