@@ -48,6 +48,10 @@ enum Shaped {
 /// Wrapped rows show at most this many visual lines; the rest is clipped and the last one is marked with `…`.
 pub const MAX_WRAPPED_LINES: usize = 3;
 
+/// How far (in px, straight-line) the pointer must move from a press before the drag selects characters: a click
+/// with a small wiggle still selects the row.
+const DRAG_THRESHOLD: f32 = 3.;
+
 impl Shaped {
     /// Visual lines after wrapping (1 for an unwrapped line).
     fn visual_lines(&self) -> usize {
@@ -772,7 +776,7 @@ impl Element for LogViewElement {
                         } else {
                             s.set_selected(Some(number), cx);
                         }
-                        s.drag = Some(Drag::Select { chars: anchor.map(|a| (number, a)) });
+                        s.drag = Some(Drag::Select { chars: anchor.map(|a| (number, a)), press: Some(e.position) });
                         cx.emit(LogViewEvent::Selected { row, number });
                     }
                     cx.notify();
@@ -815,19 +819,26 @@ impl Element for LogViewElement {
                             });
                         }
                     }
-                    Drag::Select { chars } => {
+                    Drag::Select { chars, press } => {
                         if let Some(t) = move_targets.iter().find(|t| t.hitbox.is_hovered(window)) {
                             let (row, number) = (t.row, t.number);
                             if let Some((start, anchor)) = chars
                                 && start == number
                             {
-                                // Still inside the start row: select characters.
+                                // Still inside the start row: select characters, once the pointer is clearly dragging.
+                                if let Some(press) = press {
+                                    let d = e.position - press;
+                                    if f32::from(d.x).hypot(f32::from(d.y)) < DRAG_THRESHOLD {
+                                        return;
+                                    }
+                                    state.update(cx, |s, _| s.drag = Some(Drag::Select { chars, press: None }));
+                                }
                                 let head = closest_index(&t.display, e.position - t.origin, &move_font, font_size, wrap_width, row_h, text_color, window);
                                 state.update(cx, |s, cx| s.set_char_selection(number, anchor, head, cx));
                             } else {
                                 // Another row: whole rows until release.
                                 state.update(cx, |s, cx| {
-                                    s.drag = Some(Drag::Select { chars: None });
+                                    s.drag = Some(Drag::Select { chars: None, press: None });
                                     s.clear_char_selection(cx);
                                     if s.selected != Some(number) {
                                         s.extend_selection(number, cx);
@@ -839,7 +850,7 @@ impl Element for LogViewElement {
                             let down = e.position.y > track_bottom;
                             state.update(cx, |s, cx| {
                                 // Leaving the panel leaves the start row: autoscroll extends whole rows.
-                                s.drag = Some(Drag::Select { chars: None });
+                                s.drag = Some(Drag::Select { chars: None, press: None });
                                 s.clear_char_selection(cx);
                                 s.autoscroll_select(down, cx);
                             });

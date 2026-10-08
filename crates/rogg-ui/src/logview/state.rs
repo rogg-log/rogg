@@ -2,7 +2,7 @@ use super::model::{LogRow, LogRowSource};
 use super::scroll::{ScrollAnchor, ScrollGeometry};
 use super::text::{MAX_DISPLAY_TEXT_BYTES, display_text};
 use crate::theme::size;
-use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Size, px};
+use gpui_kit::{Bounds, Context, EventEmitter, Pixels, Point, Size, px};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -61,8 +61,9 @@ pub struct ContextTarget {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Drag {
     /// `chars`: the start row's number and the byte index the press landed on, while the drag stays in that row
-    /// (a character selection); None once it left the row, and for shift-clicks and gutter presses.
-    Select { chars: Option<(u64, usize)> },
+    /// (a character selection); None once it left the row, and for shift-clicks and gutter presses. `press`: where the
+    /// press happened, until the pointer has moved far enough from it to count as a drag (then None).
+    Select { chars: Option<(u64, usize)>, press: Option<Point<Pixels>> },
     /// `grab`: pointer offset from the thumb's top (or left) edge.
     VThumb { grab: f32 },
     HThumb { grab: f32 },

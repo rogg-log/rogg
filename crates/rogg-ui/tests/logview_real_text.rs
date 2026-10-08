@@ -202,16 +202,37 @@ fn dragging_within_a_row_selects_characters(cx: &mut HeadlessAppContext) {
     }
 }
 
+/// Spec B3: a click without a drag selects the row; a wiggle of a pixel or two while pressing is still a click, even
+/// where it crosses a glyph's midpoint.
+fn a_click_with_a_small_wiggle_selects_the_row_not_a_character(cx: &mut HeadlessAppContext) {
+    use gpui_kit::point;
+    use rogg_ui::theme::size::{GUTTER_NUMBER_W, GUTTER_PIN_W};
+    let left = GUTTER_PIN_W + GUTTER_NUMBER_W;
+    for wrap in [false, true] {
+        let (w, state) = open_state(cx, vec![line(1, "alpha beta gamma", vec![]), line(2, "second row", vec![])], wrap);
+        render(cx, w);
+        let y1 = 4. + 11.;
+        // Presses spread over more than a glyph's width, so some 2 px moves cross a midpoint.
+        for step in 0..20 {
+            let x = left + 20. + step as f32 * 0.5;
+            press_move_release(cx, w, point(px(x), px(y1)), point(px(x + 2.), px(y1 + 1.)));
+            let (sel, range) = cx.update(|cx| (state.read(cx).char_selection(), state.read(cx).selection_range()));
+            assert_eq!((sel, range), (None, Some((1, 1))), "wrap={wrap}, press at {x}");
+        }
+    }
+}
+
 type Case = (&'static str, fn(&mut HeadlessAppContext));
 
 fn main() {
     let mut cx = headless();
-    let cases: [Case; 5] = [
+    let cases: [Case; 6] = [
         ("spans_inside_multibyte_chars_render_without_panicking", spans_inside_multibyte_chars_render_without_panicking),
         ("dense_hit_line_renders_a_frame_quickly", dense_hit_line_renders_a_frame_quickly),
         ("right_click_takes_the_word_under_the_pointer", right_click_takes_the_word_under_the_pointer),
         ("long_wrapped_rows_show_three_lines", long_wrapped_rows_show_three_lines),
         ("dragging_within_a_row_selects_characters", dragging_within_a_row_selects_characters),
+        ("a_click_with_a_small_wiggle_selects_the_row_not_a_character", a_click_with_a_small_wiggle_selects_the_row_not_a_character),
     ];
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     for (name, case) in cases {
