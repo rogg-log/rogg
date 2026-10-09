@@ -340,7 +340,7 @@ impl Inflating {
             let len = reader.metadata().map_err(CoreError::io(&self.partial))?.len();
             if len >= n as u64 || self.finished {
                 let mut head = vec![0u8; (len as usize).min(n)];
-                std::os::unix::fs::FileExt::read_exact_at(reader, &mut head, 0).map_err(CoreError::io(&self.partial))?;
+                crate::fsx::read_exact_at(reader, &mut head, 0).map_err(CoreError::io(&self.partial))?;
                 return Ok(head);
             }
             self.wait_step(report)?;

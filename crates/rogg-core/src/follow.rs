@@ -6,7 +6,6 @@ use crate::cancel::CancelToken;
 use crate::error::CoreError;
 use crate::text::{LogText, Refresh};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -85,7 +84,7 @@ fn watch(path: &Path, ping: Sender<()>) -> Option<RecommendedWatcher> {
 /// The path now names a different file than the one mapped. A missing path is not a replacement (yet).
 fn replaced(path: &Path, text: &LogText) -> bool {
     let Some(identity) = text.file_identity() else { return false };
-    std::fs::metadata(path).is_ok_and(|meta| (meta.dev(), meta.ino()) != identity)
+    crate::fsx::path_identity(path).is_some_and(|now| now != identity)
 }
 
 fn run(mut current: Arc<LogText>, mode: WatchMode, poll: Duration, pings: Receiver<()>, tx: Sender<FollowEvent>, stop: CancelToken) {

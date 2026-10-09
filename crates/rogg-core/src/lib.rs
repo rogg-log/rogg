@@ -12,6 +12,7 @@ pub mod export;
 pub mod filter;
 pub mod folder;
 pub mod follow;
+pub mod fsx;
 pub mod highlight;
 pub mod history;
 pub mod index;

@@ -1,6 +1,6 @@
 use rogg_core::CancelToken;
 use rogg_core::archive::{ArchiveEntry, ArchiveKind, Content};
-use rogg_core::folder::{DEFAULT_SCAN_DEPTH, MAX_SCAN_ENTRIES, scan_folder, scan_folder_with};
+use rogg_core::folder::{DEFAULT_SCAN_DEPTH, scan_folder, scan_folder_with};
 use rogg_core::source::SourceRef;
 use rogg_core::tree::{Listing, NodeKind, SourceTree, TreeSummary};
 use rogg_genlog::bundle::{BundleKind, write_archive, write_gz};
@@ -117,7 +117,9 @@ fn folder_scans_list_text_gz_and_archives_but_not_binaries() {
 }
 
 #[test]
+#[cfg(unix)]
 fn scan_is_bounded_and_does_not_follow_symlinked_folders() {
+    use rogg_core::folder::MAX_SCAN_ENTRIES;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("r");
     let mut deep = root.clone();

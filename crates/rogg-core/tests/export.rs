@@ -35,6 +35,7 @@ fn without_context_only_matches_and_pins_are_written() {
     assert_eq!(plain, "l2\nl6\nl8\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn export_failure_leaves_no_partial() {
     use std::os::unix::fs::PermissionsExt;

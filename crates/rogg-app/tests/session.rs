@@ -183,6 +183,7 @@ fn frames_with_non_finite_values_are_not_restored() {
     }
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn a_tab_with_a_non_utf8_path_is_skipped_not_the_whole_session(cx: &mut TestAppContext) {
     use std::os::unix::ffi::OsStrExt;
@@ -265,6 +266,7 @@ fn restored_members_put_their_archive_in_the_sidebar(cx: &mut TestAppContext) {
     assert_eq!(titles, ["b.log"], "the archive is listed, not opened at its first member");
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn a_failing_session_save_is_reported_once(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt;

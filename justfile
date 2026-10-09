@@ -85,3 +85,9 @@ linux-shot *args:
 
 linux-shell:
     @./dev linux-shell
+
+windows-build:
+    @./dev windows-build
+
+check-all:
+    @./dev check-all

@@ -1,10 +1,12 @@
-use rogg_core::CancelToken;
-use rogg_core::mapping::{SafeMap, guarded_count};
-use rogg_core::text::LogText;
+use rogg_core::mapping::SafeMap;
 use std::fs::{File, OpenOptions};
 
+#[cfg(unix)]
 #[test]
 fn truncation_under_a_mapping_reads_zeros_and_slots_are_released() {
+    use rogg_core::CancelToken;
+    use rogg_core::mapping::guarded_count;
+    use rogg_core::text::LogText;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("shrinking.log");
     std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
@@ -40,4 +42,16 @@ fn truncation_under_a_mapping_reads_zeros_and_slots_are_released() {
     assert_eq!(text.line(0), b"line 0");
     let zero_lines = (0..text.line_count()).filter(|&i| text.line(i).iter().all(|&b| b == 0)).count();
     assert!(zero_lines > 40_000, "lines past the truncation read as zeros ({zero_lines})");
+}
+
+/// Windows refuses to shrink a file while a view of it is mapped, so no guard is needed there.
+#[cfg(windows)]
+#[test]
+fn windows_refuses_to_truncate_a_mapped_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mapped.log");
+    std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
+    let map = SafeMap::map(&File::open(&path).unwrap()).unwrap();
+    assert!(OpenOptions::new().write(true).open(&path).unwrap().set_len(100).is_err());
+    assert_eq!(map.bytes().len(), 1 << 20);
 }

@@ -113,6 +113,7 @@ fn import_and_export_sit_by_the_note_and_renaming_gets_its_own_line(cx: &mut Tes
     assert_eq!(common::bounds(cx, f.w, "profile-rename-apply").center().y, field.center().y);
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn a_failing_profile_save_is_reported_once(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt;

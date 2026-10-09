@@ -8,6 +8,7 @@
 
 use memmap2::Mmap;
 use std::fs::File;
+#[cfg(unix)]
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -22,11 +23,21 @@ struct Slot {
 
 static SLOTS: [Slot; MAX_GUARDED] =
     [const { Slot { used: AtomicBool::new(false), start: AtomicUsize::new(0), len: AtomicUsize::new(0) } }; MAX_GUARDED];
+#[cfg(unix)]
 static PAGE: AtomicUsize = AtomicUsize::new(0);
 /// The SIGBUS action the process had before `install` (faults that are not ours go back to it).
+#[cfg(unix)]
 static PREVIOUS: OnceLock<libc::sigaction> = OnceLock::new();
+#[cfg(unix)]
 static INSTALLED: OnceLock<()> = OnceLock::new();
 
+/// Windows has no SIGBUS: the OS refuses to truncate a file while a view of it is mapped (`SetEndOfFile` fails with
+/// `ERROR_USER_MAPPED_FILE`), so a mapping cannot be shrunk underneath us and needs no handler. (A page-in I/O error
+/// on a network or removable drive would raise `EXCEPTION_IN_PAGE_ERROR`; that is not handled.)
+#[cfg(not(unix))]
+fn install() {}
+
+#[cfg(unix)]
 fn install() {
     INSTALLED.get_or_init(|| {
         // SAFETY: plain libc calls with valid arguments; the handler only reads atomics and calls mmap/sigaction.
@@ -47,6 +58,7 @@ fn install() {
 }
 
 /// End address of the registered mapping containing `addr`.
+#[cfg(unix)]
 fn guarded_end(addr: usize) -> Option<usize> {
     SLOTS.iter().find_map(|s| {
         // `len` is published after `start` and cleared before it. Re-reading `len` after `start` rejects a slot that
@@ -58,6 +70,7 @@ fn guarded_end(addr: usize) -> Option<usize> {
     })
 }
 
+#[cfg(unix)]
 extern "C" fn on_sigbus(_signal: libc::c_int, info: *mut libc::siginfo_t, _context: *mut libc::c_void) {
     // macOS exposes `si_addr` as a field; the libc crate exposes it as a method on Linux.
     // SAFETY: the kernel passes a valid `siginfo_t` to an SA_SIGINFO handler.

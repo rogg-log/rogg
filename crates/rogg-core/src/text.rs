@@ -11,7 +11,6 @@ use crate::mapping::SafeMap;
 use std::borrow::Cow;
 use std::fs::File;
 use std::ops::Range;
-use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -106,7 +105,7 @@ impl LogText {
         let mut head = [0u8; 4];
         let mut head_len = 0;
         while head_len < head.len() {
-            let n = std::os::unix::fs::FileExt::read_at(&file, &mut head[head_len..], head_len as u64).map_err(CoreError::io(path))?;
+            let n = crate::fsx::read_at(&file, &mut head[head_len..], head_len as u64).map_err(CoreError::io(path))?;
             if n == 0 {
                 break;
             }
@@ -156,8 +155,7 @@ impl LogText {
 
     /// (device, inode) of the mapped file; live follow compares it with the path's to detect replacement.
     pub fn file_identity(&self) -> Option<(u64, u64)> {
-        let meta = self.file.as_ref()?.metadata().ok()?;
-        Some((meta.dev(), meta.ino()))
+        crate::fsx::file_identity(self.file.as_ref()?)
     }
 
     /// Checks the mapped file (spec §4.5). A longer file whose start is unchanged gives a new snapshot that maps the
@@ -173,7 +171,7 @@ impl LogText {
             return Ok(Refresh::Truncated);
         }
         let mut head = vec![0u8; self.head.len()];
-        if !head.is_empty() && (file.read_exact_at(&mut head, 0).is_err() || head != self.head) {
+        if !head.is_empty() && (crate::fsx::read_exact_at(file, &mut head, 0).is_err() || head != self.head) {
             return Ok(Refresh::Truncated);
         }
         if len == have {

@@ -3,6 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `HH:MM:SS` of `time` in the local time zone; `00:00:00` if the time cannot be converted.
+#[cfg(unix)]
 pub fn local_hms(time: SystemTime) -> String {
     let secs = time.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as libc::time_t;
     // SAFETY: `localtime_r` only reads `secs` and writes into `tm`.
@@ -11,6 +12,28 @@ pub fn local_hms(time: SystemTime) -> String {
         return "00:00:00".into();
     }
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// `HH:MM:SS` of `time` in the local time zone; `00:00:00` if the time cannot be converted.
+#[cfg(windows)]
+pub fn local_hms(time: SystemTime) -> String {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+
+    // FILETIME counts 100 ns ticks since 1601-01-01; the Unix epoch is 11_644_473_600 s later.
+    const EPOCH_DIFF_SECS: u64 = 11_644_473_600;
+    let secs = time.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let ticks = (secs + EPOCH_DIFF_SECS) * 10_000_000;
+    let ft = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    // SAFETY: both calls only read their inputs and write into the zeroed `SYSTEMTIME`s; a null zone means "the
+    // current time zone".
+    let mut utc: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    let mut local: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    let ok = unsafe { FileTimeToSystemTime(&ft, &mut utc) != 0 && SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) != 0 };
+    if !ok {
+        return "00:00:00".into();
+    }
+    format!("{:02}:{:02}:{:02}", local.wHour, local.wMinute, local.wSecond)
 }
 
 #[cfg(test)]

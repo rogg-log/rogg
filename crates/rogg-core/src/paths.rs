@@ -57,6 +57,14 @@ pub fn session_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_locations() {
+        assert!(config_dir().ends_with("rogg"));
+        assert!(settings_path().ends_with("settings.toml"));
+        assert!(history_path().ends_with("history.json"));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_locations() {

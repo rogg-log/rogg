@@ -30,6 +30,7 @@ fn piped_data_opens_as_a_live_tab(cx: &mut TestAppContext) {
     cx.update(|cx| assert!(cx.global::<RecentStore>().entries().is_empty(), "streams are not recent files"));
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn fifos_are_read_as_streams(cx: &mut TestAppContext) {
     let dir = common::setup(cx);

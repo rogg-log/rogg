@@ -106,6 +106,7 @@ fn unreadable_settings_toast_and_reset(cx: &mut TestAppContext) {
     assert!(dir.path().join("settings.toml.bak").exists());
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn a_failing_settings_save_is_reported_once(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt;

@@ -110,6 +110,10 @@ ${BOLD}Linux${RESET}   (Apple container; image rogg-linux:latest, target dir tar
   linux-shell                   Interactive shell in the image (needs a terminal)
   (ROGG_LINUX_CPUS, default 6, and ROGG_LINUX_MEMORY, default 20G, set the container's limits)
 
+${BOLD}Windows${RESET}   (cross-build from macOS with cargo-xwin; ./dev setup offers the install)
+  windows-build                 cargo xwin build --workspace --target x86_64-pc-windows-msvc
+  check-all                     check + linux-test + windows-build
+
 Set DRY=1 to print the commands without running them.
 EOF
 }
@@ -129,6 +133,15 @@ cmd_setup() {
   run rustup toolchain install "$(toolchain)" --profile minimal --component rustfmt --component clippy
   need_rust
   [[ $DRY == 1 ]] || ok "$(cargo --version)"
+
+  step "Windows cross-build (optional)"
+  if rustup target list --installed | grep -q x86_64-pc-windows-msvc && command -v cargo-xwin >/dev/null 2>&1 && brew list --formula llvm >/dev/null 2>&1; then
+    ok "llvm, cargo-xwin and the x86_64-pc-windows-msvc target are installed"
+  elif confirm "Install llvm, cargo-xwin and the x86_64-pc-windows-msvc target for ./dev windows-build?"; then
+    brew list --formula llvm >/dev/null 2>&1 || run brew install llvm
+    run rustup target add x86_64-pc-windows-msvc
+    run cargo install cargo-xwin --locked
+  fi
 
   step "Visual-diff packages"
   run_visual npm ci
@@ -293,6 +306,19 @@ cmd_linux_image() { need_container; step "Linux image"; run container build --ta
 cmd_linux_build() { step "Linux build"; in_linux "cargo build --workspace --all-targets"; }
 # Root would ignore the read-only directories the save-failure tests rely on, so the test run drops CAP_DAC_OVERRIDE.
 cmd_linux_test()  { step "Linux tests"; in_linux "setpriv --bounding-set=-dac_override,-dac_read_search cargo test --workspace --no-fail-fast"; }
+cmd_windows_build() {
+  need_rust
+  command -v cargo-xwin >/dev/null 2>&1 || die "cargo-xwin is not installed — run ./dev setup"
+  # cargo-xwin needs LLVM's clang-cl, llvm-lib, lld-link and llvm-rc. Homebrew's llvm is keg-only; it goes on PATH
+  # only here so the macOS and Linux builds keep using Apple clang.
+  local llvm=""
+  command -v brew >/dev/null 2>&1 && llvm=$(brew --prefix llvm 2>/dev/null)
+  [[ -x $llvm/bin/llvm-rc ]] || die "Homebrew llvm is not installed — run ./dev setup"
+  export PATH="$llvm/bin:$PATH"
+  step "Windows cross-build"
+  run cargo xwin build --workspace --target x86_64-pc-windows-msvc
+}
+cmd_check_all() { cmd_check; cmd_linux_test; cmd_windows_build; ok "macOS, Linux and Windows checks passed"; }
 cmd_linux_shot() {
   local args=${(j: :)${(q)@}}
   step "Linux screenshots"
@@ -361,6 +387,8 @@ case $command in
   linux-test) cmd_linux_test ;;
   linux-shot) cmd_linux_shot "$@" ;;
   linux-shell) cmd_linux_shell ;;
+  windows-build) cmd_windows_build ;;
+  check-all) cmd_check_all ;;
   clean) cmd_clean "$@" ;;
   *) die "unknown command '$command' — ./dev help lists them" ;;
 esac

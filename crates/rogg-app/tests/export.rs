@@ -36,6 +36,7 @@ fn exports_filtered_lines_in_the_background(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&dst).unwrap(), "1  error a\n3  error b\n");
 }
 
+#[cfg(unix)]
 #[gpui_kit::test]
 fn export_errors_toast_and_closing_cancels(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt;
