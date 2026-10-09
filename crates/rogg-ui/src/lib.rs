@@ -7,6 +7,7 @@ pub mod theme;
 pub mod assets;
 pub mod fonts;
 pub mod icons;
+pub mod keys;
 
 pub use theme::{ActiveRoggTheme, RoggTheme};
 

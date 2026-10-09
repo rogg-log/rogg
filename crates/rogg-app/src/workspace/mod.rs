@@ -23,6 +23,7 @@ use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts
 use crate::settings::SettingsStore;
 use rogg_core::settings::{DensitySetting, ThemeSetting};
 use rogg_ui::theme::size;
+use rogg_ui::ActiveRoggTheme;
 use rogg_ui::titlebar::{TabItem, TitleBar};
 use rogg_ui::toast::ToastStack;
 use std::collections::{HashMap, HashSet};
@@ -706,7 +707,7 @@ impl Workspace {
     fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>, cx: &App) -> AnyElement {
         let close = act(this, |ws, _, cx| ws.close_dialog(cx));
         match dialog {
-            Dialog::Shortcuts => dialogs::shortcuts(&actions::shortcut_rows())
+            Dialog::Shortcuts => dialogs::shortcuts(&actions::shortcut_rows(cx.rogg().chrome))
                 .description("Keyboard shortcuts for the full log, the filter line and the filtered log.")
                 .on_close(close)
                 .into_any_element(),
