@@ -46,6 +46,13 @@ with a dedicated component gallery, rather than an afterthought.
 
 ## 3. Architecture
 
+**Platforms (added 2026-10-09).** rogg also builds for Linux and Windows; see
+[`2026-10-09-rogg-cross-platform-design.md`](2026-10-09-rogg-cross-platform-design.md).
+OS-specific code (data folders, process checks, stdin detection) sits behind
+`cfg(target_os)` in `rogg-core::platform`, and the window chrome style is a
+runtime value. This spec describes the macOS app; the other platforms differ
+only where that document says so.
+
 ### 3.1 Workspace
 
 ```
@@ -512,7 +519,13 @@ Dialogs and popovers:
 | ⌘, | Settings |
 | Space (full log, live source) | Pause / resume follow |
 
-The native menu bar has File (Open, Open Folder, Open Recent ▸, Export,
+Bindings are written with `secondary-`, which is ⌘ on macOS and Ctrl on Linux
+and Windows (Ctrl+O, Ctrl+F, …); the table above shows the macOS labels. Shortcut
+labels are rendered per chrome style: `⌘ O` on macOS, `Ctrl+O` elsewhere. Hide
+(⌘H), Hide Others (⌥⌘H) and Minimise (⌘M) are macOS-only. Linux adds Ctrl+Q to
+quit; Windows quits with Alt+F4 or the ☰ menu's Quit.
+
+The native menu bar (macOS; Linux and Windows use the ☰ menu with the same items) has File (Open, Open Folder, Open Recent ▸, Export,
 Close Tab), Edit (Copy, Find, Go to Line), View (Sidebar, Wrap, Theme,
 Density), and Window. All bindings are defined in one keymap table so they
 can be remapped later.

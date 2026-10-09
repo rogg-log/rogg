@@ -90,7 +90,7 @@ All OS-specific code lives in `rogg-core::platform`, with one implementation per
 ## 5. Tooling and verification
 
 ### 5.1 Linux in Apple `container`
-- **Image:** `tools/linux/Containerfile`, based on `debian:bookworm` (arm64, like the host). It contains:
+- **Image:** `tools/linux/Containerfile`, based on `debian:trixie` (arm64, like the host). It contains:
   - rustup with the pinned toolchain (from `rust-toolchain.toml`) and `pkg-config`;
   - gpui's Linux build dependencies: xkbcommon (incl. x11), wayland, X11/xcb, fontconfig, freetype, the Vulkan loader;
   - Mesa's lavapipe (software Vulkan), Xvfb and ImageMagick.
@@ -100,17 +100,21 @@ All OS-specific code lives in `rogg-core::platform`, with one implementation per
   - `linux-build`: `cargo build --workspace --all-targets` inside the container;
   - `linux-test`: `cargo test --workspace` inside the container;
   - `linux-shot [demo|<gallery page>]`:
-    1. start Xvfb (1440×900×24);
+    1. start Xvfb (1920×1200) and `xfwm4 --compositor=on`;
     2. run `rogg --demo` (or the gallery page) with `WGPU_BACKEND=vulkan` on lavapipe;
     3. wait for the first frame;
     4. capture the screen (`import -window root`) into `target/linux/shots/<name>.png`;
     5. for the demo, also send the shortcut that opens the ☰ menu (`xdotool`), or click it, and capture `demo-menu.png`;
     6. quit the app;
   - `linux-shell`: an interactive shell in the container.
+- **Update 2026-10-09 (execution):**
+  - The image is `debian:trixie`, not bookworm: bookworm's Mesa 22.3 drew nothing on the compositor's depth-32 visual, and trixie's Mesa 25 works. Lavapipe's ICD file is `lvp_icd.json`.
+  - `linux-shot` runs Xvfb at 1920×1200 with `xfwm4 --compositor=on`, because gpui uses client-side decorations on X11 only with a compositor and `_GTK_FRAME_EXTENTS` support. It reads Xvfb's framebuffer (`-fbdir`) and fails loudly on a blank render, a missing WM or a dead app.
+  - Container resources are `ROGG_LINUX_CPUS` (default 6) and `ROGG_LINUX_MEMORY` (default 20G), with `CARGO_BUILD_JOBS=3`; the linker was OOM-killed at 12G.
 
 ### 5.2 Windows from macOS
 - `./dev windows-build` runs `cargo xwin build --workspace --target x86_64-pc-windows-msvc`.
-- `./dev setup` offers to install `cargo-xwin` and the `x86_64-pc-windows-msvc` rustup target, asking first. cargo-xwin downloads the MSVC CRT and Windows SDK into its own cache on first use.
+- `./dev setup` offers to install `cargo-xwin`, the `x86_64-pc-windows-msvc` rustup target and Homebrew `llvm` (keg-only; on PATH only for `windows-build`), asking first. cargo-xwin downloads the MSVC CRT and Windows SDK into its own cache on first use.
 
 ### 5.3 Portability of the build and tests
 - `rogg-app/build.rs` computes the build date in Rust rather than by running `date`. It keeps the `unknown` fallbacks, and git stays optional.
