@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Starts a virtual X display with a compositing window manager (gpui only draws client decorations when a compositor
 # and _GTK_FRAME_EXTENTS support are present), runs rogg (or a gallery page) with software Vulkan, captures the
-# window, then quits.
+# window, then quits. Any failure (no X, no WM, dead app, blank render) exits non-zero with a message.
 # Usage: tools/linux/shot.sh demo | <gallery-page>
 set -euo pipefail
 what=${1:-demo}
+[[ $what =~ ^[A-Za-z0-9_-]+$ ]] || { echo "shot.sh: bad page name '$what'" >&2; exit 2; }
 out=/work/target/linux/shots
 fb=/tmp/xvfb-fb
 mkdir -p "$out" "$fb"
@@ -12,16 +13,44 @@ export DISPLAY=:99
 export XDG_RUNTIME_DIR=/tmp/xdg-runtime
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
+
+pids=()
+cleanup() {
+  local p alive
+  for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
+  for _ in $(seq 25); do
+    alive=0
+    for p in "${pids[@]}"; do if kill -0 "$p" 2>/dev/null; then alive=1; fi; done
+    [[ $alive == 0 ]] && return 0
+    sleep 0.2
+  done
+  for p in "${pids[@]}"; do kill -9 "$p" 2>/dev/null || true; done
+}
+trap cleanup EXIT
+fail() { echo "shot.sh: $*" >&2; exit 1; }
+
+# The screen is 1920x1200 rather than the spec's 1440x900 because the gallery window is 1640x1000.
 # -fbdir keeps the screen as an XWD file: with a compositor running, `import -window root` returns black, but the
 # framebuffer holds what the compositor painted.
 Xvfb :99 -screen 0 1920x1200x24 -nolisten tcp -fbdir "$fb" &
-pids=($!)
-trap 'kill "${pids[@]}" 2>/dev/null || true' EXIT
-for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+pids+=($!)
+up=
+for _ in $(seq 50); do
+  if xdpyinfo >/dev/null 2>&1; then up=1; break; fi
+  sleep 0.1
+done
+[[ -n $up ]] || fail "Xvfb did not come up on $DISPLAY"
 
 xfwm4 --compositor=on >"$out/wm.log" 2>&1 &
-pids+=($!)
-sleep 2
+wm=$!
+pids+=("$wm")
+wm_up=
+for _ in $(seq 50); do
+  kill -0 "$wm" 2>/dev/null || fail "xfwm4 exited; see $out/wm.log"
+  if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id'; then wm_up=1; break; fi
+  sleep 0.2
+done
+[[ -n $wm_up ]] || fail "xfwm4 never became the window manager; see $out/wm.log"
 
 if [[ $what == demo ]]; then
   cargo build -p rogg-app
@@ -31,10 +60,12 @@ else
   /work/target/linux/debug/rogg-gallery --page "$what" --chrome linux >"$out/app.log" 2>&1 &
 fi
 app=$!
+pids+=("$app")
 
 # Wait for the app's window (by PID, wider than 300 px so helper windows never match).
 win=
-for _ in $(seq 100); do
+for _ in $(seq 150); do
+  kill -0 "$app" 2>/dev/null || { tail -n 20 "$out/app.log" >&2; fail "the app exited before showing a window"; }
   for w in $(xdotool search --onlyvisible --pid "$app" 2>/dev/null || true); do
     width=$(xdotool getwindowgeometry "$w" | awk '/Geometry/ {split($2, a, "x"); print a[1]}')
     if [[ ${width:-0} -gt 300 ]]; then win=$w; break; fi
@@ -42,24 +73,39 @@ for _ in $(seq 100); do
   [[ -n $win ]] && break
   sleep 0.2
 done
-[[ -n $win ]] || { echo "no app window appeared; see $out/app.log" >&2; exit 1; }
-sleep 4
+[[ -n $win ]] || { tail -n 20 "$out/app.log" >&2; fail "no app window appeared; see $out/app.log"; }
 
 # The window geometry includes the client-side shadow margin (_GTK_FRAME_EXTENTS: left, right, top, bottom).
-eval "$(xdotool getwindowgeometry --shell "$win")"
+geometry=$(xdotool getwindowgeometry --shell "$win") || fail "cannot read the geometry of window $win"
+eval "$geometry"
 extents=$(xprop -id "$win" _GTK_FRAME_EXTENTS | sed -n 's/.*= *//p' | tr -d ',' || true)
 read -r el er et eb <<<"${extents:-0 0 0 0}"
 echo "window $win at $X,$Y ${WIDTH}x$HEIGHT, frame extents: $el $er $et $eb"
-shoot() { convert "xwd:$fb/Xvfb_screen0" -crop "${WIDTH}x${HEIGHT}+${X}+${Y}" +repage "$1"; }
+if [[ $what == demo && $el -eq 0 ]]; then
+  fail "the demo window has no client decorations (no _GTK_FRAME_EXTENTS); the compositor or WM is not working, see $out/wm.log"
+fi
+
+# Writes the cropped window to $1 once it is not a uniform image (and, with $2, differs from that image).
+shoot() {
+  local dst=$1 other=${2:-} sd diff
+  for _ in $(seq 100); do
+    convert "xwd:$fb/Xvfb_screen0" -crop "${WIDTH}x${HEIGHT}+${X}+${Y}" +repage "$dst"
+    sd=$(convert "$dst" -format '%[fx:standard_deviation]' info:)
+    if awk -v s="$sd" 'BEGIN { exit !(s > 0.01) }'; then
+      if [[ -z $other ]]; then return 0; fi
+      diff=$(compare -metric AE "$dst" "$other" null: 2>&1 || true)
+      if [[ $diff != 0 ]]; then return 0; fi
+    fi
+    sleep 0.2
+  done
+  fail "$dst stayed blank${other:+ or identical to $other} for 20 s; see $out/app.log"
+}
 
 shoot "$out/$what.png"
 if [[ $what == demo ]]; then
   # Open the ☰ menu: the app-menu button is the first element of the title bar's leading block (13 px padding plus
   # half of its 25 px width from the content's left edge, half the 42 px title bar down), inside the shadow margin.
   xdotool mousemove $((X + el + 13 + 12)) $((Y + et + 21)) click 1
-  sleep 1
-  shoot "$out/demo-menu.png"
+  shoot "$out/demo-menu.png" "$out/demo.png"
 fi
-kill "$app" 2>/dev/null || true
-wait "$app" 2>/dev/null || true
 echo "shots in target/linux/shots"

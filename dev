@@ -293,7 +293,7 @@ cmd_linux_image() { need_container; step "Linux image"; run container build --ta
 cmd_linux_build() { step "Linux build"; in_linux "cargo build --workspace --all-targets"; }
 # Root would ignore the read-only directories the save-failure tests rely on, so the test run drops CAP_DAC_OVERRIDE.
 cmd_linux_test()  { step "Linux tests"; in_linux "setpriv --bounding-set=-dac_override,-dac_read_search cargo test --workspace --no-fail-fast"; }
-cmd_linux_shot()  { step "Linux screenshots"; in_linux "tools/linux/shot.sh ${1:-demo}"; ok "target/linux/shots/"; }
+cmd_linux_shot()  { step "Linux screenshots"; in_linux "tools/linux/shot.sh ${(q)1:-demo}" && ok "target/linux/shots/"; }
 cmd_linux_shell() {
   need_container
   ensure_volumes
