@@ -80,5 +80,8 @@ linux-build:
 linux-test:
     @./dev linux-test
 
+linux-shot *args:
+    @./dev linux-shot {{args}}
+
 linux-shell:
     @./dev linux-shell
