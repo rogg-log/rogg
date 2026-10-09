@@ -5,6 +5,17 @@
 # Usage: tools/linux/shot.sh demo | <gallery-page>
 set -euo pipefail
 what=${1:-demo}
+
+# Rendered check: the window interior (inset 10 px from every edge, so frames, borders and a cursor at the edge
+# don't count) must be neither black nor uniform: mean > 0.02 and standard deviation > 0.02 (both 0..1).
+# Prints "mean stddev"; exits non-zero when the image is not a real render.
+measure() {
+  local m
+  m=$(convert "$1" -shave 10x10 -format '%[fx:mean] %[fx:standard_deviation]' info:)
+  echo "$m"
+  awk -v m="$m" 'BEGIN { split(m, a, " "); exit !(a[1] > 0.02 && a[2] > 0.02) }'
+}
+if [[ $what == measure ]]; then measure "$2"; exit; fi
 [[ $what =~ ^[A-Za-z0-9_-]+$ ]] || { echo "shot.sh: bad page name '$what'" >&2; exit 2; }
 out=/work/target/linux/shots
 fb=/tmp/xvfb-fb
@@ -87,21 +98,23 @@ fi
 
 # Writes the cropped window to $1 once it is not a uniform image (and, with $2, differs from that image).
 shoot() {
-  local dst=$1 other=${2:-} sd diff
+  local dst=$1 other=${2:-} diff
   for _ in $(seq 100); do
     convert "xwd:$fb/Xvfb_screen0" -crop "${WIDTH}x${HEIGHT}+${X}+${Y}" +repage "$dst"
-    sd=$(convert "$dst" -format '%[fx:standard_deviation]' info:)
-    if awk -v s="$sd" 'BEGIN { exit !(s > 0.01) }'; then
+    if measure "$dst" >/dev/null; then
       if [[ -z $other ]]; then return 0; fi
       diff=$(compare -metric AE "$dst" "$other" null: 2>&1 || true)
       if [[ $diff != 0 ]]; then return 0; fi
     fi
     sleep 0.2
   done
+  echo "last measurement (mean stddev): $(measure "$dst" || true)" >&2
   fail "$dst stayed blank${other:+ or identical to $other} for 20 s; see $out/app.log"
 }
 
+xdotool mousemove 1919 1199   # park the cursor in the screen corner, away from the window
 shoot "$out/$what.png"
+echo "$what.png interior (mean stddev): $(measure "$out/$what.png")"
 if [[ $what == demo ]]; then
   # Open the ☰ menu: the app-menu button is the first element of the title bar's leading block (13 px padding plus
   # half of its 25 px width from the content's left edge, half the 42 px title bar down), inside the shadow margin.
