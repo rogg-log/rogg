@@ -217,6 +217,34 @@ mod tests {
         }
     }
 
+    /// gpui parses `secondary` by the build OS (`cfg!(target_os = "macos")`: cmd, otherwise ctrl), so only the
+    /// meaning for the host OS is testable here; the other is covered by `the_keymap_uses_the_platform_modifier`
+    /// (no hard-coded cmd) plus gpui's own parse.
+    #[test]
+    fn secondary_resolves_to_cmd_on_macos_and_ctrl_elsewhere() {
+        let mac = cfg!(target_os = "macos");
+        let mut checked = 0;
+        for os in [Os::Mac, Os::Linux, Os::Windows] {
+            for s in shortcuts_for(os).into_iter().filter(|s| s.keys.contains("secondary-")) {
+                let binding = (s.binding)();
+                let mods = binding.keystrokes()[0].modifiers();
+                assert_eq!(mods.platform, mac, "{}: cmd only on macOS", s.keys);
+                assert_eq!(mods.control, !mac, "{}: ctrl everywhere else", s.keys);
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "only {checked} secondary bindings checked");
+    }
+
+    #[test]
+    fn non_mac_rows_contain_no_mac_glyphs() {
+        for chrome in [ChromeStyle::Linux, ChromeStyle::Windows] {
+            for (label, keys) in shortcut_rows(chrome) {
+                assert!(!keys.chars().any(|c| "⌘⌃⌥⇧".contains(c)), "{chrome:?}: {label}: {keys}");
+            }
+        }
+    }
+
     #[test]
     fn rows_follow_the_given_chrome_style() {
         let linux = shortcut_rows(ChromeStyle::Linux);
