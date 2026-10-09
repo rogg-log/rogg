@@ -36,6 +36,7 @@ fn window_options_follow_the_chrome_style(cx: &mut TestAppContext) {
         assert!(windows.titlebar.as_ref().is_some_and(|t| t.appears_transparent && t.traffic_light_position.is_none()));
         for options in [mac, linux, windows] {
             assert!(options.app_owns_titlebar_drag);
+            assert_eq!(options.app_id.as_deref(), Some("rogg"), "the Wayland app_id / X11 WM_CLASS");
         }
     });
 }

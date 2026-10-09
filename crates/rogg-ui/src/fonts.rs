@@ -4,8 +4,9 @@ use gpui_kit::{App, AssetSource, Result};
 
 const FILES: [&str; 5] = ["Inter-Regular", "Inter-Medium", "Inter-SemiBold", "JetBrainsMono-Regular", "JetBrainsMono-Bold"];
 
-/// Registers the bundled fonts with gpui's text system. Harmless on macOS (the Mac style keeps SF), needed there too
-/// so the gallery can render the other styles. A failure is logged, not fatal.
+/// Registers the bundled fonts with gpui's text system. The app calls it for the Linux and Windows styles only (on
+/// macOS the fonts would join the "Other…" log-font list); the gallery always does, to render every style. A failure
+/// is logged, not fatal.
 pub fn register(cx: &mut App) {
     if let Err(e) = try_register(cx) {
         eprintln!("rogg: could not register the bundled fonts: {e:#}");

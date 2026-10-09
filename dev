@@ -314,7 +314,7 @@ cmd_windows_build() {
   local llvm=""
   command -v brew >/dev/null 2>&1 && llvm=$(brew --prefix llvm 2>/dev/null)
   [[ -x $llvm/bin/llvm-rc ]] || die "Homebrew llvm is not installed — run ./dev setup"
-  export PATH="$llvm/bin:$PATH"
+  local -x PATH="$llvm/bin:$PATH"
   step "Windows cross-build"
   run cargo xwin build --workspace --target x86_64-pc-windows-msvc
 }

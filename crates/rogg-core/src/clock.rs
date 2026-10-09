@@ -23,7 +23,9 @@ pub fn local_hms(time: SystemTime) -> String {
     // FILETIME counts 100 ns ticks since 1601-01-01; the Unix epoch is 11_644_473_600 s later.
     const EPOCH_DIFF_SECS: u64 = 11_644_473_600;
     let secs = time.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let ticks = (secs + EPOCH_DIFF_SECS) * 10_000_000;
+    let Some(ticks) = secs.checked_add(EPOCH_DIFF_SECS).and_then(|s| s.checked_mul(10_000_000)) else {
+        return "00:00:00".into();
+    };
     let ft = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
     // SAFETY: both calls only read their inputs and write into the zeroed `SYSTEMTIME`s; a null zone means "the
     // current time zone".

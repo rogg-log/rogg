@@ -9,6 +9,7 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     AnyElement, App, Context, Decorations, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, WindowControlArea, div, px,
 };
+use std::cell::Cell;
 use std::rc::Rc;
 
 /// Fills the ☰ app menu each time it opens (gpui-kit's dropdown menu builder).
@@ -142,19 +143,44 @@ fn button(b: IconButton, cb: Option<Callback>) -> IconButton {
     }
 }
 
-/// A press drags the window; a double-click zooms it like a native title bar. gpui's `titlebar_double_click` acts only on
-/// macOS (it follows the system setting there); on Linux `zoom_window` toggles maximise. Windows leaves the drag area
-/// to the native caption (`WindowControlArea::Drag`).
-fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, cx: &mut App) {
+/// Mac and Windows styles: a press drags the window; a double-click runs gpui's `titlebar_double_click`, which acts only
+/// on macOS (it follows the system setting there). Windows leaves the drag area to the native caption
+/// (`WindowControlArea::Drag`).
+fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, _: &mut App) {
     if e.click_count >= 2 {
-        if cx.rogg().chrome == ChromeStyle::Linux {
-            window.zoom_window();
-        } else {
-            window.titlebar_double_click();
-        }
+        window.titlebar_double_click();
     } else {
         window.start_window_move();
     }
+}
+
+/// Makes `el` a title-bar drag area. Mac and Windows styles: `drag_window` on the press. Linux style (`pressed` is
+/// `Some`): a press only arms the drag, and the move starts on the first mouse move with the left button held. Handing
+/// the pointer to the window manager on the press (`_NET_WM_MOVERESIZE`, `xdg_toplevel.move`) would swallow the second
+/// press of a double-click, which zooms (maximises or restores) the window. Zed's title bar does the same.
+fn drag_area<E: InteractiveElement>(el: E, pressed: Option<Rc<Cell<bool>>>) -> E {
+    let Some(pressed) = pressed else { return el.on_mouse_down(MouseButton::Left, drag_window) };
+    let (down, up, out, moved) = (pressed.clone(), pressed.clone(), pressed.clone(), pressed);
+    el.on_mouse_down(MouseButton::Left, move |e, window, _| {
+        down.set(e.click_count < 2);
+        if e.click_count >= 2 {
+            window.zoom_window();
+        }
+    })
+    .on_mouse_up(MouseButton::Left, move |_, _, _| up.set(false))
+    .on_mouse_down_out(move |_, _, _| out.set(false))
+    .on_mouse_move(move |e, window, _| {
+        if moved.get() && e.pressed_button == Some(MouseButton::Left) {
+            moved.set(false);
+            window.start_window_move();
+        }
+    })
+}
+
+/// The Linux style's armed-drag flag for drag area `key`, kept across frames (the title bar is rebuilt every frame);
+/// `None` in the other styles.
+fn drag_state(key: &'static str, chrome: ChromeStyle, window: &mut Window, cx: &mut App) -> Option<Rc<Cell<bool>>> {
+    (chrome == ChromeStyle::Linux).then(|| window.use_keyed_state(key, cx, |_, _| Rc::new(Cell::new(false))).read(cx).clone())
 }
 
 /// The ☰ button opening the app menu, sized like the other title-bar icon buttons.
@@ -236,6 +262,7 @@ impl RenderOnce for TitleBar {
             ChromeStyle::Windows => true,
             ChromeStyle::Linux => self.force_window_controls || matches!(window.window_decorations(), Decorations::Client { .. }),
         };
+        let (brand_drag, window_drag) = (drag_state("brand-drag", chrome, window, cx), drag_state("window-drag-state", chrome, window, cx));
         let lead = if chrome.is_mac() {
             Some(
                 div()
@@ -264,7 +291,7 @@ impl RenderOnce for TitleBar {
             .px(px(13.))
             .children(lead)
             .child(button(IconButton::icon("toggle-sidebar", IconName::Side), self.on_toggle_sidebar))
-            .child(div().id("brand").text_size(s.px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).on_mouse_down(MouseButton::Left, drag_window).child("rogg"));
+            .child(drag_area(div().id("brand").test_support().text_size(s.px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).child("rogg"), brand_drag));
 
         let tab_strip = div()
             .id("tabs")
@@ -300,16 +327,16 @@ impl RenderOnce for TitleBar {
             .border_color(p.border)
             .child(leading)
             .child(
-                div().flex().flex_1().min_w_0().h_full().items_center().gap(px(5.)).child(tab_strip).child(
+                div().flex().flex_1().min_w_0().h_full().items_center().gap(px(5.)).child(tab_strip).child(drag_area(
                     div()
                         .id("window-drag")
                         .test_support()
                         .flex_1()
                         .min_w(px(28.))
                         .h_full()
-                        .when(windows, |d| d.window_control_area(WindowControlArea::Drag))
-                        .on_mouse_down(MouseButton::Left, drag_window),
-                ),
+                        .when(windows, |d| d.window_control_area(WindowControlArea::Drag)),
+                    window_drag,
+                )),
             )
             .child(
                 div()

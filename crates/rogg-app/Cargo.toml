@@ -22,4 +22,7 @@ anyhow.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 rogg-genlog = { path = "../rogg-genlog" }
+
+# Only the Unix FIFO test (`tests/streams.rs`) uses it.
+[target.'cfg(unix)'.dev-dependencies]
 libc.workspace = true

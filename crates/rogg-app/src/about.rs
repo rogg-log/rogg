@@ -2,11 +2,22 @@
 
 use crate::paths::AppPaths;
 use gpui_kit::{App, SharedString};
+use rogg_ui::ActiveRoggTheme;
 use rogg_ui::dialogs::AboutView;
+use rogg_ui::theme::ChromeStyle;
 use std::path::{Path, PathBuf};
 
 pub const UNKNOWN: &str = "unknown";
+/// The Mac style's tagline; `tagline` names the platform of the other styles.
 pub const TAGLINE: &str = "A fast log explorer for macOS";
+
+pub fn tagline(chrome: ChromeStyle) -> &'static str {
+    match chrome {
+        ChromeStyle::Mac => TAGLINE,
+        ChromeStyle::Linux => "A fast log explorer for Linux",
+        ChromeStyle::Windows => "A fast log explorer for Windows",
+    }
+}
 pub const BUILT_WITH: &str = "Built with Rust, gpui and gpui-kit";
 
 pub struct BuildInfo {
@@ -46,19 +57,31 @@ pub const CREDITS: [(&str, &str); 16] = [
     ("JetBrains Mono (font)", "OFL-1.1"),
 ];
 
-/// The folders the About dialog offers to show in Finder: the one holding settings, profiles, session, history and
-/// recent files, then the cache. From `AppPaths`, so tests see their temp directories.
+/// The folders the About dialog offers to show in the file manager. From `AppPaths`, so tests see their temp directories.
 pub fn data_folders(cx: &App) -> Vec<(SharedString, PathBuf)> {
-    let Some(paths) = cx.try_global::<AppPaths>() else { return vec![] };
-    let support = paths.settings.parent().map(Path::to_path_buf).unwrap_or_default();
-    vec![("Settings, profiles, session, history and recent files".into(), support), ("Cache".into(), paths.cache.clone())]
+    cx.try_global::<AppPaths>().map(folders).unwrap_or_default()
+}
+
+/// The config folder (settings, profiles) and the data folder (session, history, recent files) as one row when they are
+/// the same folder (macOS, Windows), as two when they differ (Linux: `~/.config/rogg`, `~/.local/share/rogg`); then
+/// the cache.
+pub fn folders(paths: &AppPaths) -> Vec<(SharedString, PathBuf)> {
+    let parent = |p: &Path| p.parent().map(Path::to_path_buf).unwrap_or_default();
+    let (config, data) = (parent(&paths.settings), parent(&paths.session));
+    let mut rows: Vec<(SharedString, PathBuf)> = if config == data {
+        vec![("Settings, profiles, session, history and recent files".into(), config)]
+    } else {
+        vec![("Settings and profiles".into(), config), ("Session, history and recent files".into(), data)]
+    };
+    rows.push(("Cache".into(), paths.cache.clone()));
+    rows
 }
 
 pub fn view(cx: &App) -> AboutView {
     let b = build_info();
     AboutView {
         version: format!("rogg {}", b.version).into(),
-        tagline: TAGLINE.into(),
+        tagline: tagline(cx.rogg().chrome).into(),
         build: vec![("Commit".into(), b.commit.into()), ("Built".into(), b.date.into()), ("Rust".into(), b.rustc.into())],
         data: data_folders(cx).into_iter().map(|(label, path)| (label, path.display().to_string().into())).collect(),
         built_with: BUILT_WITH.into(),
@@ -87,5 +110,39 @@ mod tests {
             ["gpui-kit", "regex", "aho-corasick", "memchr", "memmap2", "rayon", "notify", "flate2", "zip", "tar", "encoding_rs", "serde", "serde_json", "toml", "Inter (font)", "JetBrains Mono (font)"]
         );
         assert!(CREDITS.iter().all(|(_, license)| !license.is_empty()));
+    }
+
+    #[test]
+    fn one_folder_row_when_config_and_data_share_a_folder() {
+        let paths = AppPaths::under(Path::new("/support/rogg"));
+        let rows = folders(&paths);
+        let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_ref()).collect();
+        assert_eq!(labels, ["Settings, profiles, session, history and recent files", "Cache"]);
+        assert_eq!(rows[0].1, Path::new("/support/rogg"));
+        assert_eq!(rows[1].1, Path::new("/support/rogg/cache"));
+    }
+
+    #[test]
+    fn separate_config_and_data_folders_get_a_row_each() {
+        let (config, data) = (Path::new("/home/u/.config/rogg"), Path::new("/home/u/.local/share/rogg"));
+        let paths = AppPaths {
+            history: data.join("history.json"),
+            recent: data.join("recent.json"),
+            cache: PathBuf::from("/home/u/.cache/rogg"),
+            settings: config.join("settings.toml"),
+            profiles: config.join("profiles"),
+            session: data.join("session.json"),
+        };
+        let rows = folders(&paths);
+        let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_ref()).collect();
+        assert_eq!(labels, ["Settings and profiles", "Session, history and recent files", "Cache"]);
+        assert_eq!(rows.iter().map(|(_, p)| p.as_path()).collect::<Vec<_>>(), [config, data, Path::new("/home/u/.cache/rogg")]);
+    }
+
+    #[test]
+    fn the_tagline_names_the_platform() {
+        assert_eq!(tagline(ChromeStyle::Mac), "A fast log explorer for macOS");
+        assert_eq!(tagline(ChromeStyle::Linux), "A fast log explorer for Linux");
+        assert_eq!(tagline(ChromeStyle::Windows), "A fast log explorer for Windows");
     }
 }

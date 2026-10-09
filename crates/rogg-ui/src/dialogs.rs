@@ -1,7 +1,7 @@
 use crate::controls::{ActionButton, IconButton};
 use crate::form::SectionLabel;
 use crate::icons::{IconName, icon};
-use crate::theme::{ActiveRoggTheme, Color, size};
+use crate::theme::{ActiveRoggTheme, ChromeStyle, Color, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::*;
@@ -376,14 +376,14 @@ pub struct AboutView {
     pub tagline: SharedString,
     /// (label, value): commit, build date, Rust.
     pub build: Vec<(SharedString, SharedString)>,
-    /// (label, folder path); each row has a Show in Finder button.
+    /// (label, folder path); each row has a reveal button (`reveal_label`).
     pub data: Vec<(SharedString, SharedString)>,
     pub built_with: SharedString,
     /// (crate, license).
     pub credits: Vec<(SharedString, SharedString)>,
 }
 
-/// About rogg (spec A4): header, Build, Data (with Show in Finder) and Credits sections.
+/// About rogg (spec A4): header, Build, Data (with a reveal button per folder) and Credits sections.
 pub fn about(view: &AboutView, on_reveal: IndexCallback) -> DialogFrame {
     let mut frame = DialogFrame::new("About rogg").child(AboutHeader { version: view.version.clone(), tagline: view.tagline.clone() });
     frame = frame.child(SectionLabel::new("Build"));
@@ -481,7 +481,16 @@ impl RenderOnce for FullLineText {
     }
 }
 
-/// A data folder: label, path (mono, truncated) and Show in Finder.
+/// The About data rows' button, naming the platform's file manager.
+pub fn reveal_label(chrome: ChromeStyle) -> &'static str {
+    match chrome {
+        ChromeStyle::Mac => "Show in Finder",
+        ChromeStyle::Linux => "Show in Files",
+        ChromeStyle::Windows => "Show in Explorer",
+    }
+}
+
+/// A data folder: label, path (mono, truncated) and the reveal button.
 #[derive(IntoElement)]
 struct DataRow {
     index: usize,
@@ -516,13 +525,21 @@ impl RenderOnce for DataRow {
                     .child(self.label)
                     .child(div().truncate().font_family(t.fonts.mono.clone()).text_size(s.px(11.)).text_color(p.muted).child(self.path)),
             )
-            .child(ActionButton::new(SharedString::from(format!("about-reveal-{i}")), "Show in Finder").on_click(move |w, cx| on_reveal(i, w, cx)))
+            .child(ActionButton::new(SharedString::from(format!("about-reveal-{i}")), reveal_label(t.chrome)).on_click(move |w, cx| on_reveal(i, w, cx)))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FULL_LINE_SHOWN_BYTES, full_line_shown};
+    use super::{FULL_LINE_SHOWN_BYTES, full_line_shown, reveal_label};
+    use crate::theme::ChromeStyle;
+
+    #[test]
+    fn the_reveal_button_names_the_file_manager() {
+        assert_eq!(reveal_label(ChromeStyle::Mac), "Show in Finder");
+        assert_eq!(reveal_label(ChromeStyle::Linux), "Show in Files");
+        assert_eq!(reveal_label(ChromeStyle::Windows), "Show in Explorer");
+    }
 
     #[test]
     fn the_full_line_dialog_shows_at_most_1_mb_on_a_char_boundary() {

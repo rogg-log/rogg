@@ -1,10 +1,11 @@
 //! Read-only file mappings that survive the file shrinking underneath them (spec §4.5).
 //!
-//! Reading a mapped page that lies wholly past the end of a truncated file raises SIGBUS. Every `SafeMap` registers
+//! On Unix, reading a mapped page that lies wholly past the end of a truncated file raises SIGBUS. Every `SafeMap` registers
 //! its address range in a fixed, lock-free table, and a process-wide SIGBUS handler checks the faulting address
 //! against it: inside a registered mapping, the handler maps private zero pages over the rest of that mapping and
 //! returns, so the read sees zeros instead of killing the process. Live follow then notices the shrink and reloads
-//! the file. A fault anywhere else goes back to the handler that was installed before ours.
+//! the file. A fault anywhere else goes back to the handler that was installed before ours. Windows needs no guard: it
+//! refuses to truncate a file while a view of it is mapped.
 
 use memmap2::Mmap;
 use std::fs::File;
@@ -130,7 +131,8 @@ impl SafeMap {
         }
         install();
         // SAFETY: a read-only mapping that rogg never writes through. Another process writing the file only changes
-        // what is displayed; a truncation is caught by the SIGBUS guard above.
+        // what is displayed. A truncation is caught by the SIGBUS guard above on Unix; Windows refuses to truncate a
+        // mapped file.
         let map = unsafe { Mmap::map(file) }?;
         let slot = register(map.as_ptr() as usize, map.len());
         Ok(SafeMap { map, slot })
@@ -140,9 +142,11 @@ impl SafeMap {
         &self.map
     }
 
-    /// False when every guard slot was taken at mapping time (the mapping then works unprotected).
+    /// Whether the SIGBUS guard protects this mapping: false when every guard slot was taken at mapping time (the
+    /// mapping then works unprotected), and always false on Windows, which has no guard to give and needs none (it
+    /// refuses to truncate a mapped file).
     pub fn is_guarded(&self) -> bool {
-        self.slot.is_some()
+        cfg!(unix) && self.slot.is_some()
     }
 }
 

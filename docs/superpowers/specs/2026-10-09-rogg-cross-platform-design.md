@@ -57,6 +57,7 @@ All OS-specific code lives in `rogg-core::platform`, with one implementation per
 ### 4.2 Title bar and window controls
 - **Mac:** traffic-light space on the left, as today, with a transparent native title bar.
 - **Linux and Windows:** the window opens with client-side decorations (`WindowDecorations::Client`). There is no traffic-light space. rogg draws minimise, maximise/restore and close on the right of the title bar.
+  - **Note 2026-10-09 (implementation):** only Linux opens with `WindowDecorations::Client`. Windows keeps the system frame with a transparent title bar (`appears_transparent`); rogg's title bar is drawn over the caption, and its controls use `WindowControlArea` for the native hit-testing (snap layouts). On Linux, gpui-kit's root (gpui-component's `window_border`) draws the frame and shadow and provides the edge and corner resize zones, so rogg adds none of its own. Title-bar drags start on the first mouse move after a press, not on the press, so a double-click still reaches rogg.
   - **Windows style:** 46×42 px rectangular buttons with no gap. Close turns red (`#c42b1c`) with white glyphs on hover. The others take the hover background.
   - **Linux style:** round 24 px buttons with 8 px gaps (GNOME-like), muted glyphs and a hover fill.
 - **Behaviour:** double-clicking the title bar's drag area maximises or restores the window. Dragging moves the window. The window edges resize it, using gpui's client-decoration resize areas. The maximise glyph changes when the window is maximised.

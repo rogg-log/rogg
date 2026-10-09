@@ -10,7 +10,7 @@ use rogg_ui::theme::ChromeStyle;
 
 /// Default 1440×900 like the reference captures. Mac style: traffic lights at (13, 14) to sit in the 53 px block of the
 /// 42 px title bar (tuned during the M2 visual review). Linux style: client-side decorations, so rogg draws the
-/// controls and the resize edges. Windows style: the system frame stays, with rogg's title bar drawn over its caption.
+/// controls (gpui-kit's root adds the frame and its resize edges). Windows style: the system frame stays, with rogg's title bar drawn over its caption.
 /// With a stored frame (session restore), the window opens there, maximised if it was; a frame with non-finite values
 /// is ignored, and one that would be out of sight on the current displays is centred (`session::fit_to_displays`).
 pub fn window_options(state: Option<&rogg_core::session::WindowState>, chrome: ChromeStyle, cx: &App) -> WindowOptions {
@@ -30,6 +30,9 @@ pub fn window_options(state: Option<&rogg_core::session::WindowState>, chrome: C
         window_decorations: (chrome == ChromeStyle::Linux).then_some(WindowDecorations::Client),
         app_owns_titlebar_drag: true,
         window_min_size: Some(size(px(crate::session::MIN_W), px(crate::session::MIN_H))),
+        // The Wayland app_id and X11 WM_CLASS, which desktops use to group windows and find the launcher entry;
+        // macOS and Windows ignore it.
+        app_id: Some("rogg".into()),
         ..Default::default()
     }
 }

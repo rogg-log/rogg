@@ -47,10 +47,15 @@ pub fn run(args: args::Args) {
 /// Full initialisation: gpui-kit, the default theme, app globals and key bindings, menus.
 pub fn init_with(cx: &mut App, paths: AppPaths) {
     gpui_kit::init(cx);
-    rogg_ui::fonts::register(cx);
-    let settings = settings::SettingsStore::load(paths.settings.clone());
     // The only place the style is resolved (ROGG_CHROME or the build OS); everything later reads the installed theme.
-    settings::theme_for(settings.settings(), cx.window_appearance(), rogg_ui::theme::ChromeStyle::resolved()).install(cx);
+    let chrome = rogg_ui::theme::ChromeStyle::resolved();
+    // The bundled Inter and JetBrains Mono are the Linux and Windows styles' fonts. The Mac style keeps the system's
+    // fonts only, so its "Other…" log-font list is unchanged.
+    if !chrome.is_mac() {
+        rogg_ui::fonts::register(cx);
+    }
+    let settings = settings::SettingsStore::load(paths.settings.clone());
+    settings::theme_for(settings.settings(), cx.window_appearance(), chrome).install(cx);
     cx.set_global(settings);
     install_globals(cx, paths);
     let recent = cx.global::<recent::RecentStore>().entries().to_vec();

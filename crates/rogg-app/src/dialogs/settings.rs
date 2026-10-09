@@ -39,6 +39,11 @@ pub fn log_font_labels(options: &[SharedString], chrome: ChromeStyle) -> Vec<Sha
     options.iter().map(|o| if o.as_ref() == DEFAULT_LOG_FONT { default_log_font_label(chrome).into() } else { o.clone() }).collect()
 }
 
+/// The Theme row's hint: the Mac style names macOS, the others the desktop.
+pub fn theme_hint(chrome: ChromeStyle) -> &'static str {
+    if chrome.is_mac() { "System follows the macOS appearance" } else { "System follows the desktop appearance" }
+}
+
 fn change(this: &Entity<Workspace>, f: impl Fn(&mut Settings) + 'static) -> impl Fn(&mut Window, &mut App) + 'static {
     let this = this.clone();
     move |window, cx| this.update(cx, |ws, cx| ws.change_settings(|s| f(s), window, cx))
@@ -85,7 +90,7 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
     DialogFrame::new("Settings")
         .description("Changes apply immediately and are saved.")
         .child(SectionLabel::new("Appearance"))
-        .child(FormRow::new("row-theme", "Theme").hint("System follows the macOS appearance").control(
+        .child(FormRow::new("row-theme", "Theme").hint(theme_hint(cx.rogg().chrome)).control(
             Segmented::new("setting-theme", vec!["System".into(), "Light".into(), "Dark".into()], THEMES.iter().position(|t| *t == a.theme).unwrap_or(0))
                 .on_select(change_ix(this, |s, i| s.appearance.theme = THEMES[i.min(2)])),
         ))

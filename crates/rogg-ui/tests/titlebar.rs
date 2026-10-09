@@ -161,20 +161,83 @@ fn linux_style_keeps_the_system_controls_of_a_server_decorated_window(cx: &mut T
     assert!(common::exists(cx, w, "app-menu"), "the ☰ menu stays");
 }
 
-/// gpui's `titlebar_double_click` acts only on macOS; the Linux style zooms instead. The test platform's `zoom` is
-/// `unimplemented!()`, so reaching it is what this observes.
+/// Pointer input for the Linux drag-area tests, in order, over the centre of element `id`. The test platform's
+/// `start_window_move` and `zoom` are both `unimplemented!()`, so a test that reaches either panics with "not
+/// implemented", and one that reaches neither returns normally.
+#[derive(Clone, Copy)]
+enum Pointer {
+    Down(usize),
+    Up(usize),
+    /// A move with the left button held (`true`) or no button.
+    Move(bool),
+}
+
+fn linux_drag(cx: &mut TestAppContext, id: &'static str, input: &[Pointer]) {
+    use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).into_any_element());
+    let position = common::bounds(cx, w, id).center();
+    let input = input.to_vec();
+    cx.update_window(w, move |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        // Hover first, so the drag area's hitbox is under the pointer for the events that follow.
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+        window.render_frame(cx);
+        for event in input {
+            let event = match event {
+                Pointer::Down(click_count) => PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count, ..Default::default() }),
+                Pointer::Up(click_count) => {
+                    PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, modifiers: Modifiers::default(), click_count })
+                }
+                Pointer::Move(held) => PlatformInput::MouseMove(MouseMoveEvent {
+                    position: position + gpui_kit::point(px(3.), px(0.)),
+                    pressed_button: held.then_some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+            };
+            window.dispatch_event(event, cx);
+            // A frame between events, as on a real desktop: the armed state must outlive the rebuilt title bar.
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+}
+
+/// A press alone does not hand the pointer to the window manager (which would swallow a double-click's second press),
+/// and neither does a later move without the button: neither `start_window_move` nor `zoom` is reached.
+#[gpui_kit::test]
+fn linux_style_press_without_dragging_does_not_move_the_window(cx: &mut TestAppContext) {
+    linux_drag(cx, "window-drag", &[Pointer::Down(1), Pointer::Up(1), Pointer::Move(false)]);
+}
+
+/// Releasing the button disarms the drag: a move with the button held after the release (as when a press elsewhere
+/// is dragged over the title bar) does not move the window.
+#[gpui_kit::test]
+fn linux_style_release_disarms_the_drag(cx: &mut TestAppContext) {
+    linux_drag(cx, "brand", &[Pointer::Down(1), Pointer::Up(1), Pointer::Move(true)]);
+}
+
+/// Press, then move with the button held: the move reaches `start_window_move` (observed through the test platform's
+/// panic; the press alone does not panic, per the test above).
+#[gpui_kit::test]
+#[should_panic(expected = "not implemented")]
+fn linux_style_press_and_drag_moves_the_window(cx: &mut TestAppContext) {
+    linux_drag(cx, "window-drag", &[Pointer::Down(1), Pointer::Move(true)]);
+}
+
+/// The same on the brand label, the drag area's other half.
+#[gpui_kit::test]
+#[should_panic(expected = "not implemented")]
+fn linux_style_press_and_drag_on_the_brand_moves_the_window(cx: &mut TestAppContext) {
+    linux_drag(cx, "brand", &[Pointer::Down(1), Pointer::Move(true)]);
+}
+
+/// A full double-click: the first press and release reach nothing (see above), so the panic comes from the second
+/// press, which zooms the window (`zoom_window`; gpui's `titlebar_double_click` acts only on macOS).
 #[gpui_kit::test]
 #[should_panic(expected = "not implemented")]
 fn linux_style_double_click_zooms_the_window(cx: &mut TestAppContext) {
-    use gpui_kit::{MouseButton, MouseDownEvent, PlatformInput};
-    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
-    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).into_any_element());
-    let position = common::bounds(cx, w, "window-drag").center();
-    cx.update_window(w, |_, window, cx| {
-        let down = MouseDownEvent { button: MouseButton::Left, position, click_count: 2, ..Default::default() };
-        window.dispatch_event(PlatformInput::MouseDown(down), cx);
-    })
-    .unwrap();
+    linux_drag(cx, "window-drag", &[Pointer::Down(1), Pointer::Up(1), Pointer::Down(2)]);
 }
 
 #[gpui_kit::test]

@@ -23,7 +23,7 @@ Verified in a container, not yet on a real desktop. Wayland and X11 are both sup
 - **From macOS:** `./dev linux-image` builds the `debian:trixie` image (needs Apple `container`). `./dev linux-build` and `./dev linux-test` build and test inside it. `./dev linux-shot [demo|<page>]` screenshots the running app under Xvfb with xfwm4 and lavapipe into `target/linux/shots/`. `./dev linux-shell` opens a shell.
   - `ROGG_LINUX_CPUS` (default 6) and `ROGG_LINUX_MEMORY` (default 20G) set the container limits.
 - **Data:** settings and profiles in `$XDG_CONFIG_HOME/rogg` (else `~/.config/rogg`); history, recent files and the session in `$XDG_DATA_HOME/rogg` (else `~/.local/share/rogg`); the cache in `$XDG_CACHE_HOME/rogg` (else `~/.cache/rogg`).
-- **Keys:** Ctrl replaces ⌘ (Ctrl+O, Ctrl+F, Ctrl+L), and Ctrl+Q quits. Hide, Hide Others and Minimise are macOS-only.
+- **Keys:** Ctrl replaces ⌘ (Ctrl+O, Ctrl+F, Ctrl+L), and Ctrl+Q quits. The ⌘H (Hide), ⌥⌘H (Hide Others) and ⌘M (Minimise) shortcuts are macOS-only; Minimise itself stays in the ☰ menu and the window controls.
 - **Verified:** the workspace builds and its tests pass in the container, and `linux-shot` checks that the window renders. Hand checks on a real desktop are listed in `docs/superpowers/notes/2026-10-09-cross-platform-manual-checks.md`.
 
 ## Windows
@@ -31,9 +31,9 @@ Verified in a container, not yet on a real desktop. Wayland and X11 are both sup
 Cross-built from macOS only; it has not been run.
 
 - **Build:** `./dev windows-build` runs `cargo xwin build --workspace --target x86_64-pc-windows-msvc`. It needs the rustup target `x86_64-pc-windows-msvc`, `cargo-xwin` and Homebrew `llvm`; `./dev setup` offers all three after asking.
-- **Run:** copy `rogg.exe` from `target/x86_64-pc-windows-msvc/` to a Windows machine. `rogg.exe -` reads stdin.
+- **Run:** copy `target/x86_64-pc-windows-msvc/debug/rogg.exe` to a Windows machine. `rogg.exe -` reads stdin. A release build (`cargo xwin build --release …`, then `target/x86_64-pc-windows-msvc/release/rogg.exe`) opens no console window.
 - **Data:** settings, profiles, history, recent files and the session in `%APPDATA%\rogg`; the cache in `%LOCALAPPDATA%\rogg\cache`.
-- **Keys:** Ctrl replaces ⌘. Alt+F4 closes the window, and the ☰ menu has Quit.
+- **Keys:** Ctrl replaces ⌘. Alt+F4 closes the window, and the ☰ menu has Quit. The ⌘H, ⌥⌘H and ⌘M shortcuts are macOS-only; Minimise stays in the ☰ menu and the window controls.
 - **Verified:** it compiles and links, and the Windows code paths are compile-checked. The tests are compile-checked only. The manual checks note covers the first run and the known Windows-only risks around memory-mapped logs.
 
 ## Other notes

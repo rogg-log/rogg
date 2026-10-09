@@ -1,3 +1,7 @@
+// A Windows release build is a GUI-subsystem program, so starting it opens no console window. Piped stdin still
+// arrives (`type file.log | rogg.exe -`); debug builds keep the console for their output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 fn main() {
     match rogg_app::args::Args::parse(std::env::args_os().skip(1)) {
         Ok(mut args) => {

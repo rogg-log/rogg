@@ -242,6 +242,10 @@ mod tests {
             for (label, keys) in shortcut_rows(chrome) {
                 assert!(!keys.chars().any(|c| "⌘⌃⌥⇧".contains(c)), "{chrome:?}: {label}: {keys}");
             }
+            // The welcome view's Open file / Open folder buttons.
+            for label in rogg_ui::empty::welcome_labels(chrome) {
+                assert!(!label.chars().any(|c| "⌘⌃⌥⇧".contains(c)), "{chrome:?}: welcome: {label}");
+            }
         }
     }
 

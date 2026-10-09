@@ -894,11 +894,8 @@ impl Render for Workspace {
                 }
             }
         };
-        // Client-decorated windows (the Linux style) resize from rogg's own edges.
-        let content = match window.window_decorations() {
-            gpui_kit::Decorations::Client { .. } => rogg_ui::layout::resize_edges(content).into_any_element(),
-            gpui_kit::Decorations::Server => content,
-        };
+        // Client-decorated windows (the Linux style) resize through gpui-kit's root: gpui-component's `window_border`
+        // draws the frame and shadow and gives every edge and corner a resize zone.
         self.root(cx).child(content)
     }
 }

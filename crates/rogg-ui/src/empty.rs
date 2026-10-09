@@ -2,7 +2,8 @@ use crate::chrome::bar_fraction;
 use crate::controls::ActionButton;
 use crate::icons::{IconName, icon};
 use crate::sidebar::RecentItem;
-use crate::theme::ActiveRoggTheme;
+use crate::keys::shortcut_label;
+use crate::theme::{ActiveRoggTheme, ChromeStyle};
 use crate::{Callback, IndexCallback};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, FontWeight, SharedString, TestSupportExt, Window, div, px, relative};
@@ -134,17 +135,36 @@ impl RenderOnce for RecentFilters {
 pub fn welcome(recent: Vec<RecentItem>, on_open_file: Callback, on_open_folder: Callback, on_recent: IndexCallback) -> EmptyState {
     let mut state = EmptyState::new("welcome", "Open a log to start")
         .body("Drop files, folders or archives here, or pipe into rogg from a terminal.")
-        .child(
-            div()
-                .flex()
-                .gap(px(7.))
-                .child(ActionButton::new("open-file", "Open file…  ⌘O").primary().on_click(call(on_open_file)))
-                .child(ActionButton::new("open-folder", "Open folder…  ⇧⌘O").on_click(call(on_open_folder))),
-        );
+        .child(WelcomeActions { on_open_file, on_open_folder });
     if !recent.is_empty() {
         state = state.child(WelcomeRecent { items: recent, on_recent });
     }
     state
+}
+
+/// The welcome buttons' labels in the given chrome style: `Open file…  ⌘O` and `Open folder…  ⇧⌘O` on Mac (the
+/// shortcut written without the keymap's spaces), `Open file…  Ctrl+O` and `Open folder…  Ctrl+Shift+O` elsewhere.
+pub fn welcome_labels(chrome: ChromeStyle) -> [String; 2] {
+    let keys = |mac: &str| shortcut_label(mac, chrome).replace(' ', "");
+    [format!("Open file…  {}", keys("⌘ O")), format!("Open folder…  {}", keys("⇧ ⌘ O"))]
+}
+
+/// The Open file / Open folder buttons, labelled in the installed theme's chrome style.
+#[derive(IntoElement)]
+struct WelcomeActions {
+    on_open_file: Callback,
+    on_open_folder: Callback,
+}
+
+impl RenderOnce for WelcomeActions {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let [file, folder] = welcome_labels(cx.rogg().chrome);
+        div()
+            .flex()
+            .gap(px(7.))
+            .child(ActionButton::new("open-file", file).primary().on_click(call(self.on_open_file)))
+            .child(ActionButton::new("open-folder", folder).on_click(call(self.on_open_folder)))
+    }
 }
 
 /// Recent entries under the welcome actions.
@@ -206,5 +226,19 @@ impl RenderOnce for LoadingBar {
             .child(
                 div().id("loading-fill").test_support().h_full().rounded(px(2.)).bg(p.accent).w(relative(self.fraction.map_or(0.3, bar_fraction))),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::welcome_labels;
+    use crate::theme::ChromeStyle;
+
+    #[test]
+    fn welcome_labels_keep_the_mac_strings_and_use_ctrl_elsewhere() {
+        assert_eq!(welcome_labels(ChromeStyle::Mac), ["Open file…  ⌘O", "Open folder…  ⇧⌘O"]);
+        for chrome in [ChromeStyle::Linux, ChromeStyle::Windows] {
+            assert_eq!(welcome_labels(chrome), ["Open file…  Ctrl+O", "Open folder…  Ctrl+Shift+O"]);
+        }
     }
 }

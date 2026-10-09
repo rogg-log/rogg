@@ -1,9 +1,6 @@
 use crate::theme::{ActiveRoggTheme, size};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyElement, App, Bounds, CursorStyle, Decorations, EmptyView, MouseButton, Pixels, Point, ResizeEdge, TestSupportExt, Tiling, Window, canvas, div,
-    px, relative,
-};
+use gpui_kit::{AnyElement, App, Bounds, CursorStyle, EmptyView, Pixels, Point, TestSupportExt, Window, canvas, div, px, relative};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -279,65 +276,6 @@ impl RenderOnce for MainWindowLayout {
     }
 }
 
-/// Wraps the window content with invisible strips along the window's edges and corners that start a native resize. Only
-/// client-decorated windows (Linux without server-side decorations) need them; the caller checks
-/// `window.window_decorations()`. Edges the window is tiled against get no strip.
-pub fn resize_edges(content: AnyElement) -> impl IntoElement {
-    ResizeEdges(content)
-}
-
-/// The resize strips' thickness, and the side of the corner squares.
-const RESIZE_EDGE: f32 = 5.;
-
-#[derive(IntoElement)]
-struct ResizeEdges(AnyElement);
-
-/// The edges and corners that get a resize strip: those not touching a tiled side.
-fn resize_handles(tiling: Tiling) -> Vec<ResizeEdge> {
-    use ResizeEdge::*;
-    let free = |edge: ResizeEdge| match edge {
-        Top => !tiling.top,
-        Bottom => !tiling.bottom,
-        Left => !tiling.left,
-        Right => !tiling.right,
-        TopLeft => !tiling.top && !tiling.left,
-        TopRight => !tiling.top && !tiling.right,
-        BottomLeft => !tiling.bottom && !tiling.left,
-        BottomRight => !tiling.bottom && !tiling.right,
-    };
-    // Corners last, so they sit over the ends of the edge strips.
-    [Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight].into_iter().filter(|&e| free(e)).collect()
-}
-
-fn resize_handle(edge: ResizeEdge) -> impl IntoElement {
-    let w = px(RESIZE_EDGE);
-    let strip = div().absolute().occlude();
-    let (strip, cursor) = match edge {
-        ResizeEdge::Top => (strip.top_0().left_0().right_0().h(w), CursorStyle::ResizeUpDown),
-        ResizeEdge::Bottom => (strip.bottom_0().left_0().right_0().h(w), CursorStyle::ResizeUpDown),
-        ResizeEdge::Left => (strip.left_0().top_0().bottom_0().w(w), CursorStyle::ResizeLeftRight),
-        ResizeEdge::Right => (strip.right_0().top_0().bottom_0().w(w), CursorStyle::ResizeLeftRight),
-        ResizeEdge::TopLeft => (strip.top_0().left_0().size(w), CursorStyle::ResizeUpLeftDownRight),
-        ResizeEdge::BottomRight => (strip.bottom_0().right_0().size(w), CursorStyle::ResizeUpLeftDownRight),
-        ResizeEdge::TopRight => (strip.top_0().right_0().size(w), CursorStyle::ResizeUpRightDownLeft),
-        ResizeEdge::BottomLeft => (strip.bottom_0().left_0().size(w), CursorStyle::ResizeUpRightDownLeft),
-    };
-    strip.cursor(cursor).on_mouse_down(MouseButton::Left, move |_, window, cx| {
-        cx.stop_propagation();
-        window.start_window_resize(edge);
-    })
-}
-
-impl RenderOnce for ResizeEdges {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        let handles = match window.window_decorations() {
-            Decorations::Client { tiling } => resize_handles(tiling),
-            Decorations::Server => Vec::new(),
-        };
-        div().relative().size_full().child(self.0).children(handles.into_iter().map(resize_handle))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,17 +302,5 @@ mod tests {
         let side = SidebarDrag::default();
         side.grab.set(1.);
         assert_eq!(side.width(px(250.)), px(252.), "edge grabbed 1 px into it, 3 px left of the sidebar edge");
-    }
-
-    #[test]
-    fn resize_handles_skip_tiled_sides() {
-        use ResizeEdge::*;
-        assert_eq!(resize_handles(Tiling::default()).len(), 8, "a floating window resizes from every edge and corner");
-        assert!(resize_handles(Tiling::tiled()).is_empty(), "a maximised window has no resize edges");
-        let left_half = Tiling { top: true, bottom: true, left: true, right: false };
-        assert_eq!(resize_handles(left_half), vec![Right]);
-        let right_side = resize_handles(Tiling { right: true, ..Tiling::default() });
-        assert!(!right_side.iter().any(|e| matches!(e, Right | TopRight | BottomRight)), "{right_side:?}");
-        assert_eq!(right_side.len(), 5);
     }
 }

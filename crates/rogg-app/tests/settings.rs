@@ -225,6 +225,19 @@ fn the_default_log_font_is_labelled_for_the_platform_but_stored_as_the_token() {
     assert_eq!(options[0].as_ref(), rogg_core::settings::DEFAULT_LOG_FONT, "the value behind the label is the token");
 }
 
+#[test]
+fn settings_and_font_picker_wording_names_macos_only_in_the_mac_style() {
+    use rogg_app::dialogs::fonts::picker_description;
+    use rogg_app::dialogs::settings::theme_hint;
+    use rogg_ui::theme::ChromeStyle;
+    assert_eq!(theme_hint(ChromeStyle::Mac), "System follows the macOS appearance");
+    assert_eq!(picker_description(ChromeStyle::Mac), "Monospace fonts installed on this Mac.");
+    for chrome in [ChromeStyle::Linux, ChromeStyle::Windows] {
+        assert_eq!(theme_hint(chrome), "System follows the desktop appearance");
+        assert_eq!(picker_description(chrome), "Monospace fonts installed on this computer.");
+    }
+}
+
 #[gpui_kit::test]
 fn choosing_the_default_log_font_stores_the_token(cx: &mut TestAppContext) {
     common::setup(cx);

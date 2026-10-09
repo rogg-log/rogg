@@ -5,6 +5,7 @@ use crate::settings::SettingsStore;
 use crate::workspace::Workspace;
 use gpui_kit::{App, Entity, Global, SharedString, font, px};
 use rogg_ui::dialogs::{DialogFrame, picker};
+use rogg_ui::theme::{ActiveRoggTheme, ChromeStyle};
 use std::rc::Rc;
 
 pub struct MonoFonts(pub Vec<String>);
@@ -48,5 +49,10 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
             }
         }),
     )
-    .description("Monospace fonts installed on this Mac.")
+    .description(picker_description(cx.rogg().chrome))
+}
+
+/// The font picker's description: "this Mac" in the Mac style, "this computer" in the others.
+pub fn picker_description(chrome: ChromeStyle) -> &'static str {
+    if chrome.is_mac() { "Monospace fonts installed on this Mac." } else { "Monospace fonts installed on this computer." }
 }
