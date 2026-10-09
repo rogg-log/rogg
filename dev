@@ -102,6 +102,12 @@ ${BOLD}Test data${RESET}
   live [out]                    Append a log line every 100 ms (live follow by hand; Ctrl-C stops)
   pipe [file]                   Pipe a file into the app (stdin capture)
 
+${BOLD}Linux${RESET}   (Apple container; image rogg-linux:latest, target dir target/linux)
+  linux-image                   Build the Linux image from tools/linux/Containerfile
+  linux-build                   cargo build --workspace --all-targets inside the image
+  linux-test                    cargo test --workspace inside the image
+  linux-shell                   Interactive shell in the image (needs a terminal)
+
 Set DRY=1 to print the commands without running them.
 EOF
 }
@@ -250,6 +256,46 @@ cmd_clean() {
   fi
 }
 
+LINUX_IMAGE=rogg-linux:latest
+
+need_container() {
+  command -v container >/dev/null 2>&1 || die "Apple container is not installed — https://github.com/apple/container"
+  container system status >/dev/null 2>&1 || run container system start
+}
+
+# Creates the named cargo cache volumes if they are missing.
+ensure_volumes() {
+  local vol
+  for vol in rogg-cargo-registry rogg-cargo-git; do
+    container volume inspect "$vol" >/dev/null 2>&1 || run container volume create "$vol"
+  done
+}
+
+# Runs a shell command in the Linux image with the repo mounted and the cargo caches in named volumes.
+in_linux() {
+  need_container
+  ensure_volumes
+  run container run --rm \
+    --volume "$ROOT:/work" \
+    --volume rogg-cargo-registry:/usr/local/cargo/registry \
+    --volume rogg-cargo-git:/usr/local/cargo/git \
+    --env CARGO_TARGET_DIR=/work/target/linux \
+    --env CARGO_BUILD_JOBS=3 \
+    --cpus 6 --memory 20G \
+    --workdir /work "$LINUX_IMAGE" bash -lc "$1"
+}
+
+cmd_linux_image() { need_container; step "Linux image"; run container build --tag "$LINUX_IMAGE" --file tools/linux/Containerfile tools/linux; }
+cmd_linux_build() { step "Linux build"; in_linux "cargo build --workspace --all-targets"; }
+# Root would ignore the read-only directories the save-failure tests rely on, so the test run drops CAP_DAC_OVERRIDE.
+cmd_linux_test()  { step "Linux tests"; in_linux "setpriv --bounding-set=-dac_override,-dac_read_search cargo test --workspace --no-fail-fast"; }
+cmd_linux_shell() {
+  need_container
+  ensure_volumes
+  run container run --rm -it --volume "$ROOT:/work" --volume rogg-cargo-registry:/usr/local/cargo/registry \
+    --volume rogg-cargo-git:/usr/local/cargo/git --env CARGO_TARGET_DIR=/work/target/linux --workdir /work "$LINUX_IMAGE" bash
+}
+
 cmd_check() {
   need_rust
   local visual=1
@@ -301,6 +347,10 @@ case $command in
   bundle) cmd_bundle "$@" ;;
   live) cmd_live "$@" ;;
   pipe) cmd_pipe "$@" ;;
+  linux-image) cmd_linux_image ;;
+  linux-build) cmd_linux_build ;;
+  linux-test) cmd_linux_test ;;
+  linux-shell) cmd_linux_shell ;;
   clean) cmd_clean "$@" ;;
   *) die "unknown command '$command' — ./dev help lists them" ;;
 esac

@@ -73,7 +73,10 @@ pub fn click(cx: &mut TestAppContext, window: AnyWindowHandle, id: &'static str)
     cx.run_until_parked();
 }
 
+/// Presses `keys`, written with macOS names. Off macOS the primary modifier is Ctrl, so `cmd-` becomes `ctrl-`.
 pub fn press(cx: &mut TestAppContext, window: AnyWindowHandle, keys: &str) {
+    #[cfg(not(target_os = "macos"))]
+    let keys = &keys.replace("cmd-", "ctrl-");
     cx.update_window(window, |_, window, cx| {
         use gpui_kit::test::TestWindowExt;
         window.press(keys, cx);

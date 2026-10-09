@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! Runs the real binary, because headless Metal capture must own the main thread.
 use std::process::Command;
 

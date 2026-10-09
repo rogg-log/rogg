@@ -252,12 +252,16 @@ mod tests {
         assert!(linux.iter().any(|(l, k)| l == "Next / previous tab" && k == "Ctrl+Tab / Ctrl+Shift+Tab"));
     }
 
+    // Hide and Minimize rows exist only on macOS (macOS-only bindings).
+    #[cfg(target_os = "macos")]
     #[test]
     fn hide_is_bound_to_cmd_h_on_mac() {
         let rows = mac_rows();
         assert!(rows.iter().any(|(label, keys)| label == "Hide rogg" && keys == "⌘ H"));
     }
 
+    // Hide and Minimize rows exist only on macOS (macOS-only bindings).
+    #[cfg(target_os = "macos")]
     #[test]
     fn minimize_is_bound_to_cmd_m_on_mac() {
         let rows = mac_rows();

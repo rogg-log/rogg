@@ -1,6 +1,7 @@
 //! Log view frames under the real macOS text system (CoreText). `TestAppContext` uses a no-op text
 //! system, which hides shaping failures (char-boundary panics) and glyph-scan costs.
 //! `harness = false`: the macOS platform (source of the text system) must be created on the main thread.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyWindowHandle, AppContext, Bounds, HeadlessAppContext, Point, WindowBounds, WindowOptions, px, size};
 use rogg_ui::logview::{LogLine, LogRow, LogView, LogViewState, Span, SpanStyle, VecRows};
@@ -224,6 +225,12 @@ fn a_click_with_a_small_wiggle_selects_the_row_not_a_character(cx: &mut Headless
 
 type Case = (&'static str, fn(&mut HeadlessAppContext));
 
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    println!("skipped: CoreText harness is macOS-only");
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     let mut cx = headless();
     let cases: [Case; 6] = [

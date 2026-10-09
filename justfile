@@ -70,3 +70,15 @@ pipe *args:
 
 clean *args:
     @./dev clean "$@"
+
+linux-image:
+    @./dev linux-image
+
+linux-build:
+    @./dev linux-build
+
+linux-test:
+    @./dev linux-test
+
+linux-shell:
+    @./dev linux-shell

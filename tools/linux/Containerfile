@@ -1,0 +1,18 @@
+# rogg's Linux build, test and screenshot environment (spec §5.1). Debian bookworm, arm64 like Apple silicon hosts.
+FROM debian:bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git build-essential pkg-config cmake clang \
+      libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev \
+      libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcursor-dev libxrandr-dev libxi-dev \
+      libfontconfig1-dev libfreetype6-dev libvulkan-dev libvulkan1 mesa-vulkan-drivers libssl-dev \
+      xvfb xauth x11-utils imagemagick xdotool zsh \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
+# The pinned toolchain comes from rust-toolchain.toml on first use; install rustup and that channel up front.
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.0 --component clippy,rustfmt
+# Software Vulkan (lavapipe) for wgpu under Xvfb.
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.aarch64.json WGPU_BACKEND=vulkan
+WORKDIR /work

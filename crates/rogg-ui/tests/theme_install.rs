@@ -12,7 +12,9 @@ fn install_sets_global_and_kit_mode(cx: &mut TestAppContext) {
         RoggTheme::new(Appearance::Dark, Density::Comfortable).install(cx);
         assert_eq!(cx.rogg().palette, Palette::dark());
         assert!(KitTheme::global(cx).mode.is_dark());
-        assert_eq!(KitTheme::global(cx).font_family.as_ref(), ".SystemUIFont");
+        // `RoggTheme::new` picks the font for the running OS: the system font on macOS, the bundled Inter elsewhere.
+        let ui = if cfg!(target_os = "macos") { rogg_ui::theme::UI_FONT } else { rogg_ui::theme::INTER };
+        assert_eq!(KitTheme::global(cx).font_family.as_ref(), ui);
     });
 }
 

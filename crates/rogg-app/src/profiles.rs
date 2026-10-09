@@ -93,7 +93,10 @@ impl ProfileStore {
         self.unsaved.retain(|n| n != old_name && *n != profile.name);
         // A rename whose names share a file on the case-insensitive disk ("Ops" → "ops") was saved over the old file:
         // deleting the old name would delete the profile.
-        if !names_collide(old_name, &profile.name) && saved.is_ok() {
+        // On a case-sensitive disk (Linux) the two names have two files, and the old one must go.
+        if let Ok(new_path) = &saved
+            && !(names_collide(old_name, &profile.name) && same_file(&self.dir.join(profile::file_name(old_name)), new_path))
+        {
             let _ = profile::delete(&self.dir, old_name);
         }
         self.last_error = saved.err().map(|e| format!("Could not save profile {}: {e}", profile.name));
@@ -184,6 +187,11 @@ impl ProfileStore {
         self.saves += 1;
         profile::save(&self.dir, profile)
     }
+}
+
+/// Whether two paths resolve to one file (differently cased names do on a case-insensitive disk).
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 /// Whether `a` and `b` differ at most in colours, which do not affect what the rules match.
