@@ -6,7 +6,7 @@ use gpui_kit::{
     AnyElement, AnyWindowHandle, App, Bounds, Context, Pixels, Point, TestAppContext, Window, WindowBounds, WindowOptions, px,
     size,
 };
-use rogg_ui::theme::{Appearance, Density, RoggTheme};
+use rogg_ui::theme::{Appearance, ChromeStyle, Density, RoggTheme};
 
 pub fn setup(cx: &mut TestAppContext) {
     setup_with(cx, Appearance::Dark, Density::Compact);
@@ -17,6 +17,12 @@ pub fn setup_with(cx: &mut TestAppContext, appearance: Appearance, density: Dens
         gpui_kit::init(cx);
         RoggTheme::new(appearance, density).install(cx);
     });
+}
+
+/// The default dark compact theme, re-installed in the given chrome style.
+pub fn setup_chrome(cx: &mut TestAppContext, chrome: ChromeStyle) {
+    setup(cx);
+    cx.update(|cx| RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(chrome).install(cx));
 }
 
 /// A view that renders whatever the closure builds; used to host RenderOnce components.

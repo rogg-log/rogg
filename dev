@@ -91,8 +91,9 @@ ${BOLD}Visual${RESET}
   visual                        Replica vs the HTML reference: full report, opens target/visual/report.html
   visual-app                    Real app (demo) vs the HTML reference: opens target/visual-app/report.html
   visual-approve                Re-capture the replica and make it the new goldens (asks first)
-  capture <page> [theme] [density]
-                                One gallery capture into target/visual/manual/ (theme dark|light, density compact|comfortable)
+  capture <page> [theme] [density] [chrome]
+                                One gallery capture into target/visual/manual/ (theme dark|light, density compact|comfortable,
+                                chrome mac|linux|windows)
 
 ${BOLD}Test data${RESET}
   genlog [size] [out]           Synthetic log (default 64M → target/genlog/sample.log)
@@ -196,10 +197,11 @@ cmd_visual_approve() {
 
 cmd_capture() {
   need_rust
-  local page=${1:-replica} theme=${2:-dark} density=${3:-compact}
+  local page=${1:-replica} theme=${2:-dark} density=${3:-compact} chrome=${4:-mac}
   local out=target/visual/manual/$page-$theme-$density
+  [[ $chrome == mac ]] || out=$out-$chrome
   run mkdir -p target/visual/manual
-  run cargo run -p rogg-gallery -- --capture "$page" --theme "$theme" --density "$density" --out "$out.png" --geometry "$out.json"
+  run cargo run -p rogg-gallery -- --capture "$page" --theme "$theme" --density "$density" --chrome "$chrome" --out "$out.png" --geometry "$out.json"
   ok "$out.png"
 }
 

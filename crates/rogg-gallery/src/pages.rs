@@ -171,13 +171,19 @@ fn tab_items(labels: &[&str], active: usize) -> Vec<TabItem> {
     labels.iter().enumerate().map(|(i, l)| TabItem { label: (*l).into(), tooltip: fixtures::BUNDLE.into(), active: i == active }).collect()
 }
 
+/// A title bar in the installed chrome style (`--chrome`): drawn traffic lights on Mac; the ☰ button (an empty menu here)
+/// and the window controls on Linux and Windows.
+fn title_bar(tabs: Vec<TabItem>) -> TitleBar {
+    TitleBar::new(tabs).traffic_lights(true).app_menu(|menu, _, _| menu)
+}
+
 fn tabs(p: &Palette) -> AnyElement {
     let many: Vec<String> = (0..12).map(|i| format!("service-{i}-with-long-name.log")).collect();
     let many: Vec<&str> = many.iter().map(|s| s.as_str()).collect();
     div()
-        .child(section("Reference: 3 tabs, api.log active", frame(1200., 42., p, TitleBar::new(tab_items(&["api.log", "worker.log", "gateway.log"], 0)).traffic_lights(true)), p))
-        .child(section("Hovered inactive tab", frame(1200., 42., p, TitleBar::new(tab_items(&["api.log", "worker.log", "gateway.log"], 0)).traffic_lights(true).force_hover_tab(Some(1))), p))
-        .child(section("12 long tabs in 900px (scrolls)", frame(900., 42., p, TitleBar::new(tab_items(&many, 3)).traffic_lights(true)), p))
+        .child(section("Reference: 3 tabs, api.log active", frame(1200., 42., p, title_bar(tab_items(&["api.log", "worker.log", "gateway.log"], 0))), p))
+        .child(section("Hovered inactive tab", frame(1200., 42., p, title_bar(tab_items(&["api.log", "worker.log", "gateway.log"], 0)).force_hover_tab(Some(1))), p))
+        .child(section("12 long tabs in 900px (scrolls)", frame(900., 42., p, title_bar(tab_items(&many, 3))), p))
         .into_any_element()
 }
 

@@ -1,9 +1,17 @@
-//! Native menu bar (spec §5.9): rogg, File, Edit, View and Window.
+//! Native menu bar (spec §5.9): rogg, File, Edit, View and Window; and the same menus as the ☰ app menu of the Linux and
+//! Windows title bar (spec §4.3).
 
 use crate::actions::*;
-use gpui_kit::{Menu, MenuItem, OsAction, SharedString};
+use gpui_kit::component::menu::PopupMenu;
+use gpui_kit::{Action, Context, Menu, MenuItem, OsAction, SharedString, Window};
 use rogg_core::recent::RecentEntry;
 use rogg_ui::logview::actions::CopySelection;
+use std::rc::Rc;
+
+/// The rogg menu's items that only make sense on macOS; the ☰ menu leaves them out.
+pub const MAC_ONLY_ITEMS: [&str; 3] = ["Hide rogg", "Hide Others", "Show All"];
+/// The rogg menu's last item, which the ☰ menu moves to its end.
+const QUIT: &str = "Quit rogg";
 
 pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
     let recent_items: Vec<MenuItem> = recent
@@ -54,6 +62,98 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
     ]
 }
 
+/// An action's or a submenu's name; None for separators and system menus.
+pub fn item_label(item: &MenuItem) -> Option<String> {
+    match item {
+        MenuItem::Action { name, .. } => Some(name.to_string()),
+        MenuItem::Submenu(menu) => Some(menu.name.to_string()),
+        MenuItem::Separator | MenuItem::SystemMenu(_) => None,
+    }
+}
+
+/// One entry of the ☰ menu, owned so a submenu's builder (which gpui-kit keeps as a `'static` closure) can rebuild it.
+enum PopupItem {
+    Action(SharedString, Box<dyn Action>),
+    Separator,
+    Submenu(SharedString, Rc<Vec<PopupItem>>),
+}
+
+impl PopupItem {
+    fn from_menu(menu: &Menu) -> PopupItem {
+        PopupItem::Submenu(menu.name.clone(), Rc::new(popup_items_of(&menu.items, |_| true)))
+    }
+}
+
+/// `items` as ☰ entries, keeping those `keep` accepts, without leading, trailing or doubled separators.
+fn popup_items_of(items: &[MenuItem], keep: impl Fn(&str) -> bool) -> Vec<PopupItem> {
+    let mut out: Vec<PopupItem> = Vec::new();
+    for item in items {
+        match item {
+            MenuItem::Action { name, action, .. } if keep(name) => out.push(PopupItem::Action(name.clone(), action.boxed_clone())),
+            MenuItem::Submenu(menu) if keep(&menu.name) => out.push(PopupItem::from_menu(menu)),
+            MenuItem::Separator if out.last().is_some_and(|last| !matches!(last, PopupItem::Separator)) => out.push(PopupItem::Separator),
+            _ => {}
+        }
+    }
+    if matches!(out.last(), Some(PopupItem::Separator)) {
+        out.pop();
+    }
+    out
+}
+
+/// The ☰ menu (spec §4.3): the first (rogg) menu's items without the macOS-only ones and Quit, then every other menu
+/// as a submenu, then Quit after a separator.
+fn popup_items(menus: &[Menu]) -> Vec<PopupItem> {
+    let Some((app, rest)) = menus.split_first() else { return Vec::new() };
+    let mut items = popup_items_of(&app.items, |name| name != QUIT && !MAC_ONLY_ITEMS.contains(&name));
+    items.extend(rest.iter().map(PopupItem::from_menu));
+    let quit = app.items.iter().find_map(|item| match item {
+        MenuItem::Action { name, action, .. } if name.as_ref() == QUIT => Some(PopupItem::Action(name.clone(), action.boxed_clone())),
+        _ => None,
+    });
+    if let Some(quit) = quit {
+        items.push(PopupItem::Separator);
+        items.push(quit);
+    }
+    items
+}
+
+/// The labels the ☰ menu shows, in order, submenus followed by their items; `""` stands for a separator.
+pub fn popup_entries(menus: &[Menu]) -> Vec<String> {
+    fn walk(items: &[PopupItem], out: &mut Vec<String>) {
+        for item in items {
+            match item {
+                PopupItem::Action(name, _) => out.push(name.to_string()),
+                PopupItem::Separator => out.push(String::new()),
+                PopupItem::Submenu(name, items) => {
+                    out.push(name.to_string());
+                    walk(items, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&popup_items(menus), &mut out);
+    out
+}
+
+/// Fills the ☰ menu from `menus` (see `popup_items`). Items dispatch their actions, and gpui-kit shows each one's key
+/// binding from the active keymap.
+pub fn popup_menu(menus: &[Menu], menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    fill(&popup_items(menus), menu, window, cx)
+}
+
+fn fill(items: &[PopupItem], menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    items.iter().fold(menu, |menu, item| match item {
+        PopupItem::Action(name, action) => menu.menu(name.clone(), action.boxed_clone()),
+        PopupItem::Separator => menu.separator(),
+        PopupItem::Submenu(name, items) => {
+            let items = items.clone();
+            menu.submenu(name.clone(), window, cx, move |menu, window, cx| fill(&items, menu, window, cx))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +172,34 @@ mod tests {
             _ => None,
         });
         assert_eq!(recent.expect("Open Recent submenu").items.len(), 2);
+    }
+
+    #[test]
+    fn the_app_menu_mirrors_the_native_menus() {
+        let menus = app_menus(&[RecentEntry::file("/var/log/a.log")]);
+        let native: Vec<String> = menus.iter().flat_map(|m| m.items.iter()).filter_map(item_label).collect();
+        let popup: Vec<String> = popup_entries(&menus).into_iter().filter(|l| !l.is_empty()).collect();
+        for label in native.iter().filter(|l| !MAC_ONLY_ITEMS.contains(&l.as_str())) {
+            assert!(popup.contains(label), "☰ menu lacks {label}");
+        }
+        for label in MAC_ONLY_ITEMS {
+            assert!(!popup.iter().any(|l| l == label), "☰ menu has the macOS-only {label}");
+        }
+        // Spec §4.3 order: About, Settings…, the File…Window submenus, Quit last.
+        assert_eq!(popup.first().map(String::as_str), Some("About rogg"));
+        assert_eq!(popup.last().map(String::as_str), Some("Quit rogg"));
+        let at = |l: &str| popup.iter().position(|p| p == l).unwrap_or_else(|| panic!("{l} missing"));
+        assert!(at("Settings…") < at("File") && at("File") < at("Edit") && at("Edit") < at("View") && at("View") < at("Window"));
+        assert!(at("Open Recent") > at("File"));
+    }
+
+    #[test]
+    fn the_app_menu_has_no_stray_separators() {
+        let entries = popup_entries(&app_menus(&[]));
+        assert_ne!(entries.first().map(String::as_str), Some(""), "{entries:?}");
+        assert_ne!(entries.last().map(String::as_str), Some(""), "{entries:?}");
+        assert!(!entries.windows(2).any(|w| w[0].is_empty() && w[1].is_empty()), "doubled separator: {entries:?}");
+        let quit = entries.iter().position(|l| l == "Quit rogg").unwrap();
+        assert_eq!(entries[quit - 1], "", "a separator before Quit");
     }
 }

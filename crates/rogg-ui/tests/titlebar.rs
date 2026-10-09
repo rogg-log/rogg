@@ -87,3 +87,51 @@ fn overflowing_tab_strip_stays_left_of_actions(cx: &mut TestAppContext) {
     assert!(strip.right() <= actions.left() + px(0.5), "tab strip {strip:?} overlaps actions {actions:?}");
     assert!(actions.right() <= px(900.), "actions out of window: {actions:?}");
 }
+
+#[gpui_kit::test]
+fn mac_style_has_traffic_space_and_no_window_controls(cx: &mut TestAppContext) {
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Mac);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).on_toggle_sidebar(|_, _| {}).into_any_element());
+    assert!(common::exists(cx, w, "traffic"));
+    for id in ["window-minimize", "window-maximize", "window-close", "app-menu"] {
+        assert!(!common::exists(cx, w, id), "{id} on Mac");
+    }
+}
+
+#[gpui_kit::test]
+fn windows_style_draws_rectangular_controls_on_the_right(cx: &mut TestAppContext) {
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Windows);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).app_menu(|m, _, _| m).into_any_element());
+    assert!(!common::exists(cx, w, "traffic"));
+    let close = common::bounds(cx, w, "window-close");
+    let max = common::bounds(cx, w, "window-maximize");
+    let min = common::bounds(cx, w, "window-minimize");
+    assert_eq!((close.size.width, close.size.height), (px(46.), px(42.)));
+    assert!(min.right() <= max.left() + px(0.5) && max.right() <= close.left() + px(0.5), "min | max | close, no gaps");
+    assert!(close.right() >= px(1440.) - px(0.5), "flush with the right edge");
+    assert!(common::exists(cx, w, "app-menu"));
+}
+
+#[gpui_kit::test]
+fn linux_style_draws_round_controls_with_gaps(cx: &mut TestAppContext) {
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).app_menu(|m, _, _| m).into_any_element());
+    let close = common::bounds(cx, w, "window-close");
+    let max = common::bounds(cx, w, "window-maximize");
+    assert_eq!((close.size.width, close.size.height), (px(24.), px(24.)));
+    assert_eq!(close.left() - max.right(), px(8.));
+    assert!(common::exists(cx, w, "app-menu"));
+}
+
+#[gpui_kit::test]
+fn the_close_control_runs_the_close_hook(cx: &mut TestAppContext) {
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
+    let closed = Rc::new(RefCell::new(0));
+    let c = closed.clone();
+    let w = common::open(cx, 1440., 200., move |_, _| {
+        let c = c.clone();
+        TitleBar::new(tabs(2)).on_close_window(move |_, _| *c.borrow_mut() += 1).into_any_element()
+    });
+    common::click(cx, w, "window-close");
+    assert_eq!(*closed.borrow(), 1);
+}

@@ -12,6 +12,7 @@ use crate::sidebar_model::FixedSidebar;
 use crate::tab::{Tab, TabEvent, TabInit};
 use crate::tab_view::{self, TabBody};
 use gpui_kit::component::input::{InputState, TextareaState};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, ExternalPaths, FocusHandle, Pixels, ScrollHandle, SharedString, Stateful, Subscription,
@@ -702,6 +703,11 @@ impl Workspace {
             .on_all_tabs(act(this, |ws, _, cx| ws.open_dialog(Dialog::AllTabs, cx)))
             .on_shortcuts(act(this, |ws, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
             .on_settings(act(this, |ws, _, cx| ws.open_settings(cx)))
+            .on_close_window(act(this, |ws, window, cx| {
+                ws.save_session_now(cx);
+                window.remove_window();
+            }))
+            .when(!cx.rogg().chrome.is_mac(), |t| t.app_menu(app_menu))
     }
 
     fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>, cx: &App) -> AnyElement {
@@ -824,6 +830,17 @@ impl Workspace {
     }
 }
 
+/// The ☰ menu: the native menus, rebuilt with the current recent files each time it opens. Its items act on what had
+/// focus before it opened, like the native menu bar's (Copy copies the focused log's selection).
+fn app_menu(menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    let recent = cx.try_global::<RecentStore>().map(|r| r.entries().to_vec()).unwrap_or_default();
+    let menu = match window.focused(cx) {
+        Some(focus) => menu.action_context(focus),
+        None => menu,
+    };
+    crate::menus::popup_menu(&crate::menus::app_menus(&recent), menu, window, cx)
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Keep keys flowing to the window's actions when the focused element went away (an applied editor, a
@@ -877,6 +894,11 @@ impl Render for Workspace {
                     }
                 }
             }
+        };
+        // Client-decorated windows (the Linux style) resize from rogg's own edges.
+        let content = match window.window_decorations() {
+            gpui_kit::Decorations::Client { .. } => rogg_ui::layout::resize_edges(content).into_any_element(),
+            gpui_kit::Decorations::Server => content,
         };
         self.root(cx).child(content)
     }

@@ -27,14 +27,21 @@ pub enum IconName {
     ChevronRight,
     /// Heavy chevron matching the native `<select>` arrow of the reference.
     SelectCaret,
+    /// The ☰ app menu of the Linux and Windows title bar.
+    Menu,
+    /// The rogg-drawn window controls (Linux and Windows).
+    Minimize,
+    Maximize,
+    Restore,
 }
 
 impl IconName {
-    pub const ALL: [IconName; 23] = [
+    pub const ALL: [IconName; 27] = [
         IconName::File, IconName::Folder, IconName::Search, IconName::Wrap, IconName::Pin, IconName::PinFilled,
         IconName::Filter, IconName::Follow, IconName::Check, IconName::Off, IconName::Minus, IconName::History,
         IconName::Edit, IconName::Export, IconName::Sun, IconName::Settings, IconName::Side, IconName::OpenTab,
         IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::ChevronRight, IconName::SelectCaret,
+        IconName::Menu, IconName::Minimize, IconName::Maximize, IconName::Restore,
     ];
 
     pub fn path(self) -> &'static str {
@@ -62,6 +69,10 @@ impl IconName {
             IconName::ChevronDown => "icons/rogg/chevron-down.svg",
             IconName::ChevronRight => "icons/rogg/chevron-right.svg",
             IconName::SelectCaret => "icons/rogg/select-caret.svg",
+            IconName::Menu => "icons/rogg/menu.svg",
+            IconName::Minimize => "icons/rogg/minimize.svg",
+            IconName::Maximize => "icons/rogg/maximize.svg",
+            IconName::Restore => "icons/rogg/restore.svg",
         }
     }
 }

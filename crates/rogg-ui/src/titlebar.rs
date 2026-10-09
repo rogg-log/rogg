@@ -1,11 +1,18 @@
 use crate::controls::IconButton;
 use crate::icons::{IconName, icon};
-use crate::theme::{ActiveRoggTheme, Color, size};
+use crate::theme::{ActiveRoggTheme, ChromeStyle, Color, Palette, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::prelude::*;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::{App, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, div, px};
+use gpui_kit::{
+    AnyElement, App, Context, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, WindowControlArea, div, px,
+};
 use std::rc::Rc;
+
+/// Fills the ☰ app menu each time it opens (gpui-kit's dropdown menu builder).
+pub type AppMenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabItem {
@@ -15,6 +22,8 @@ pub struct TabItem {
 }
 
 /// The 42px title bar: traffic-light block + sidebar toggle + brand (as wide as the sidebar), compact tabs, drag area, actions.
+/// In the Linux and Windows chrome styles the traffic-light block gives way to the ☰ app menu, and rogg-drawn window
+/// controls follow the actions.
 #[derive(IntoElement)]
 pub struct TitleBar {
     tabs: Vec<TabItem>,
@@ -28,6 +37,8 @@ pub struct TitleBar {
     on_all_tabs: Option<Callback>,
     on_shortcuts: Option<Callback>,
     on_settings: Option<Callback>,
+    app_menu: Option<AppMenuBuilder>,
+    on_close_window: Option<Callback>,
 }
 
 impl TitleBar {
@@ -44,6 +55,8 @@ impl TitleBar {
             on_all_tabs: None,
             on_shortcuts: None,
             on_settings: None,
+            app_menu: None,
+            on_close_window: None,
         }
     }
 
@@ -97,6 +110,19 @@ impl TitleBar {
         self.on_settings = Some(Rc::new(f));
         self
     }
+
+    /// The ☰ menu's items (Linux and Windows styles; the Mac style uses the native menu bar).
+    pub fn app_menu(mut self, f: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static) -> Self {
+        self.app_menu = Some(Rc::new(f));
+        self
+    }
+
+    /// What the drawn close control does; it removes the window when unset. `Window::remove_window` skips
+    /// `on_window_should_close`, so the app saves its state here first.
+    pub fn on_close_window(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_close_window = Some(Rc::new(f));
+        self
+    }
 }
 
 fn button(b: IconButton, cb: Option<Callback>) -> IconButton {
@@ -115,13 +141,90 @@ fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, _: &mut App) {
     }
 }
 
+/// The ☰ button opening the app menu, sized like the other title-bar icon buttons.
+fn app_menu_button(menu: AppMenuBuilder, p: Palette, cx: &App) -> AnyElement {
+    let variant = ButtonCustomVariant::new(cx).color(Color::TRANSPARENT.hsla()).foreground(p.muted.hsla()).hover(p.hover.hsla()).active(p.hover.hsla()).shadow(false);
+    div()
+        .id("app-menu")
+        .test_support()
+        .flex_none()
+        .child(
+            Button::new("app-menu-button")
+                .custom(variant)
+                .size(px(size::TITLEBAR_ICON_BTN))
+                .rounded(px(5.))
+                .child(icon(IconName::Menu).size(px(15.)).text_color(p.muted))
+                .dropdown_menu(move |m, window, cx| menu(m, window, cx)),
+        )
+        .into_any_element()
+}
+
+/// Minimise, maximise/restore and close, drawn by rogg for the Linux and Windows styles: flush 46 px rectangles with a
+/// red close hover on Windows, 24 px circles with gaps on Linux. On Windows the control areas also give the native
+/// hit-testing (snap layouts), and the system handles their clicks.
+fn window_controls(chrome: ChromeStyle, maximized: bool, on_close: Option<Callback>, p: Palette) -> AnyElement {
+    let windows = chrome == ChromeStyle::Windows;
+    let button = |id: &'static str, name: IconName, area: WindowControlArea| {
+        let close = area == WindowControlArea::Close;
+        let on_close = on_close.clone();
+        div()
+            .id(id)
+            .test_support()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .when(windows, |d| d.w(px(46.)).h(px(size::TITLEBAR_H)))
+            .when(!windows, |d| d.size(px(24.)).rounded_full())
+            .text_color(p.muted)
+            .window_control_area(area)
+            .hover(move |s| if close && windows { s.bg(Color::rgb(0xc42b1c)).text_color(Color::rgb(0xffffff)) } else { s.bg(p.hover) })
+            .child(icon(name).size(px(if windows { 14. } else { 12. })).text_color(p.muted))
+            .on_click(move |_, window, cx| match area {
+                WindowControlArea::Min => window.minimize_window(),
+                WindowControlArea::Max => window.zoom_window(),
+                WindowControlArea::Close => match &on_close {
+                    Some(f) => f(window, cx),
+                    None => window.remove_window(),
+                },
+                WindowControlArea::Drag => {}
+            })
+    };
+    div()
+        .id("window-controls")
+        .flex()
+        .flex_none()
+        .items_center()
+        .when(!windows, |d| d.gap(px(8.)).pl(px(8.)))
+        .child(button("window-minimize", IconName::Minimize, WindowControlArea::Min))
+        .child(button("window-maximize", if maximized { IconName::Restore } else { IconName::Maximize }, WindowControlArea::Max))
+        .child(button("window-close", IconName::Close, WindowControlArea::Close))
+        .into_any_element()
+}
+
 impl RenderOnce for TitleBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.rogg().palette;
         let s = cx.rogg().text_scale();
-        let traffic = div().id("traffic").on_mouse_down(MouseButton::Left, drag_window).w(px(53.)).flex_none().flex().items_center().gap(px(7.)).when(self.traffic_lights, |d| {
-            d.children(p.traffic.map(|c| div().size(px(10.)).rounded_full().bg(c)))
-        });
+        let chrome = cx.rogg().chrome;
+        let windows = chrome == ChromeStyle::Windows;
+        let lead = if chrome.is_mac() {
+            Some(
+                div()
+                    .id("traffic")
+                    .test_support()
+                    .on_mouse_down(MouseButton::Left, drag_window)
+                    .w(px(53.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(7.))
+                    .when(self.traffic_lights, |d| d.children(p.traffic.map(|c| div().size(px(10.)).rounded_full().bg(c))))
+                    .into_any_element(),
+            )
+        } else {
+            self.app_menu.map(|menu| app_menu_button(menu, p, cx))
+        };
         let leading = div()
             .id("titlebar-leading")
             .test_support()
@@ -131,7 +234,7 @@ impl RenderOnce for TitleBar {
             .gap(px(10.))
             .w(self.sidebar_width)
             .px(px(13.))
-            .child(traffic)
+            .children(lead)
             .child(button(IconButton::icon("toggle-sidebar", IconName::Side), self.on_toggle_sidebar))
             .child(div().id("brand").text_size(s.px(14.)).font_weight(FontWeight(600.)).text_color(p.muted).on_mouse_down(MouseButton::Left, drag_window).child("rogg"));
 
@@ -163,7 +266,7 @@ impl RenderOnce for TitleBar {
             .flex_none()
             .items_center()
             .h(px(size::TITLEBAR_H))
-            .pr(px(10.))
+            .pr(px(if windows { 0. } else { 10. }))
             .bg(p.side)
             .border_b_1()
             .border_color(p.border)
@@ -175,6 +278,7 @@ impl RenderOnce for TitleBar {
                         .flex_1()
                         .min_w(px(28.))
                         .h_full()
+                        .when(windows, |d| d.window_control_area(WindowControlArea::Drag))
                         .on_mouse_down(MouseButton::Left, drag_window),
                 ),
             )
@@ -191,6 +295,7 @@ impl RenderOnce for TitleBar {
                     .child(button(IconButton::glyph("shortcuts", "⌘").compact(), self.on_shortcuts))
                     .child(button(IconButton::icon("settings", IconName::Settings).compact(), self.on_settings)),
             )
+            .when(!chrome.is_mac(), |d| d.child(window_controls(chrome, window.is_maximized(), self.on_close_window, p)))
     }
 }
 
