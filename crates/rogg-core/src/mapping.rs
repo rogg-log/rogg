@@ -59,10 +59,11 @@ fn guarded_end(addr: usize) -> Option<usize> {
 }
 
 extern "C" fn on_sigbus(_signal: libc::c_int, info: *mut libc::siginfo_t, _context: *mut libc::c_void) {
-    // SAFETY: the kernel passes a valid `siginfo_t` to an SA_SIGINFO handler.
     // macOS exposes `si_addr` as a field; the libc crate exposes it as a method on Linux.
+    // SAFETY: the kernel passes a valid `siginfo_t` to an SA_SIGINFO handler.
     #[cfg(target_os = "macos")]
     let addr = unsafe { (*info).si_addr } as usize;
+    // SAFETY: as above.
     #[cfg(not(target_os = "macos"))]
     let addr = unsafe { (*info).si_addr() } as usize;
     if let Some(end) = guarded_end(addr) {

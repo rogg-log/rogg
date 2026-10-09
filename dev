@@ -107,6 +107,7 @@ ${BOLD}Linux${RESET}   (Apple container; image rogg-linux:latest, target dir tar
   linux-build                   cargo build --workspace --all-targets inside the image
   linux-test                    cargo test --workspace inside the image
   linux-shell                   Interactive shell in the image (needs a terminal)
+  (ROGG_LINUX_CPUS, default 6, and ROGG_LINUX_MEMORY, default 20G, set the container's limits)
 
 Set DRY=1 to print the commands without running them.
 EOF
@@ -257,6 +258,8 @@ cmd_clean() {
 }
 
 LINUX_IMAGE=rogg-linux:latest
+LINUX_CPUS=${ROGG_LINUX_CPUS:-6}
+LINUX_MEMORY=${ROGG_LINUX_MEMORY:-20G}
 
 need_container() {
   command -v container >/dev/null 2>&1 || die "Apple container is not installed — https://github.com/apple/container"
@@ -281,7 +284,7 @@ in_linux() {
     --volume rogg-cargo-git:/usr/local/cargo/git \
     --env CARGO_TARGET_DIR=/work/target/linux \
     --env CARGO_BUILD_JOBS=3 \
-    --cpus 6 --memory 20G \
+    --cpus "$LINUX_CPUS" --memory "$LINUX_MEMORY" \
     --workdir /work "$LINUX_IMAGE" bash -lc "$1"
 }
 
@@ -292,7 +295,7 @@ cmd_linux_test()  { step "Linux tests"; in_linux "setpriv --bounding-set=-dac_ov
 cmd_linux_shell() {
   need_container
   ensure_volumes
-  run container run --rm -it --volume "$ROOT:/work" --volume rogg-cargo-registry:/usr/local/cargo/registry \
+  run container run --rm -it --cpus "$LINUX_CPUS" --memory "$LINUX_MEMORY" --volume "$ROOT:/work" --volume rogg-cargo-registry:/usr/local/cargo/registry \
     --volume rogg-cargo-git:/usr/local/cargo/git --env CARGO_TARGET_DIR=/work/target/linux --workdir /work "$LINUX_IMAGE" bash
 }
 
