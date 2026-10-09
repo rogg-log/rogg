@@ -115,7 +115,8 @@ fn windows_style_draws_rectangular_controls_on_the_right(cx: &mut TestAppContext
 #[gpui_kit::test]
 fn linux_style_draws_round_controls_with_gaps(cx: &mut TestAppContext) {
     common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
-    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).app_menu(|m, _, _| m).into_any_element());
+    // The test platform's windows are server-decorated; force the controls as a mock-up would.
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).app_menu(|m, _, _| m).force_window_controls(true).into_any_element());
     let close = common::bounds(cx, w, "window-close");
     let max = common::bounds(cx, w, "window-maximize");
     assert_eq!((close.size.width, close.size.height), (px(24.), px(24.)));
@@ -130,8 +131,61 @@ fn the_close_control_runs_the_close_hook(cx: &mut TestAppContext) {
     let c = closed.clone();
     let w = common::open(cx, 1440., 200., move |_, _| {
         let c = c.clone();
-        TitleBar::new(tabs(2)).on_close_window(move |_, _| *c.borrow_mut() += 1).into_any_element()
+        TitleBar::new(tabs(2)).force_window_controls(true).on_close_window(move |_, _| *c.borrow_mut() += 1).into_any_element()
     });
     common::click(cx, w, "window-close");
     assert_eq!(*closed.borrow(), 1);
+}
+
+#[gpui_kit::test]
+fn windows_controls_leave_their_clicks_to_the_system(cx: &mut TestAppContext) {
+    // gpui-windows runs the native minimise / maximise / close after the element's handlers: a click handler would act twice.
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Windows);
+    let closed = Rc::new(RefCell::new(0));
+    let c = closed.clone();
+    let w = common::open(cx, 1440., 200., move |_, _| {
+        let c = c.clone();
+        TitleBar::new(tabs(2)).on_close_window(move |_, _| *c.borrow_mut() += 1).into_any_element()
+    });
+    common::click(cx, w, "window-close");
+    assert_eq!(*closed.borrow(), 0);
+}
+
+#[gpui_kit::test]
+fn linux_style_keeps_the_system_controls_of_a_server_decorated_window(cx: &mut TestAppContext) {
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).app_menu(|m, _, _| m).into_any_element());
+    for id in ["window-minimize", "window-maximize", "window-close"] {
+        assert!(!common::exists(cx, w, id), "{id} drawn for a server-decorated window");
+    }
+    assert!(common::exists(cx, w, "app-menu"), "the ☰ menu stays");
+}
+
+/// gpui's `titlebar_double_click` acts only on macOS; the Linux style zooms instead. The test platform's `zoom` is
+/// `unimplemented!()`, so reaching it is what this observes.
+#[gpui_kit::test]
+#[should_panic(expected = "not implemented")]
+fn linux_style_double_click_zooms_the_window(cx: &mut TestAppContext) {
+    use gpui_kit::{MouseButton, MouseDownEvent, PlatformInput};
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Linux);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).into_any_element());
+    let position = common::bounds(cx, w, "window-drag").center();
+    cx.update_window(w, |_, window, cx| {
+        let down = MouseDownEvent { button: MouseButton::Left, position, click_count: 2, ..Default::default() };
+        window.dispatch_event(PlatformInput::MouseDown(down), cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn mac_style_double_click_leaves_zooming_to_the_system(cx: &mut TestAppContext) {
+    use gpui_kit::{MouseButton, MouseDownEvent, PlatformInput};
+    common::setup_chrome(cx, rogg_ui::theme::ChromeStyle::Mac);
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).into_any_element());
+    let position = common::bounds(cx, w, "window-drag").center();
+    cx.update_window(w, |_, window, cx| {
+        let down = MouseDownEvent { button: MouseButton::Left, position, click_count: 2, ..Default::default() };
+        window.dispatch_event(PlatformInput::MouseDown(down), cx);
+    })
+    .unwrap();
 }

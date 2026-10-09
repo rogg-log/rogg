@@ -33,15 +33,17 @@ pub enum IconName {
     Minimize,
     Maximize,
     Restore,
+    /// The shortcuts button of the Linux and Windows title bar (the Mac style shows ⌘).
+    Keyboard,
 }
 
 impl IconName {
-    pub const ALL: [IconName; 27] = [
+    pub const ALL: [IconName; 28] = [
         IconName::File, IconName::Folder, IconName::Search, IconName::Wrap, IconName::Pin, IconName::PinFilled,
         IconName::Filter, IconName::Follow, IconName::Check, IconName::Off, IconName::Minus, IconName::History,
         IconName::Edit, IconName::Export, IconName::Sun, IconName::Settings, IconName::Side, IconName::OpenTab,
         IconName::Pause, IconName::Close, IconName::ChevronDown, IconName::ChevronRight, IconName::SelectCaret,
-        IconName::Menu, IconName::Minimize, IconName::Maximize, IconName::Restore,
+        IconName::Menu, IconName::Minimize, IconName::Maximize, IconName::Restore, IconName::Keyboard,
     ];
 
     pub fn path(self) -> &'static str {
@@ -73,6 +75,7 @@ impl IconName {
             IconName::Minimize => "icons/rogg/minimize.svg",
             IconName::Maximize => "icons/rogg/maximize.svg",
             IconName::Restore => "icons/rogg/restore.svg",
+            IconName::Keyboard => "icons/rogg/keyboard.svg",
         }
     }
 }

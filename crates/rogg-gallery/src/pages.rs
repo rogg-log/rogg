@@ -172,9 +172,9 @@ fn tab_items(labels: &[&str], active: usize) -> Vec<TabItem> {
 }
 
 /// A title bar in the installed chrome style (`--chrome`): drawn traffic lights on Mac; the ☰ button (an empty menu here)
-/// and the window controls on Linux and Windows.
+/// and the window controls on Linux and Windows (forced, as the gallery's own window is server-decorated).
 fn title_bar(tabs: Vec<TabItem>) -> TitleBar {
-    TitleBar::new(tabs).traffic_lights(true).app_menu(|menu, _, _| menu)
+    TitleBar::new(tabs).traffic_lights(true).force_window_controls(true).app_menu(|menu, _, _| menu)
 }
 
 fn tabs(p: &Palette) -> AnyElement {

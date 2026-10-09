@@ -49,9 +49,11 @@ fn the_app_menu_button_shows_only_outside_the_mac_style(cx: &mut TestAppContext)
     let (mac, _) = common::open_workspace(cx, Args::default());
     assert!(!common::exists(cx, mac, "app-menu"));
     cx.update(|cx| cx.rogg().clone().with_chrome(ChromeStyle::Linux).install(cx));
-    let (linux, _) = common::open_workspace(cx, Args::default());
+    let (linux, ws) = common::open_workspace(cx, Args::default());
     assert!(common::exists(cx, linux, "app-menu"));
-    assert!(common::exists(cx, linux, "window-close"));
+    assert!(!common::exists(cx, linux, "window-close"), "the test platform's windows are server-decorated");
+    ws.update(cx, |ws, cx| ws.set_traffic_lights(true, cx));
+    assert!(common::exists(cx, linux, "window-close"), "a headless mock-up draws the controls");
 }
 
 #[gpui_kit::test]
@@ -60,9 +62,10 @@ fn the_drawn_close_control_saves_the_session(cx: &mut TestAppContext) {
     use rogg_ui::theme::ChromeStyle;
     let dir = common::setup(cx);
     cx.update(|cx| cx.rogg().clone().with_chrome(ChromeStyle::Linux).install(cx));
-    let (w, _) = common::open_workspace(cx, Args::default());
+    let (w, ws) = common::open_workspace(cx, Args::default());
+    ws.update(cx, |ws, cx| ws.set_traffic_lights(true, cx));
     let session = dir.path().join("session.json");
     assert!(!session.exists());
     common::click(cx, w, "window-close");
-    assert!(session.exists(), "closing through rogg's control skips on_window_should_close, so it saves first");
+    assert!(session.exists(), "closing through rogg's Linux control skips on_window_should_close, so it saves first");
 }

@@ -3,7 +3,7 @@
 
 use crate::actions::*;
 use gpui_kit::component::menu::PopupMenu;
-use gpui_kit::{Action, Context, Menu, MenuItem, OsAction, SharedString, Window};
+use gpui_kit::{Action, Context, FocusHandle, Menu, MenuItem, OsAction, SharedString, Window};
 use rogg_core::recent::RecentEntry;
 use rogg_ui::logview::actions::CopySelection;
 use std::rc::Rc;
@@ -79,8 +79,10 @@ enum PopupItem {
 }
 
 impl PopupItem {
-    fn from_menu(menu: &Menu) -> PopupItem {
-        PopupItem::Submenu(menu.name.clone(), Rc::new(popup_items_of(&menu.items, |_| true)))
+    /// A submenu entry; None for an empty menu (Open Recent with no recent files), which would open an empty popup.
+    fn from_menu(menu: &Menu) -> Option<PopupItem> {
+        let items = popup_items_of(&menu.items, |_| true);
+        (!items.is_empty()).then(|| PopupItem::Submenu(menu.name.clone(), Rc::new(items)))
     }
 }
 
@@ -90,7 +92,7 @@ fn popup_items_of(items: &[MenuItem], keep: impl Fn(&str) -> bool) -> Vec<PopupI
     for item in items {
         match item {
             MenuItem::Action { name, action, .. } if keep(name) => out.push(PopupItem::Action(name.clone(), action.boxed_clone())),
-            MenuItem::Submenu(menu) if keep(&menu.name) => out.push(PopupItem::from_menu(menu)),
+            MenuItem::Submenu(menu) if keep(&menu.name) => out.extend(PopupItem::from_menu(menu)),
             MenuItem::Separator if out.last().is_some_and(|last| !matches!(last, PopupItem::Separator)) => out.push(PopupItem::Separator),
             _ => {}
         }
@@ -102,11 +104,11 @@ fn popup_items_of(items: &[MenuItem], keep: impl Fn(&str) -> bool) -> Vec<PopupI
 }
 
 /// The ☰ menu (spec §4.3): the first (rogg) menu's items without the macOS-only ones and Quit, then every other menu
-/// as a submenu, then Quit after a separator.
+/// as a submenu, then Quit after a separator. Empty submenus are left out.
 fn popup_items(menus: &[Menu]) -> Vec<PopupItem> {
     let Some((app, rest)) = menus.split_first() else { return Vec::new() };
     let mut items = popup_items_of(&app.items, |name| name != QUIT && !MAC_ONLY_ITEMS.contains(&name));
-    items.extend(rest.iter().map(PopupItem::from_menu));
+    items.extend(rest.iter().filter_map(PopupItem::from_menu));
     let quit = app.items.iter().find_map(|item| match item {
         MenuItem::Action { name, action, .. } if name.as_ref() == QUIT => Some(PopupItem::Action(name.clone(), action.boxed_clone())),
         _ => None,
@@ -137,19 +139,32 @@ pub fn popup_entries(menus: &[Menu]) -> Vec<String> {
     out
 }
 
-/// Fills the ☰ menu from `menus` (see `popup_items`). Items dispatch their actions, and gpui-kit shows each one's key
-/// binding from the active keymap.
-pub fn popup_menu(menus: &[Menu], menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    fill(&popup_items(menus), menu, window, cx)
+/// Fills the ☰ menu from `menus` (see `popup_items`). Items dispatch their actions from `action_context` when given
+/// (what had focus before the menu opened, as with the native menu bar), and gpui-kit shows each one's key binding from
+/// the active keymap.
+pub fn popup_menu(
+    menus: &[Menu],
+    action_context: Option<FocusHandle>,
+    menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    fill(&popup_items(menus), action_context, menu, window, cx)
 }
 
-fn fill(items: &[PopupItem], menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+/// One menu level. gpui-kit builds each submenu as its own `PopupMenu`, which dispatches from its own focus unless it
+/// has the action context too, so every level gets it.
+fn fill(items: &[PopupItem], action_context: Option<FocusHandle>, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    let menu = match action_context.clone() {
+        Some(focus) => menu.action_context(focus),
+        None => menu,
+    };
     items.iter().fold(menu, |menu, item| match item {
         PopupItem::Action(name, action) => menu.menu(name.clone(), action.boxed_clone()),
         PopupItem::Separator => menu.separator(),
         PopupItem::Submenu(name, items) => {
-            let items = items.clone();
-            menu.submenu(name.clone(), window, cx, move |menu, window, cx| fill(&items, menu, window, cx))
+            let (items, action_context) = (items.clone(), action_context.clone());
+            menu.submenu(name.clone(), window, cx, move |menu, window, cx| fill(&items, action_context.clone(), menu, window, cx))
         }
     })
 }
@@ -201,5 +216,13 @@ mod tests {
         assert!(!entries.windows(2).any(|w| w[0].is_empty() && w[1].is_empty()), "doubled separator: {entries:?}");
         let quit = entries.iter().position(|l| l == "Quit rogg").unwrap();
         assert_eq!(entries[quit - 1], "", "a separator before Quit");
+    }
+
+    #[test]
+    fn the_app_menu_leaves_out_an_empty_open_recent() {
+        assert!(!popup_entries(&app_menus(&[])).iter().any(|l| l == "Open Recent"));
+        let with_recent = popup_entries(&app_menus(&[RecentEntry::file("/var/log/a.log")]));
+        let at = with_recent.iter().position(|l| l == "Open Recent").expect("Open Recent with an entry");
+        assert_eq!(with_recent[at + 1], RecentEntry::file("/var/log/a.log").label());
     }
 }

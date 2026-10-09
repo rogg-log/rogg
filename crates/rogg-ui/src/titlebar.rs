@@ -7,7 +7,7 @@ use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
-    AnyElement, App, Context, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, WindowControlArea, div, px,
+    AnyElement, App, Context, Decorations, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, WindowControlArea, div, px,
 };
 use std::rc::Rc;
 
@@ -39,6 +39,7 @@ pub struct TitleBar {
     on_settings: Option<Callback>,
     app_menu: Option<AppMenuBuilder>,
     on_close_window: Option<Callback>,
+    force_window_controls: bool,
 }
 
 impl TitleBar {
@@ -57,6 +58,7 @@ impl TitleBar {
             on_settings: None,
             app_menu: None,
             on_close_window: None,
+            force_window_controls: false,
         }
     }
 
@@ -117,10 +119,18 @@ impl TitleBar {
         self
     }
 
-    /// What the drawn close control does; it removes the window when unset. `Window::remove_window` skips
-    /// `on_window_should_close`, so the app saves its state here first.
+    /// What the drawn close control does in the Linux style; it removes the window when unset. `Window::remove_window`
+    /// skips `on_window_should_close`, so the app saves its state here first. (On Windows the system closes the window
+    /// through `WM_CLOSE`, which runs `on_window_should_close`.)
     pub fn on_close_window(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_close_window = Some(Rc::new(f));
+        self
+    }
+
+    /// Draw the Linux style's window controls even when the window is server-decorated: for mock-ups of a window in
+    /// one (gallery captures, tests), whose host window has no client-side decorations.
+    pub fn force_window_controls(mut self, on: bool) -> Self {
+        self.force_window_controls = on;
         self
     }
 }
@@ -132,10 +142,16 @@ fn button(b: IconButton, cb: Option<Callback>) -> IconButton {
     }
 }
 
-/// A press drags the window; a double-click zooms it like a native title bar.
-fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, _: &mut App) {
+/// A press drags the window; a double-click zooms it like a native title bar. gpui's `titlebar_double_click` acts only on
+/// macOS (it follows the system setting there); on Linux `zoom_window` toggles maximise. Windows leaves the drag area
+/// to the native caption (`WindowControlArea::Drag`).
+fn drag_window(e: &gpui_kit::MouseDownEvent, window: &mut Window, cx: &mut App) {
     if e.click_count >= 2 {
-        window.titlebar_double_click();
+        if cx.rogg().chrome == ChromeStyle::Linux {
+            window.zoom_window();
+        } else {
+            window.titlebar_double_click();
+        }
     } else {
         window.start_window_move();
     }
@@ -160,34 +176,39 @@ fn app_menu_button(menu: AppMenuBuilder, p: Palette, cx: &App) -> AnyElement {
 }
 
 /// Minimise, maximise/restore and close, drawn by rogg for the Linux and Windows styles: flush 46 px rectangles with a
-/// red close hover on Windows, 24 px circles with gaps on Linux. On Windows the control areas also give the native
-/// hit-testing (snap layouts), and the system handles their clicks.
+/// red close hover on Windows, 24 px circles with gaps on Linux. On Windows the control areas give the native
+/// hit-testing (snap layouts) and the system runs the actions after the element's handlers, so the controls register no
+/// clicks there; on Linux their clicks act.
 fn window_controls(chrome: ChromeStyle, maximized: bool, on_close: Option<Callback>, p: Palette) -> AnyElement {
     let windows = chrome == ChromeStyle::Windows;
     let button = |id: &'static str, name: IconName, area: WindowControlArea| {
-        let close = area == WindowControlArea::Close;
+        let red_close = windows && area == WindowControlArea::Close;
         let on_close = on_close.clone();
+        // An svg paints with its own text colour, so the close glyph turns white through a group hover.
+        let glyph = icon(name).size(px(if windows { 14. } else { 12. })).text_color(p.muted);
         div()
             .id(id)
             .test_support()
+            .group(id)
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
             .when(windows, |d| d.w(px(46.)).h(px(size::TITLEBAR_H)))
             .when(!windows, |d| d.size(px(24.)).rounded_full())
-            .text_color(p.muted)
             .window_control_area(area)
-            .hover(move |s| if close && windows { s.bg(Color::rgb(0xc42b1c)).text_color(Color::rgb(0xffffff)) } else { s.bg(p.hover) })
-            .child(icon(name).size(px(if windows { 14. } else { 12. })).text_color(p.muted))
-            .on_click(move |_, window, cx| match area {
-                WindowControlArea::Min => window.minimize_window(),
-                WindowControlArea::Max => window.zoom_window(),
-                WindowControlArea::Close => match &on_close {
-                    Some(f) => f(window, cx),
-                    None => window.remove_window(),
-                },
-                WindowControlArea::Drag => {}
+            .hover(move |s| s.bg(if red_close { Color::rgb(0xc42b1c) } else { p.hover }))
+            .child(if red_close { glyph.group_hover(id, |s| s.text_color(Color::rgb(0xffffff))) } else { glyph })
+            .when(!windows, |d| {
+                d.on_click(move |_, window, cx| match area {
+                    WindowControlArea::Min => window.minimize_window(),
+                    WindowControlArea::Max => window.zoom_window(),
+                    WindowControlArea::Close => match &on_close {
+                        Some(f) => f(window, cx),
+                        None => window.remove_window(),
+                    },
+                    WindowControlArea::Drag => {}
+                })
             })
     };
     div()
@@ -208,6 +229,13 @@ impl RenderOnce for TitleBar {
         let s = cx.rogg().text_scale();
         let chrome = cx.rogg().chrome;
         let windows = chrome == ChromeStyle::Windows;
+        // Linux draws its controls only for client-side decorations: X11 without a compositor, and some Wayland
+        // compositors, keep server-side ones with their own controls.
+        let controls = match chrome {
+            ChromeStyle::Mac => false,
+            ChromeStyle::Windows => true,
+            ChromeStyle::Linux => self.force_window_controls || matches!(window.window_decorations(), Decorations::Client { .. }),
+        };
         let lead = if chrome.is_mac() {
             Some(
                 div()
@@ -275,6 +303,7 @@ impl RenderOnce for TitleBar {
                 div().flex().flex_1().min_w_0().h_full().items_center().gap(px(5.)).child(tab_strip).child(
                     div()
                         .id("window-drag")
+                        .test_support()
                         .flex_1()
                         .min_w(px(28.))
                         .h_full()
@@ -292,10 +321,13 @@ impl RenderOnce for TitleBar {
                     .gap(px(4.))
                     .pl(px(5.))
                     .child(button(IconButton::chevron_down("all-tabs").compact(), self.on_all_tabs))
-                    .child(button(IconButton::glyph("shortcuts", "⌘").compact(), self.on_shortcuts))
+                    .child(button(
+                        if chrome.is_mac() { IconButton::glyph("shortcuts", "⌘") } else { IconButton::icon("shortcuts", IconName::Keyboard) }.compact(),
+                        self.on_shortcuts,
+                    ))
                     .child(button(IconButton::icon("settings", IconName::Settings).compact(), self.on_settings)),
             )
-            .when(!chrome.is_mac(), |d| d.child(window_controls(chrome, window.is_maximized(), self.on_close_window, p)))
+            .when(controls, |d| d.child(window_controls(chrome, window.is_maximized(), self.on_close_window, p)))
     }
 }
 

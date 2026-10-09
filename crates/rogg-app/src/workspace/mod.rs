@@ -526,7 +526,8 @@ impl Workspace {
         self.open_source(source, init, window, cx);
     }
 
-    /// Draw the traffic lights ourselves (headless captures have no native ones).
+    /// Draw the window chrome ourselves, as headless captures have no native one: the traffic lights (Mac style) or the
+    /// window controls (Linux style, whose host window is server-decorated).
     pub fn set_traffic_lights(&mut self, on: bool, cx: &mut Context<Self>) {
         self.traffic_lights = on;
         cx.notify();
@@ -707,6 +708,7 @@ impl Workspace {
                 ws.save_session_now(cx);
                 window.remove_window();
             }))
+            .force_window_controls(self.traffic_lights)
             .when(!cx.rogg().chrome.is_mac(), |t| t.app_menu(app_menu))
     }
 
@@ -834,11 +836,8 @@ impl Workspace {
 /// focus before it opened, like the native menu bar's (Copy copies the focused log's selection).
 fn app_menu(menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
     let recent = cx.try_global::<RecentStore>().map(|r| r.entries().to_vec()).unwrap_or_default();
-    let menu = match window.focused(cx) {
-        Some(focus) => menu.action_context(focus),
-        None => menu,
-    };
-    crate::menus::popup_menu(&crate::menus::app_menus(&recent), menu, window, cx)
+    let focus = window.focused(cx);
+    crate::menus::popup_menu(&crate::menus::app_menus(&recent), focus, menu, window, cx)
 }
 
 impl Render for Workspace {
