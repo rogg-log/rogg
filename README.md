@@ -31,7 +31,7 @@ Verified in a container, not yet on a real desktop. Wayland and X11 are both sup
 Cross-built from macOS only; it has not been run.
 
 - **Build:** `./dev windows-build` runs `cargo xwin build --workspace --target x86_64-pc-windows-msvc`. It needs the rustup target `x86_64-pc-windows-msvc`, `cargo-xwin` and Homebrew `llvm`; `./dev setup` offers all three after asking.
-- **Run:** copy `target/x86_64-pc-windows-msvc/debug/rogg.exe` to a Windows machine. `rogg.exe -` reads stdin. A release build (`cargo xwin build --release …`, then `target/x86_64-pc-windows-msvc/release/rogg.exe`) opens no console window.
+- **Run:** copy `target/x86_64-pc-windows-msvc/debug/rogg.exe` to a Windows machine. `rogg.exe -` reads stdin. That debug build keeps a console window for its output; a release build opens none, but it has to be made on Windows (`cargo build --release`), because gpui compiles its release shaders with the Windows SDK's `fxc.exe`.
 - **Data:** settings, profiles, history, recent files and the session in `%APPDATA%\rogg`; the cache in `%LOCALAPPDATA%\rogg\cache`.
 - **Keys:** Ctrl replaces ⌘. Alt+F4 closes the window, and the ☰ menu has Quit. The ⌘H, ⌥⌘H and ⌘M shortcuts are macOS-only; Minimise stays in the ☰ menu and the window controls.
 - **Verified:** it compiles and links, and the Windows code paths are compile-checked. The tests are compile-checked only. The manual checks note covers the first run and the known Windows-only risks around memory-mapped logs.
