@@ -122,3 +122,53 @@ The script is `bash`, so it runs on all runners (Git Bash on Windows) and on the
 - Versioned or tagged releases, and changelogs.
 - Running tests on macOS or Windows in CI, and visual-check in CI.
 - A project licence file (the user's decision; the archives carry the README and the font licences).
+
+## 9. Amendment (2026-10-10): macOS app bundle alongside the binary
+
+Approved in conversation: keep the bare macOS binary, and add a `rogg.app` built from that same binary. Double-clicking a bare executable in Finder always runs it through Terminal; a `.app` launches directly.
+
+**No change to the Rust build.** The bundle is a packaging step after the universal binary is made (§3, `macos` job): `tools/ci/macos-app.sh <binary>` writes `$DIST_DIR/rogg-macos-universal-app.tar.gz`, whose root is `rogg.app/`:
+
+```
+rogg.app/Contents/Info.plist
+rogg.app/Contents/PkgInfo                      APPL????
+rogg.app/Contents/MacOS/rogg                   the same universal binary
+rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt
+```
+
+**Info.plist:**
+
+| Key | Value |
+|---|---|
+| `CFBundleName`, `CFBundleDisplayName` | `rogg` |
+| `CFBundleIdentifier` | `io.github.rogg-log.rogg` (changing it later resets users' macOS permission grants) |
+| `CFBundleExecutable` | `rogg` |
+| `CFBundlePackageType` | `APPL` |
+| `CFBundleShortVersionString` | the workspace version from `Cargo.toml` (`0.1.0`) |
+| `CFBundleVersion` | `ROGG_BUILD_NUMBER`, or `0` for a local build |
+| `LSMinimumSystemVersion` | `11.0` |
+| `NSHighResolutionCapable` | `true` |
+| `LSApplicationCategoryType` | `public.app-category.developer-tools` |
+
+There is no app icon yet; macOS shows its generic one until an `.icns` is designed.
+
+**Signing:** after assembling, `codesign --force --sign - rogg.app` (ad-hoc, covering `Info.plist` and resources), then `codesign --verify --deep --strict`. Where `codesign` is missing (the Linux `check` job runs the script's tests), the script skips signing and says so. Gatekeeper behaviour is the same as for the bare binary: no prompt when not quarantined (`curl`, `install.sh`); "Open Anyway" when downloaded by a browser.
+
+**Names and manifest:**
+- The archive name scheme becomes `rogg-<os>-<arch>[-app].<ext>`. The `-app` suffix is allowed only for macOS `.tar.gz`. `manifest.sh` rejects anything else.
+- Every manifest asset gains `"kind"`: `"app"` for the `-app` archive, `"binary"` for all others. Existing names and URLs are unchanged, and nothing reads the manifest yet, so the extra field breaks nothing.
+- `publish.sh` already uploads every `rogg-*` archive. The release grows to 7 assets.
+
+**Workflow:** the `macos` job runs `macos-app.sh` after `package.sh` and uploads both archives in its artifact.
+
+**Local:** `./dev mac-app` builds a release binary for this Mac, then `rogg.app` in `target/mac-app/`, to try in Finder. `./dev bundle` is taken by the sample-bundle generator.
+
+**Tests** (`tools/ci/test.sh`, run by `./dev ci-test` and by the `check` job):
+- the app archive's exact listing;
+- `Info.plist` values, parsed with Python's `plistlib`;
+- the executable bit on `Contents/MacOS/rogg`;
+- `codesign --verify --deep --strict` where `codesign` exists;
+- the manifest's `kind` for each asset;
+- `-app` rejected for Linux, Windows and `.zip`.
+
+**Out of scope:** an app icon, a `.dmg`, Developer ID signing and notarisation, file associations.
