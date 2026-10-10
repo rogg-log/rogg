@@ -188,6 +188,9 @@ test_workflow_is_guarded() {
   [[ $jobs -gt 0 && $jobs == "$timeouts" ]] || { fail "$name" "$timeouts timeouts for $jobs jobs"; return; }
   ! grep -E "cargo (build|clippy|test)" "$wf" | grep -qv -- "--locked" || { fail "$name" "a cargo command without --locked"; return; }
   [[ $(grep -c "actions/checkout@" "$wf") == $(grep -c "persist-credentials: false" "$wf") ]] || { fail "$name" "a checkout keeps the token"; return; }
+  # Debug test binaries with full debuginfo filled the runner's disk on the first run (ld: Bus error, 0 MB left).
+  sed -n '/^  check:$/,/^  macos:$/p' "$wf" | grep -q 'CARGO_PROFILE_DEV_DEBUG: "0"' || { fail "$name" "check builds tests with debuginfo"; return; }
+  sed -n '/^  check:$/,/^  macos:$/p' "$wf" | grep -q "name: Free disk space" || { fail "$name" "check does not free disk space"; return; }
   pass "$name"
 }
 
