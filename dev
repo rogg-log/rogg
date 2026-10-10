@@ -116,6 +116,7 @@ ${BOLD}Windows${RESET}   (cross-build from macOS with cargo-xwin; ./dev setup of
 
 ${BOLD}CI${RESET}
   ci-test                       Test the CI scripts in tools/ci (archives, checksums, manifest, publishing)
+  ci-lint                       Lint .github/workflows with actionlint (container image, nothing installed)
 
 Set DRY=1 to print the commands without running them.
 EOF
@@ -324,6 +325,15 @@ cmd_windows_build() {
 cmd_check_all() { cmd_check; cmd_linux_test; cmd_windows_build; ok "macOS, Linux and Windows checks passed"; }
 # The CI scripts must run under macOS's /bin/bash 3.2 as well as the runners' bash, so test with /bin/bash.
 cmd_ci_test() { step "CI script tests"; run /bin/bash tools/ci/test.sh; }
+
+ACTIONLINT_IMAGE=rhysd/actionlint:1.7.12
+
+# Lints .github/workflows with actionlint from its official image, so nothing is installed on the Mac.
+cmd_ci_lint() {
+  need_container
+  step "actionlint"
+  run container run --rm --volume "$ROOT:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color
+}
 cmd_linux_shot() {
   local args=${(j: :)${(q)@}}
   step "Linux screenshots"
@@ -395,6 +405,7 @@ case $command in
   windows-build) cmd_windows_build ;;
   check-all) cmd_check_all ;;
   ci-test) cmd_ci_test ;;
+  ci-lint) cmd_ci_lint ;;
   clean) cmd_clean "$@" ;;
   *) die "unknown command '$command' — ./dev help lists them" ;;
 esac

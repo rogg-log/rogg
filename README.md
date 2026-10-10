@@ -40,3 +40,21 @@ Cross-built from macOS only; it has not been run.
 
 - `ROGG_CHROME=mac|linux|windows` overrides the window chrome style at startup, and the gallery takes `--chrome`. On macOS, `./dev capture <page> <appearance> <density> [chrome]` captures the other styles.
 - `./dev check-all` runs `check`, `linux-test` and `windows-build`.
+
+## Builds
+
+Every push to `main` runs [`.github/workflows/build.yml`](.github/workflows/build.yml). It runs clippy and the
+tests on Linux, then builds:
+
+| File | Platform |
+|---|---|
+| `rogg-macos-universal.tar.gz` | macOS 11+, Apple silicon and Intel (ad-hoc signed, not notarised) |
+| `rogg-linux-x86_64.tar.gz` | Linux x86_64, glibc 2.35+ |
+| `rogg-linux-arm64.tar.gz` | Linux arm64, glibc 2.35+ |
+| `rogg-windows-x86_64.zip` | Windows x86_64 |
+
+They are published, with `SHA256SUMS` and `manifest.json` (build number, commit, checksums), to the rolling
+prerelease `main-latest`: `https://github.com/rogg-log/rogg/releases/download/main-latest/<file>`. The manifest is
+uploaded last; check every download against it. While the repository is private, downloads need a GitHub token.
+
+`./dev ci-test` tests the packaging scripts locally; `./dev ci-lint` lints the workflow.

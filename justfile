@@ -94,3 +94,6 @@ check-all:
 
 ci-test:
     @./dev ci-test
+
+ci-lint:
+    @./dev ci-lint

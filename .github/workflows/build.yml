@@ -1,0 +1,169 @@
+# Tests rogg and builds it for macOS, Linux and Windows on every push to main, then publishes the builds to the
+# rolling `main-latest` prerelease (docs/superpowers/specs/2026-10-10-rogg-ci-builds-design.md).
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  ROGG_BUILD_NUMBER: ${{ github.run_number }}
+  ROGG_BUILD_CHANNEL: main
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Linux build dependencies
+        run: tools/ci/linux-deps.sh
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: check-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: check-${{ runner.os }}-${{ runner.arch }}-
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+      - name: CI script tests
+        run: bash tools/ci/test.sh
+
+  macos:
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain and both Mac targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: macos-
+      - name: Build Apple silicon
+        run: cargo build --release -p rogg-app --target aarch64-apple-darwin
+      - name: Build Intel
+        run: cargo build --release -p rogg-app --target x86_64-apple-darwin
+      - name: Universal binary, ad-hoc signed
+        run: |
+          mkdir -p target/universal
+          lipo -create -output target/universal/rogg \
+            target/aarch64-apple-darwin/release/rogg target/x86_64-apple-darwin/release/rogg
+          codesign --force --sign - target/universal/rogg
+          codesign --verify --verbose target/universal/rogg
+          archs=$(lipo -archs target/universal/rogg)
+          [[ $archs == *x86_64* && $archs == *arm64* ]] || { echo "unexpected architectures: $archs"; exit 1; }
+      - name: Package
+        run: tools/ci/package.sh macos universal target/universal/rogg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rogg-macos-universal
+          path: dist/rogg-macos-universal.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  linux:
+    name: linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Linux build dependencies
+        run: tools/ci/linux-deps.sh
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: linux-${{ matrix.arch }}-
+      - name: Build
+        run: cargo build --release -p rogg-app
+      - name: Package
+        run: tools/ci/package.sh linux ${{ matrix.arch }} target/release/rogg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rogg-linux-${{ matrix.arch }}
+          path: dist/rogg-linux-${{ matrix.arch }}.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  windows-x86_64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: windows-
+      - name: Build
+        run: cargo build --release -p rogg-app
+      - name: Package
+        run: bash tools/ci/package.sh windows x86_64 target/release/rogg.exe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rogg-windows-x86_64
+          path: dist/rogg-windows-x86_64.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [check, macos, linux, windows-x86_64]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: rogg-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and manifest
+        run: tools/ci/manifest.sh dist "$ROGG_BUILD_NUMBER" "$GITHUB_SHA" "$ROGG_BUILD_CHANNEL"
+      - name: Publish main-latest
+        run: tools/ci/publish.sh dist
