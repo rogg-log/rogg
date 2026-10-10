@@ -8,7 +8,7 @@ Design: `docs/superpowers/specs/2026-10-06-rogg-design.md` (the app) and `docs/s
 
 ## Install
 
-On macOS and Linux:
+On macOS and Linux (bash):
 
     curl -fsSL https://raw.githubusercontent.com/rogg-log/rogg/main/install.sh | bash
 
@@ -19,9 +19,17 @@ an applications-menu entry. Run it again to upgrade. To remove rogg (settings an
 
     curl -fsSL https://raw.githubusercontent.com/rogg-log/rogg/main/install.sh | bash -s -- --uninstall
 
+On Windows (PowerShell), to install or upgrade, and to uninstall:
+
+    irm https://raw.githubusercontent.com/rogg-log/rogg/main/install.ps1 | iex
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/rogg-log/rogg/main/install.ps1))) -Uninstall
+
+It installs to `%LOCALAPPDATA%\Programs\rogg` (no admin rights), offers to add that folder to your PATH and a Start
+menu entry, and reads the installed version from `rogg.exe`'s properties.
+
 Or download an archive for your platform from the [latest release](https://github.com/rogg-log/rogg/releases/latest).
-`rogg --version` shows the installed version and build. The installer uses plain `curl` with no credentials, so it
-works only once the repository is public.
+`rogg --version` shows the installed version and build (on Windows: `rogg.exe` → Properties → Details). Both
+installers download without credentials, so they work only once the repository is public.
 
 ## macOS
 
