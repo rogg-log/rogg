@@ -172,3 +172,35 @@ rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt, rog
 - `-app` rejected for Linux, Windows and `.zip`.
 
 **Out of scope:** a `.dmg`, Developer ID signing and notarisation, file associations.
+
+## 10. Amendment (2026-10-10): a release per build, replacing the rolling `main-latest`
+
+Approved in conversation. Every successful run on `main` publishes its own release, so builds can be tracked, and manual downloads show a version and a date. This replaces §5's rolling `main-latest` prerelease and its consistency caveat.
+
+**Naming:**
+- Tag: `v<version>-build.<n>`, with `<version>` from `Cargo.toml` (`tools/ci/version.sh`) and `<n>` from `github.run_number`. Example: `v0.1.0-build.5`.
+- Title: `rogg <version> · build <n> · <UTC date> · <short sha>`.
+- Notes: the commit subject, the full commit, a table of the files and what each is for, and a pointer to `SHA256SUMS`.
+- `manifest.json` gains `"version"`.
+
+**Publishing (`tools/ci/publish.sh`):**
+1. If the tag's release is already published (for example after "re-run all jobs"), do nothing and succeed. A draft left by an interrupted publish is deleted and recreated.
+2. Refuse a build number that isn't higher than the newest existing build release, so re-running an old run can't replace a newer build as latest.
+3. Create the release as a draft on the pushed commit with all files attached, then publish it and mark it latest in one step. GitHub creates the tag at publish time, so there is no `git push` and no tag moving, and no reader ever sees a half-uploaded release.
+4. Keep the newest 30 build releases, this one included. Older ones are deleted with their tags. Only tags of the `v…-build.N` form are considered.
+5. Delete the old rolling `main-latest` release and tag if they exist. This is a one-time migration that is safe to repeat.
+
+**URLs:**
+- latest: `https://github.com/rogg-log/rogg/releases/latest/download/<file>` (GitHub's latest is the newest non-prerelease, non-draft release);
+- a given build: `…/releases/download/v<version>-build.<n>/<file>`.
+
+**Workflow:** the publish job's concurrency group is renamed `publish-release`. It is still never cancelled.
+
+**Tests** (fake `gh`, `./dev ci-test`):
+- draft, then publish as latest, with every file attached and the expected title and notes;
+- exactly the two oldest of 31 + 1 builds deleted, and non-build releases kept;
+- skip on an already published build;
+- a leftover draft replaced;
+- an older build refused;
+- `main-latest` retired;
+- `version` in the manifest.

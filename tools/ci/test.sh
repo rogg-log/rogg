@@ -59,11 +59,13 @@ test_manifest_checksums_verify_and_json_describes_the_archives() {
   if command -v sha256sum >/dev/null 2>&1; then (cd "$dir" && sha256sum -c SHA256SUMS >/dev/null) || { fail "$name" "SHA256SUMS does not verify"; return; }
   else (cd "$dir" && shasum -a 256 -c SHA256SUMS >/dev/null) || { fail "$name" "SHA256SUMS does not verify"; return; }; fi
   [[ $(wc -l < "$dir/SHA256SUMS" | tr -d ' ') == 4 ]] || { fail "$name" "SHA256SUMS lines"; return; }
-  python3 - "$dir" <<'PY' || { fail "$name" "manifest.json content"; return; }
+  python3 - "$dir" "$root" <<'PY' || { fail "$name" "manifest.json content"; return; }
 import hashlib, json, os, sys
 d = sys.argv[1]
 m = json.load(open(os.path.join(d, "manifest.json")))
 assert m["channel"] == "main" and m["build"] == 42 and isinstance(m["build"], int)
+import re
+assert m["version"] == re.search(r'^version = "([^"]+)"', open(os.path.join(sys.argv[2], "Cargo.toml")).read(), re.M).group(1), m.get("version")
 assert m["commit"] == "0123456789abcdef0123456789abcdef01234567"
 assert m["date"].endswith("Z") and "T" in m["date"]
 names = [a["name"] for a in m["assets"]]
@@ -180,16 +182,22 @@ test_manifest_rejects_app_archives_off_macos() {
   pass "$name"
 }
 
-# A fake `gh` and `git` that log their arguments; `gh release view <tag>` succeeds only when GH_RELEASE_EXISTS=1.
+# A fake `gh` and `git` that log their arguments. `gh release list` prints GH_TAGS (space-separated); `gh release view
+# <tag>` reports isDraft for tags in GH_DRAFTS, a published release for other tags in GH_TAGS, and fails otherwise.
+# --notes-file contents are copied to $STUB_LOG.notes.
 make_stubs() {
   local bin=$work/bin
   mkdir -p "$bin"
   cat > "$bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >> "$STUB_LOG"
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do [[ ${args[i]} == --notes-file ]] && cp "${args[i+1]}" "$STUB_LOG.notes"; done
+if [[ $1 == release && $2 == list ]]; then for t in ${GH_TAGS:-}; do echo "$t"; done; exit 0; fi
 if [[ $1 == release && $2 == view ]]; then
-  if [[ " $* " == *" --json "* ]]; then printf '%s\n' rogg-macos-universal.tar.gz rogg-linux-x86_64.tar.gz old-layout.zip manifest.json SHA256SUMS; exit 0; fi
-  [[ ${GH_RELEASE_EXISTS:-0} == 1 ]]; exit
+  for t in ${GH_DRAFTS:-}; do [[ $t == "$3" ]] && { echo true; exit 0; }; done
+  for t in ${GH_TAGS:-}; do [[ $t == "$3" ]] && { echo false; exit 0; }; done
+  exit 1
 fi
 exit 0
 STUB
@@ -204,29 +212,72 @@ STUB
 }
 
 line_of() { grep -n -- "$2" "$1" | head -1 | cut -d: -f1; }
+SHA=0123456789abcdef0123456789abcdef01234567
 
-test_publish_uploads_manifest_last_and_prunes_stale_assets() {
-  local name=${FUNCNAME[0]} dir bin log a s m
-  dir=$(make_release_dir rel-pub)
-  "$sh" "$ci/manifest.sh" "$dir" 7 0123456789abcdef0123456789abcdef01234567 main >/dev/null
-  bin=$(make_stubs); log=$work/publish-new.log; : > "$log"
-  STUB_LOG=$log PATH=$bin:$PATH GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 ROGG_BUILD_NUMBER=7 GH_RELEASE_EXISTS=0 \
-    GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed"; return; }
-  grep -q -- "gh release create main-latest --prerelease --target 0123456789abcdef0123456789abcdef01234567" "$log" || { fail "$name" "no create"; return; }
-  # The tag moves through the API (no git push: GITHUB_TOKEN may not push refs whose commits change workflows).
-  grep -q -- "gh api -X PATCH repos/rogg-log/rogg/git/refs/tags/main-latest -f sha=0123456789abcdef0123456789abcdef01234567 -F force=true" "$log" \
-    || { fail "$name" "tag not moved through the API"; return; }
-  ! grep -q -- "git push" "$log" || { fail "$name" "used git push"; return; }
-  grep -q -- "--title Build 7 · 0123456" "$log" || { fail "$name" "title"; return; }
-  a=$(line_of "$log" "upload main-latest .*rogg-windows-x86_64.zip"); s=$(line_of "$log" "upload main-latest .*SHA256SUMS"); m=$(line_of "$log" "upload main-latest .*manifest.json")
-  [[ -n $a && -n $s && -n $m && $a -lt $s && $s -lt $m ]] || { fail "$name" "upload order archives=$a sums=$s manifest=$m"; return; }
-  grep -q -- "delete-asset main-latest old-layout.zip --yes" "$log" || { fail "$name" "stale asset kept"; return; }
-  ! grep -qE -- "delete-asset main-latest (rogg-|manifest.json|SHA256SUMS)" "$log" || { fail "$name" "deleted a current asset"; return; }
-  log=$work/publish-existing.log; : > "$log"
-  STUB_LOG=$log PATH=$bin:$PATH GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 ROGG_BUILD_NUMBER=7 GH_RELEASE_EXISTS=1 \
-    GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed on an existing release"; return; }
-  ! grep -q -- "release create" "$log" || { fail "$name" "re-created an existing release"; return; }
-  grep -q -- "gh release edit main-latest" "$log" || { fail "$name" "no edit"; return; }
+# publish.sh against the stubs: publish_with <log> <build> [VAR=value...]
+publish_with() {
+  local log=$1 build=$2 dir bin
+  shift 2
+  dir=$(make_release_dir "rel-pub-$build-$RANDOM")
+  "$sh" "$ci/manifest.sh" "$dir" "$build" "$SHA" main >/dev/null
+  bin=$(make_stubs); : > "$log"
+  env STUB_LOG="$log" PATH="$bin:$PATH" GITHUB_SHA="$SHA" ROGG_BUILD_NUMBER="$build" GITHUB_REF=refs/heads/main \
+    GITHUB_REPOSITORY=rogg-log/rogg "$@" "$sh" "$ci/publish.sh" "$dir" >/dev/null 2>&1
+}
+
+test_publish_creates_a_draft_then_publishes_it_as_latest() {
+  local name=${FUNCNAME[0]} log=$work/pub-new.log version tag c e f
+  version=$("$sh" "$ci/version.sh"); tag="v$version-build.7"
+  publish_with "$log" 7 GH_TAGS="v$version-build.5 v$version-build.6 main-latest some-other-tag" || { fail "$name" "publish.sh failed"; return; }
+  c=$(line_of "$log" "gh release create $tag "); e=$(line_of "$log" "gh release edit $tag --draft=false --latest")
+  [[ -n $c && -n $e && $c -lt $e ]] || { fail "$name" "create=$c publish=$e"; return; }
+  grep -- "gh release create $tag " "$log" | grep -q -- "--draft --target $SHA" || { fail "$name" "not created as a draft on the commit"; return; }
+  grep -q -- "--title rogg $version · build 7 · $(date -u +%F) · 0123456" "$log" || { fail "$name" "title"; return; }
+  for f in rogg-macos-universal.tar.gz rogg-linux-x86_64.tar.gz rogg-linux-arm64.tar.gz rogg-windows-x86_64.zip SHA256SUMS manifest.json; do
+    grep -- "gh release create $tag " "$log" | grep -q -- "/$f" || { fail "$name" "$f not attached to the draft"; return; }
+  done
+  grep -q "feat: the commit subject" "$log.notes" && grep -q "$SHA" "$log.notes" && grep -q "rogg-windows-x86_64.zip" "$log.notes" \
+    && grep -q "SHA256SUMS" "$log.notes" || { fail "$name" "release notes"; return; }
+  grep -q -- "gh release delete main-latest --cleanup-tag --yes" "$log" || { fail "$name" "main-latest kept"; return; }
+  ! grep -qE -- "gh release delete (v|some-other-tag)" "$log" || { fail "$name" "deleted a release it should keep"; return; }
+  ! grep -qE -- "git push|gh api" "$log" || { fail "$name" "moved a tag by hand"; return; }
+  pass "$name"
+}
+
+test_publish_keeps_the_newest_30_builds() {
+  local name=${FUNCNAME[0]} log=$work/pub-prune.log version tags="" i
+  version=$("$sh" "$ci/version.sh")
+  for i in $(seq 1 31); do tags+="v$version-build.$i "; done
+  publish_with "$log" 32 GH_TAGS="$tags v0.0.1 nightly" || { fail "$name" "publish.sh failed"; return; }
+  [[ $(grep -c -- "gh release delete v" "$log") == 2 ]] || { fail "$name" "$(grep -c -- "gh release delete v" "$log") build releases deleted, not 2"; return; }
+  grep -q -- "gh release delete v$version-build.1 --cleanup-tag --yes" "$log" && grep -q -- "gh release delete v$version-build.2 --cleanup-tag --yes" "$log" \
+    || { fail "$name" "did not delete the two oldest"; return; }
+  ! grep -qE -- "gh release delete (v0.0.1|nightly)" "$log" || { fail "$name" "deleted a non-build release"; return; }
+  pass "$name"
+}
+
+test_publish_skips_an_already_published_build() {
+  local name=${FUNCNAME[0]} log=$work/pub-again.log version
+  version=$("$sh" "$ci/version.sh")
+  publish_with "$log" 7 GH_TAGS="v$version-build.7" || { fail "$name" "a re-run failed instead of skipping"; return; }
+  ! grep -qE -- "release (create|edit|delete)" "$log" || { fail "$name" "changed an already published build"; return; }
+  pass "$name"
+}
+
+test_publish_replaces_a_leftover_draft() {
+  local name=${FUNCNAME[0]} log=$work/pub-draft.log version d c
+  version=$("$sh" "$ci/version.sh")
+  publish_with "$log" 7 GH_TAGS="v$version-build.7" GH_DRAFTS="v$version-build.7" || { fail "$name" "publish.sh failed"; return; }
+  d=$(line_of "$log" "gh release delete v$version-build.7 --yes"); c=$(line_of "$log" "gh release create v$version-build.7 ")
+  [[ -n $d && -n $c && $d -lt $c ]] || { fail "$name" "draft delete=$d create=$c"; return; }
+  pass "$name"
+}
+
+test_publish_refuses_an_older_build() {
+  local name=${FUNCNAME[0]} log=$work/pub-old.log version
+  version=$("$sh" "$ci/version.sh")
+  if publish_with "$log" 7 GH_TAGS="v$version-build.9"; then fail "$name" "published build 7 over build 9"; return; fi
+  ! grep -q -- "release create" "$log" || { fail "$name" "created a release before refusing"; return; }
   pass "$name"
 }
 
@@ -257,7 +308,7 @@ test_publish_refuses_other_branches() {
 test_workflow_is_guarded() {
   local name=${FUNCNAME[0]} wf=$root/.github/workflows/build.yml jobs timeouts
   grep -qx "    if: github.ref == 'refs/heads/main'" "$wf" || { fail "$name" "publish is not limited to main"; return; }
-  grep -qx "      group: publish-main-latest" "$wf" || { fail "$name" "publish has no own concurrency group"; return; }
+  grep -qx "      group: publish-release" "$wf" || { fail "$name" "publish has no own concurrency group"; return; }
   grep -qx "      cancel-in-progress: false" "$wf" || { fail "$name" "publish can be cancelled"; return; }
   ! grep -qE "^concurrency:" "$wf" || { fail "$name" "workflow-level concurrency would cancel publish"; return; }
   jobs=$(sed -n '/^jobs:$/,$p' "$wf" | grep -cE "^  [a-z0-9_-]+:$"); timeouts=$(grep -cE "^    timeout-minutes: [0-9]+$" "$wf")
@@ -277,7 +328,7 @@ test_workflow_is_guarded() {
 
 test_scripts_are_checked_out_with_lf() {
   local name=${FUNCNAME[0]} f
-  for f in tools/ci/package.sh tools/ci/macos-app.sh tools/ci/manifest.sh tools/ci/publish.sh tools/ci/test.sh tools/ci/linux-deps.sh tools/linux/shot.sh dev .github/workflows/build.yml; do
+  for f in tools/ci/package.sh tools/ci/macos-app.sh tools/ci/version.sh tools/ci/manifest.sh tools/ci/publish.sh tools/ci/test.sh tools/ci/linux-deps.sh tools/linux/shot.sh dev .github/workflows/build.yml; do
     [[ $(cd "$root" && git check-attr eol -- "$f" | sed 's/.*: //') == lf ]] || { fail "$name" "$f is not eol=lf"; return; }
   done
   pass "$name"
@@ -286,7 +337,9 @@ test_scripts_are_checked_out_with_lf() {
 for t in test_tar_archive_lists_exactly_the_four_files test_windows_archive_is_a_zip_with_rogg_exe \
          test_package_refuses_missing_binary_and_unknown_os test_manifest_checksums_verify_and_json_describes_the_archives \
          test_manifest_rejects_bad_build_numbers test_manifest_rejects_unexpected_archives \
-         test_publish_uploads_manifest_last_and_prunes_stale_assets test_publish_refuses_without_manifest \
+         test_publish_creates_a_draft_then_publishes_it_as_latest test_publish_keeps_the_newest_30_builds \
+         test_publish_skips_an_already_published_build test_publish_replaces_a_leftover_draft test_publish_refuses_an_older_build \
+         test_publish_refuses_without_manifest \
          test_publish_refuses_other_branches test_workflow_is_guarded test_scripts_are_checked_out_with_lf \
          test_mac_app_archive_holds_a_signed_bundle_with_its_info_plist test_mac_app_build_number_defaults_to_zero_and_rejects_junk \
          test_manifest_marks_the_app_and_the_binaries test_manifest_rejects_app_archives_off_macos; do

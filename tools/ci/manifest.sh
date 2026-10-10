@@ -10,6 +10,7 @@ dir=$1 build=$2 commit=$3 channel=$4
 [[ $build =~ ^(0|[1-9][0-9]*)$ ]] || die "build must be a plain number, got '$build'"
 [[ $commit =~ ^[0-9a-f]{7,40}$ ]] || die "commit must be a hex sha, got '$commit'"
 [[ $channel =~ ^[a-z0-9-]+$ ]] || die "bad channel '$channel'"
+version=$("$(dirname "$0")/version.sh")
 
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
@@ -42,7 +43,8 @@ done
 printf '%s' "$sums" > SHA256SUMS
 date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 {
-  printf '{\n  "channel": "%s",\n  "build": %s,\n  "commit": "%s",\n  "date": "%s",\n  "assets": [\n' "$channel" "$build" "$commit" "$date"
+  printf '{\n  "channel": "%s",\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "date": "%s",\n  "assets": [\n' \
+    "$channel" "$version" "$build" "$commit" "$date"
   printf '%s\n' "$entries"
   printf '  ]\n}\n'
 } > manifest.json

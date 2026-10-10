@@ -54,10 +54,12 @@ tests on Linux, then builds:
 | `rogg-linux-arm64.tar.gz` | Linux arm64, glibc 2.35+ |
 | `rogg-windows-x86_64.zip` | Windows x86_64 |
 
-They are published, with `SHA256SUMS` and `manifest.json` (build number, commit, and each file's checksum and
-`kind`, `binary` or `app`), to the rolling
-prerelease `main-latest`: `https://github.com/rogg-log/rogg/releases/download/main-latest/<file>`. The manifest is
-uploaded last; check every download against it. While the repository is private, downloads need a GitHub token.
+Each build becomes its own release, `v<version>-build.<n>` (titled e.g. `rogg 0.1.0 · build 5 · 2026-10-10 ·
+5497615`), with `SHA256SUMS` and `manifest.json` (version, build number, commit, and each file's checksum and `kind`,
+`binary` or `app`). The release is published only once every file is attached, and is marked latest; the newest 30
+builds are kept. Latest files: `https://github.com/rogg-log/rogg/releases/latest/download/<file>`; a given build:
+`…/releases/download/v0.1.0-build.5/<file>`. Check every download against `SHA256SUMS`. While the repository is
+private, downloads need a GitHub token (`gh release download`).
 
 `./dev ci-test` tests the packaging scripts locally; `./dev ci-lint` lints the workflow; `./dev mac-app` builds
 `rogg.app` for this Mac into `target/mac-app/`; `./dev icon` regenerates the app icon from `crates/rogg-app/assets/icon/rogg.svg`.

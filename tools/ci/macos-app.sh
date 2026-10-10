@@ -13,8 +13,7 @@ docs=("$root/README.md" "$fonts/Inter-OFL.txt" "$fonts/JetBrainsMono-OFL.txt")
 icon=$root/crates/rogg-app/assets/icon/rogg.icns
 for f in "$binary" "${docs[@]}" "$icon"; do [[ -f $f ]] || die "missing $f"; done
 
-version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$root/Cargo.toml" | head -1)
-[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "no workspace version in Cargo.toml"
+version=$("$root/tools/ci/version.sh")
 build=${ROGG_BUILD_NUMBER:-0}
 [[ $build =~ ^(0|[1-9][0-9]*)$ ]] || die "ROGG_BUILD_NUMBER must be a plain number, got '$build'"
 

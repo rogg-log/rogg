@@ -1,5 +1,5 @@
-# Tests rogg and builds it for macOS, Linux and Windows on every push to main, then publishes the builds to the
-# rolling `main-latest` prerelease (docs/superpowers/specs/2026-10-10-rogg-ci-builds-design.md).
+# Tests rogg and builds it for macOS, Linux and Windows on every push to main, then publishes them as that build's own
+# release, marked latest (docs/superpowers/specs/2026-10-10-rogg-ci-builds-design.md §10).
 name: build
 
 on:
@@ -192,7 +192,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     concurrency:
-      group: publish-main-latest
+      group: publish-release
       cancel-in-progress: false
     permissions:
       contents: write
@@ -209,5 +209,5 @@ jobs:
           merge-multiple: true
       - name: Checksums and manifest
         run: tools/ci/manifest.sh dist "$ROGG_BUILD_NUMBER" "$GITHUB_SHA" "$ROGG_BUILD_CHANNEL"
-      - name: Publish main-latest
+      - name: Publish the release
         run: tools/ci/publish.sh dist
