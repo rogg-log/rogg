@@ -85,9 +85,11 @@ pub fn press(cx: &mut TestAppContext, window: AnyWindowHandle, keys: &str) {
     cx.run_until_parked();
 }
 
-/// Advances the test clock (driving the 16 ms poll task) while real background threads work, until `done`.
+/// Advances the test clock (driving the 16 ms poll task) while real background threads work, until `done`. Bounded
+/// by 60 s of real time rather than an iteration count, so a slow CI runner gets the time a laptop doesn't need.
 pub fn wait_until(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppContext) -> bool) {
-    for _ in 0..3000 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
         if done(cx) {
             return;
         }
@@ -95,7 +97,7 @@ pub fn wait_until(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppCont
         cx.run_until_parked();
         std::thread::sleep(Duration::from_millis(1));
     }
-    panic!("condition not reached within the time limit");
+    panic!("condition not reached within 60 s");
 }
 
 /// Writes `lines` (joined with `\n`) to `dir/name` and returns the path.

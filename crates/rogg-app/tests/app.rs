@@ -2,6 +2,13 @@ mod common;
 use gpui_kit::TestAppContext;
 use rogg_app::args::Args;
 
+// A CI runner is several times slower than a laptop: the shared wait is bounded by real time, not an iteration count.
+#[gpui_kit::test]
+fn wait_until_gives_a_slow_machine_more_than_five_seconds(cx: &mut TestAppContext) {
+    let start = std::time::Instant::now();
+    common::wait_until(cx, |_| start.elapsed() > std::time::Duration::from_secs(5));
+}
+
 #[gpui_kit::test]
 fn opens_to_the_welcome_view(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);

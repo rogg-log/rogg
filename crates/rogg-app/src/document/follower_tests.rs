@@ -6,8 +6,10 @@ use crate::paths::AppPaths;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 use rogg_genlog::bundle::write_gz;
 
+/// Polls until `done`, for up to 60 s of real time: generous enough for a slow CI runner, still bounded.
 fn wait_until(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppContext) -> bool) {
-    for _ in 0..3000 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
         if done(cx) {
             return;
         }
@@ -15,7 +17,14 @@ fn wait_until(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppContext)
         cx.run_until_parked();
         std::thread::sleep(Duration::from_millis(1));
     }
-    panic!("condition not reached within the time limit");
+    panic!("condition not reached within 60 s");
+}
+
+// A CI runner is several times slower than a laptop: the wait is bounded by real time, not by an iteration count.
+#[gpui_kit::test]
+fn wait_until_gives_a_slow_machine_more_than_five_seconds(cx: &mut TestAppContext) {
+    let start = std::time::Instant::now();
+    wait_until(cx, |_| start.elapsed() > Duration::from_secs(5));
 }
 
 fn lines(doc: &Entity<Document>, cx: &mut TestAppContext) -> u64 {
