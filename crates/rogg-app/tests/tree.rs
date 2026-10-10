@@ -35,7 +35,7 @@ fn folders_list_their_logs_and_open_the_first(cx: &mut TestAppContext) {
     common::write_log(&logs.join("sub"), "three.log", &["3"]);
     std::fs::write(logs.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
     std::fs::write(logs.join("utf16.log"), [0xFF, 0xFE, b'h', 0, b'i', 0]).unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![logs.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![logs.clone()], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.tabs().len()) == 1);
     assert_eq!(titles(&ws, cx), ["one.log"], "the first top-level log opens");
     // logs (expanded), sub (collapsed), one.log, two.log, utf16.log
@@ -61,7 +61,7 @@ fn archives_list_lazily_and_open_nested_members(cx: &mut TestAppContext) {
     let inner_bytes = std::fs::read(&inner).unwrap();
     let zip = dir.path().join("outer.zip");
     write_archive(&zip, BundleKind::Zip, &[("logs/api.log", b"api\n"), ("inner.tgz", &inner_bytes), ("README", b"read me\n")]).unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.tabs().len()) == 1);
     assert_eq!(titles(&ws, cx), ["README"]);
     // outer.zip, logs (collapsed), inner.tgz (not listed yet), README
@@ -93,7 +93,7 @@ fn a_damaged_member_fails_only_its_own_tab(cx: &mut TestAppContext) {
     let zip = dir.path().join("d.zip");
     write_stored_zip(&zip, &[("api.log", b"api one\napi two\n"), ("README", b"read me\n")]).unwrap();
     damage_zip_member(&zip, 0).unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()], ..Default::default() });
     // d.zip, api.log (opened first, by name), README
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.tabs().len()) == 1);
     wait_rows(cx, w, 3);
@@ -112,7 +112,7 @@ fn unreadable_archives_are_marked_and_toasted(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let junk = dir.path().join("junk.zip");
     std::fs::write(&junk, b"PK\x03\x04 not really a zip").unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![junk] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![junk], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.starts_with("Could not read junk.zip"))));
     assert!(common::exists(cx, w, "tree-note-0"), "the archive row says it is unreadable");
     assert!(ws.read_with(cx, |ws, _| ws.tabs().is_empty()));
@@ -126,7 +126,7 @@ fn huge_folders_list_the_first_files_with_a_toast(cx: &mut TestAppContext) {
     for i in 0..=rogg_core::folder::MAX_SCAN_FILES {
         std::fs::write(big.join(format!("f{i:05}.log")), "").unwrap();
     }
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![big] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![big], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.contains("showing the first 10,000 files"))));
 }
 
@@ -135,7 +135,7 @@ fn recent_archive_members_reopen_their_member(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let zip = dir.path().join("r.zip");
     write_archive(&zip, BundleKind::Zip, &[("a.log", b"a\n"), ("b.log", b"b\n")]).unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.tabs().len()) == 1);
     wait_rows(cx, w, 3);
     common::click(cx, w, "tree-row-2");
@@ -154,7 +154,7 @@ fn a_failed_listing_is_retried_when_the_archive_is_expanded_again(cx: &mut TestA
     let dir = common::setup(cx);
     let zip = dir.path().join("fixed.zip");
     std::fs::write(&zip, b"PK\x03\x04 not really a zip").unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![zip.clone()], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.starts_with("Could not read fixed.zip"))));
     assert_eq!(rows(cx, w), 1);
     write_archive(&zip, BundleKind::Zip, &[("a.log", b"a\n")]).unwrap();

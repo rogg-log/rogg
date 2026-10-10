@@ -12,7 +12,7 @@ const LINES: [&str; 8] = ["ok start", "ERROR disk full", "retry 1", "timeout tal
 fn open_one(cx: &mut TestAppContext) -> (tempfile::TempDir, AnyWindowHandle, Entity<Workspace>, Entity<Tab>) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "app.log", &LINES);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     (dir, w, ws, tab)
 }
@@ -168,7 +168,7 @@ fn theme_and_density_actions_reinstall_the_theme(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn focus_keys_do_nothing_on_a_placeholder_tab(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
-    let (w, _ws) = common::open_workspace(cx, Args { demo: false, paths: vec![dir.path().join("missing.log")] });
+    let (w, _ws) = common::open_workspace(cx, Args { demo: false, paths: vec![dir.path().join("missing.log")], ..Default::default() });
     assert!(common::exists(cx, w, "error"));
     for keys in ["tab", "shift-tab", "cmd-f", "cmd-l"] {
         common::press(cx, w, keys);

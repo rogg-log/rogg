@@ -13,7 +13,7 @@ fn a_session_round_trips_through_save_and_start(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let a = common::write_log(dir.path(), "a.log", &["error one", "ok", "error two", "x"]);
     let b = common::write_log(dir.path(), "b.log", &["b"]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![a.clone(), b] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![a.clone(), b], ..Default::default() });
     let tab_a = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
     common::wait_until(cx, |cx| tab_a.read_with(cx, |t, cx| t.is_ready(cx)));
     let doc = tab_a.read_with(cx, |t, _| t.doc.clone());
@@ -79,7 +79,7 @@ fn restore_keeps_good_tabs_and_fails_missing_ones(cx: &mut TestAppContext) {
 fn derived_tabs_restore_from_their_definition(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["x1", "y", "x3"]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     tab.read_with(cx, |t, _| t.doc.clone()).update(cx, |d, cx| d.set_expression("x", cx)).unwrap();
@@ -189,7 +189,7 @@ fn a_tab_with_a_non_utf8_path_is_skipped_not_the_whole_session(cx: &mut TestAppC
     use std::os::unix::ffi::OsStrExt;
     let dir = common::setup(cx);
     let good = common::write_log(dir.path(), "good.log", &["fine"]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![good.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![good.clone()], ..Default::default() });
     let odd = dir.path().join(std::ffi::OsStr::from_bytes(b"odd-\xff.log"));
     let member = SourceRef::member(SourceRef::File(dir.path().join(std::ffi::OsStr::from_bytes(b"odd-\xfe.zip"))), "api.log");
     let derived = DerivedSpec { parent: SessionSource::File { path: odd.clone() }, filter: FilterSpec::from_expression("x"), pins: vec![], lines: None, snapshot: None };
@@ -214,7 +214,7 @@ fn a_tab_with_a_non_utf8_path_is_skipped_not_the_whole_session(cx: &mut TestAppC
 fn non_finite_values_never_reach_the_session_file(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["a"]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
     tab.update(cx, |t, _| t.split = f32::NAN);
     ws.update(cx, |ws, cx| ws.save_session_now(cx));
@@ -272,7 +272,7 @@ fn a_failing_session_save_is_reported_once(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt;
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["a"]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let set_mode = |mode: u32| std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
     set_mode(0o555);
     ws.update(cx, |ws, cx| ws.save_session_now(cx));
@@ -293,7 +293,7 @@ fn the_demo_neither_restores_nor_saves_the_session(cx: &mut TestAppContext) {
     let path = dir.path().join("session.json");
     Session { tabs: vec![TabState::new(SessionSource::File { path: log })], ..Session::default() }.save(&path).unwrap();
     let before = std::fs::read(&path).unwrap();
-    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![], ..Default::default() });
     let titles: Vec<String> = ws.read_with(cx, |ws, cx| ws.tabs().iter().map(|t| t.read(cx).title(cx).to_string()).collect());
     assert!(!titles.is_empty() && !titles.iter().any(|t| t == "mine.log"), "{titles:?}");
     ws.update(cx, |ws, cx| ws.save_session_now(cx));

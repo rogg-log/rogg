@@ -28,6 +28,9 @@ pub struct BuildInfo {
     pub commit: &'static str,
     pub date: &'static str,
     pub rustc: &'static str,
+    /// The CI run number and channel, when CI built it.
+    pub number: Option<&'static str>,
+    pub channel: Option<&'static str>,
     /// `123 (main)` for a CI build, `local` otherwise.
     pub build: String,
 }
@@ -56,7 +59,28 @@ pub fn describe(
         (Some(n), None) => n.to_string(),
         (None, _) => LOCAL.to_string(),
     };
-    BuildInfo { version: env!("CARGO_PKG_VERSION"), commit: commit.unwrap_or(UNKNOWN), date: date.unwrap_or(UNKNOWN), rustc: rustc.unwrap_or(UNKNOWN), build }
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        commit: commit.unwrap_or(UNKNOWN),
+        date: date.unwrap_or(UNKNOWN),
+        rustc: rustc.unwrap_or(UNKNOWN),
+        number,
+        channel,
+        build,
+    }
+}
+
+/// `rogg --version`: `rogg 0.1.0 (build 5, main, cbdea91)` for a CI build, `rogg 0.1.0 (local, cbdea91)` otherwise.
+pub fn version_line(b: &BuildInfo) -> String {
+    let mut parts = match b.number {
+        Some(n) => vec![format!("build {n}")],
+        None => vec![LOCAL.to_string()],
+    };
+    if let (Some(_), Some(channel)) = (b.number, b.channel) {
+        parts.push(channel.to_string());
+    }
+    parts.push(b.commit.to_string());
+    format!("rogg {} ({})", b.version, parts.join(", "))
 }
 
 /// The main open-source crates and their licenses, copied from each crate's manifest on 2026-10-08.
@@ -122,6 +146,15 @@ mod tests {
         assert_eq!(b.version, env!("CARGO_PKG_VERSION"));
         let b = describe(Some("abc1234"), Some("2026-10-08"), Some("rustc 1.99.0"), None, None);
         assert_eq!((b.commit, b.date, b.rustc), ("abc1234", "2026-10-08", "rustc 1.99.0"));
+    }
+
+    #[test]
+    fn version_line_names_the_build_or_says_local() {
+        let v = env!("CARGO_PKG_VERSION");
+        assert_eq!(version_line(&describe(Some("cbdea91"), None, None, Some("5"), Some("main"))), format!("rogg {v} (build 5, main, cbdea91)"));
+        assert_eq!(version_line(&describe(Some("cbdea91"), None, None, Some("5"), None)), format!("rogg {v} (build 5, cbdea91)"));
+        assert_eq!(version_line(&describe(Some("abc1234"), None, None, None, None)), format!("rogg {v} (local, abc1234)"));
+        assert_eq!(version_line(&describe(None, None, None, None, None)), format!("rogg {v} (local, unknown)"));
     }
 
     #[test]

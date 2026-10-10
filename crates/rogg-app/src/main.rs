@@ -5,6 +5,10 @@
 fn main() {
     match rogg_app::args::Args::parse(std::env::args_os().skip(1)) {
         Ok(mut args) => {
+            if args.version {
+                println!("{}", rogg_app::about::version_line(&rogg_app::about::build_info()));
+                return;
+            }
             // Data piped or redirected into rogg opens as a live tab (spec §4.1).
             if rogg_core::platform::stdin_has_data() && !args.paths.iter().any(|p| p.as_os_str() == "-") {
                 args.paths.push("-".into());

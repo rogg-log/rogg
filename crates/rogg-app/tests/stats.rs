@@ -53,7 +53,7 @@ fn statistics_rows_read_like_the_spec() {
 fn the_footer_opens_live_statistics(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["error one", "ok", "error two"]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some()));
     doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();

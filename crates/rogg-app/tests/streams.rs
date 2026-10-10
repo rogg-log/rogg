@@ -38,7 +38,7 @@ fn fifos_are_read_as_streams(cx: &mut TestAppContext) {
     let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
     // SAFETY: a valid NUL-terminated path.
     assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![fifo.clone()] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![fifo.clone()], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab()).expect("the FIFO opens a tab at once");
     assert_eq!(tab.read_with(cx, |t, cx| t.title(cx).to_string()), "events");
     let writer = std::thread::spawn(move || {

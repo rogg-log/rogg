@@ -22,7 +22,7 @@ fn a_bundle_opens_filters_and_keeps_tab_state(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let bundle = dir.path().join("support.tgz");
     generate_bundle(&bundle, BundleKind::TarGz, 3, &GenOptions { size_bytes: 200_000, ..Default::default() }).unwrap();
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![bundle] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![bundle], ..Default::default() });
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.tabs().len()) == 1);
     let first = active(&ws, cx);
     common::wait_until(cx, |cx| loaded(&first, cx));
@@ -49,7 +49,7 @@ fn a_bundle_opens_filters_and_keeps_tab_state(cx: &mut TestAppContext) {
 fn a_live_log_appends_filters_and_reloads(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "app.log", &["start", ""]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()], ..Default::default() });
     let tab = active(&ws, cx);
     let doc = tab.read_with(cx, |t, _| t.doc.clone());
     doc.update(cx, |d, cx| d.set_expression("ERROR", cx)).unwrap();

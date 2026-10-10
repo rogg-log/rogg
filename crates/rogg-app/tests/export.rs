@@ -7,7 +7,7 @@ use rogg_core::session::Session;
 fn open_filtered(cx: &mut TestAppContext, lines: &[&str], expr: &str) -> (tempfile::TempDir, AnyWindowHandle, Entity<Workspace>) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", lines);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     let doc = tab.read_with(cx, |t, _| t.doc.clone());
@@ -89,7 +89,7 @@ fn export_waits_for_the_filtered_view_to_be_built(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_global(rogg_app::document::EngineConfig { view_sync_work: 150, ..Default::default() }));
     let lines: Vec<&str> = (0..1000).map(|i| if i % 10 == 5 { "match here" } else { "filler" }).collect();
     let log = common::write_log(dir.path(), "a.log", &lines);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some()));
     doc.update(cx, |d, cx| d.set_expression("match", cx)).unwrap();

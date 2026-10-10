@@ -13,7 +13,7 @@ const ERROR_LINE: &str = "2026-10-05 14:32:08.142  ERROR  disk full";
 fn open(cx: &mut TestAppContext, lines: &[&str]) -> (tempfile::TempDir, gpui_kit::AnyWindowHandle, Entity<rogg_app::workspace::Workspace>, Entity<Tab>) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", lines);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     (dir, w, ws, tab)

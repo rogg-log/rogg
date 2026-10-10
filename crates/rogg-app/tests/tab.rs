@@ -11,7 +11,7 @@ const LINES: [&str; 8] = ["ok start", "ERROR disk full", "retry 1", "timeout tal
 fn open_one(cx: &mut TestAppContext) -> (tempfile::TempDir, AnyWindowHandle, Entity<Workspace>, Entity<Tab>) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "app.log", &LINES);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().expect("a tab"));
     (dir, w, ws, tab)
 }
@@ -109,7 +109,7 @@ fn invalid_regex_keeps_results_and_editor(cx: &mut TestAppContext) {
 fn missing_file_shows_error_state_with_retry(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let path = dir.path().join("later.log");
-    let (w, _) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    let (w, _) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()], ..Default::default() });
     assert!(common::exists(cx, w, "error"));
     assert!(!common::exists(cx, w, "log-top"));
     std::fs::write(&path, "now here").unwrap();

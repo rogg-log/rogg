@@ -169,7 +169,7 @@ fn an_idle_followed_file_polls_slowly(cx: &mut TestAppContext) {
     // sync_bytes 0 puts every search on a background thread, so the busy interval is observable.
     cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let log = common::write_log(dir.path(), "idle.log", &["a", "b"]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.text().is_some() && d.filter.progress.is_none()));
     common::wait_until(cx, |cx| doc.read_with(cx, |d, _| d.poll_interval() == rogg_app::document::FOLLOW_POLL));
@@ -185,7 +185,7 @@ fn truncating_a_large_file_mid_scan_reloads_and_renders(cx: &mut TestAppContext)
     let lines: Vec<String> = (0..400_000).map(|i| format!("line {i} error padding padding padding")).collect();
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     let log = common::write_log(dir.path(), "big.log", &refs);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log.clone()], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     let doc = tab.read_with(cx, |t, _| t.doc.clone());

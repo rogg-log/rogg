@@ -9,7 +9,7 @@ fn open_two(cx: &mut TestAppContext) -> (tempfile::TempDir, AnyWindowHandle, Ent
     let dir = common::setup(cx);
     let a = common::write_log(dir.path(), "a.log", &["alpha one", "beta two"]);
     let b = common::write_log(dir.path(), "b.log", &["gamma"]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![a, b] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![a, b], ..Default::default() });
     (dir, w, ws)
 }
 
@@ -140,7 +140,7 @@ fn unreadable_recent_and_history_files_toast_at_start(cx: &mut TestAppContext) {
     std::fs::write(dir.path().join("recent.json"), "{ not json").unwrap();
     std::fs::write(dir.path().join("history.json"), "[[[").unwrap();
     cx.update(|cx| rogg_app::init_with(cx, rogg_app::paths::AppPaths::under(dir.path())));
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![], ..Default::default() });
     let toasts: Vec<String> = ws.read_with(cx, |ws, _| ws.toasts.iter().map(|(_, m)| m.to_string()).collect());
     assert_eq!(toasts.len(), 2, "{toasts:?}");
     assert!(toasts.iter().any(|m| m.contains("history.json.bak")) && toasts.iter().any(|m| m.contains("recent.json.bak")));
@@ -152,7 +152,7 @@ fn one_tab_per_file_whatever_the_path_spelling(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     std::fs::create_dir(dir.path().join("sub")).unwrap();
     let raw = dir.path().join("sub/../late.log");
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![raw] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![raw], ..Default::default() });
     assert_eq!(ws.read_with(cx, |ws, _| ws.tabs().len()), 1, "a missing file opens an error tab");
     common::write_log(dir.path(), "late.log", &["here"]);
     let doc = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).doc.clone());

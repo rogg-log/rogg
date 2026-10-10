@@ -7,7 +7,7 @@ use rogg_app::document::Pane;
 #[gpui_kit::test]
 fn demo_reproduces_the_reference_state(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
-    let (w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![], ..Default::default() });
     let titles: Vec<String> = ws.read_with(cx, |ws, cx| ws.tabs().iter().map(|t| t.read(cx).title(cx).to_string()).collect());
     assert_eq!(titles, demo::TABS);
     assert_eq!(ws.read_with(cx, |ws, _| ws.active_index()), 0);
@@ -43,7 +43,7 @@ fn sample_lines_follow_the_reference_formula() {
 fn demo_with_files_shows_the_demo_first(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let file = common::write_log(dir.path(), "mine.log", &["x"]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![file] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: true, paths: vec![file], ..Default::default() });
     let title = ws.read_with(cx, |ws, cx| ws.active_tab().unwrap().read(cx).title(cx).to_string());
     assert_eq!(title, rogg_app::demo::TABS[0]);
 }

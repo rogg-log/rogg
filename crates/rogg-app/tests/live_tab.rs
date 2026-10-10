@@ -76,7 +76,7 @@ fn files_follow_when_their_end_was_in_view(cx: &mut TestAppContext) {
     let mut long_refs: Vec<&str> = long_lines.iter().map(String::as_str).collect();
     long_refs.push("");
     let long = common::write_log(dir.path(), "long.log", &long_refs);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![short.clone(), long.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![short.clone(), long.clone()], ..Default::default() });
     common::render(cx, w);
     let tabs = ws.read_with(cx, |ws, _| ws.tabs().to_vec());
     assert!(!common::exists(cx, w, "tool-live"), "a file is not live until it grows");
@@ -91,7 +91,7 @@ fn files_follow_when_their_end_was_in_view(cx: &mut TestAppContext) {
 fn a_truncated_file_reloads_with_a_toast(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "t.log", &["a", "b", ""]);
-    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()], ..Default::default() });
     std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
     common::wait_until(cx, |cx| ws.read_with(cx, |ws, _| ws.toasts.iter().any(|(_, m)| m.as_ref() == RELOADED_TOAST)));
 }
@@ -103,7 +103,7 @@ fn a_file_scrolled_to_its_end_follows_when_it_grows(cx: &mut TestAppContext) {
     let mut refs: Vec<&str> = text.iter().map(String::as_str).collect();
     refs.push("");
     let path = common::write_log(dir.path(), "long.log", &refs);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()], ..Default::default() });
     common::render(cx, w);
     let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
     let full = tab.read_with(cx, |t, _| t.full.clone());
@@ -121,7 +121,7 @@ fn a_file_scrolled_to_its_end_follows_when_it_grows(cx: &mut TestAppContext) {
 fn a_reloaded_file_is_not_live_until_it_grows_again(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let path = common::write_log(dir.path(), "t.log", &["a", "b", ""]);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![path.clone()], ..Default::default() });
     common::render(cx, w);
     let tab = ws.read_with(cx, |ws, _| ws.tabs()[0].clone());
     append(&path, "c\n");

@@ -127,7 +127,7 @@ impl GalleryView {
     /// The real app window in demo mode, with drawn traffic lights (headless windows have no native ones).
     pub fn new_app(window: &mut Window, cx: &mut Context<Self>) -> Entity<rogg_app::workspace::Workspace> {
         cx.new(|cx| {
-            let mut ws = rogg_app::workspace::Workspace::new(rogg_app::args::Args { demo: true, paths: vec![] }, window, cx);
+            let mut ws = rogg_app::workspace::Workspace::new(rogg_app::args::Args { demo: true, paths: vec![], ..Default::default() }, window, cx);
             ws.set_traffic_lights(true, cx);
             // The host (gallery toolbar or --theme) owns the theme: pin the workspace to it instead of the system appearance.
             let choice = if cx.rogg().appearance == Appearance::Dark { ThemeSetting::Dark } else { ThemeSetting::Light };

@@ -6,7 +6,7 @@ use rogg_app::args::Args;
 #[gpui_kit::test]
 fn about_opens_from_its_action_and_reveals_the_data_folders(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![], ..Default::default() });
     cx.update_window(w, |_, window, cx| window.dispatch_action(Box::new(ShowAbout), cx)).unwrap();
     cx.run_until_parked();
     assert!(common::exists(cx, w, "about-header"));
@@ -35,7 +35,7 @@ fn separate_config_and_data_folders_each_reveal(cx: &mut TestAppContext) {
         session: data.join("session.json"),
     };
     cx.update(|cx| rogg_app::init_with(cx, paths));
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![], ..Default::default() });
     cx.update_window(w, |_, window, cx| window.dispatch_action(Box::new(ShowAbout), cx)).unwrap();
     cx.run_until_parked();
     let revealed = |cx: &mut TestAppContext| ws.read_with(cx, |ws, _| ws.last_revealed().map(|p| p.to_path_buf()));

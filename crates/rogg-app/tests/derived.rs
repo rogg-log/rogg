@@ -40,7 +40,7 @@ fn texts(tab: &Entity<Tab>, cx: &mut TestAppContext) -> Vec<String> {
 fn open(cx: &mut TestAppContext, lines: &[&str]) -> (tempfile::TempDir, AnyWindowHandle, Entity<Workspace>, Entity<Tab>) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", lines);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = active(&ws, cx);
     ready(&tab, cx);
     (dir, w, ws, tab)
@@ -150,7 +150,7 @@ fn open_as_tab_waits_for_a_view_build_in_flight(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_global(rogg_app::document::EngineConfig { view_sync_work: 150, ..Default::default() }));
     let lines: Vec<&str> = (0..1000).map(|i| if i % 10 == 5 { "match here" } else { "filler" }).collect();
     let log = common::write_log(dir.path(), "a.log", &lines);
-    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![log], ..Default::default() });
     let parent = active(&ws, cx);
     ready(&parent, cx);
     filter(&parent, "match", cx);

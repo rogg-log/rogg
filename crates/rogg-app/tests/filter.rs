@@ -319,7 +319,7 @@ fn one_view_build_runs_at_a_time_and_the_newest_state_wins(cx: &mut TestAppConte
 fn the_empty_filtered_view_offers_recent_filters(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["alpha one", "beta two"]);
-    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     let doc = tab.read_with(cx, |t, _| t.doc.clone());
@@ -345,7 +345,7 @@ fn the_empty_filtered_view_offers_recent_filters(cx: &mut TestAppContext) {
 fn a_recent_filter_pick_closes_the_expression_editor(cx: &mut TestAppContext) {
     let dir = common::setup(cx);
     let log = common::write_log(dir.path(), "a.log", &["alpha one", "beta two"]);
-    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log] });
+    let (w, ws) = common::open_workspace(cx, rogg_app::args::Args { demo: false, paths: vec![log], ..Default::default() });
     let tab = ws.read_with(cx, |ws, _| ws.active_tab().unwrap());
     common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
     let doc = tab.read_with(cx, |t, _| t.doc.clone());

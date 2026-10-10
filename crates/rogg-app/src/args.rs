@@ -1,14 +1,16 @@
-//! Command line: `rogg [--demo] [FILE...]`.
+//! Command line: `rogg [--demo] [--version] [FILE...]`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub const USAGE: &str = "usage: rogg [--demo] [FILE...]   (FILE `-` reads stdin)";
+pub const USAGE: &str = "usage: rogg [--demo] [--version] [FILE...]   (FILE `-` reads stdin)";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Args {
     /// Open the reference sample data (spec §9 M2).
     pub demo: bool,
+    /// Print the version and build, then exit (install.sh reads it).
+    pub version: bool,
     pub paths: Vec<PathBuf>,
 }
 
@@ -20,6 +22,7 @@ impl Args {
         for arg in args {
             match arg.to_str() {
                 Some("--demo") => out.demo = true,
+                Some("-V" | "--version") => out.version = true,
                 Some("-h" | "--help") => return Err(USAGE.to_string()),
                 Some("-") => out.paths.push(PathBuf::from("-")),
                 Some(flag) if flag.starts_with('-') => return Err(format!("unknown option `{flag}`\n{USAGE}")),
@@ -60,6 +63,14 @@ mod tests {
     fn a_dash_reads_stdin() {
         assert_eq!(parse("- a.log").unwrap().paths, [PathBuf::from("-"), PathBuf::from("a.log")]);
         assert!(parse("--x").is_err(), "other dashes are still unknown options");
+    }
+
+    #[test]
+    fn version_flag_is_recognised() {
+        assert!(parse("--version").unwrap().version);
+        assert!(parse("-V").unwrap().version);
+        assert!(!parse("a.log").unwrap().version);
+        assert!(USAGE.contains("--version"));
     }
 
     #[test]
