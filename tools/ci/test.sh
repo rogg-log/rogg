@@ -14,13 +14,20 @@ fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
 
 fake_binary() { printf 'fake rogg binary %s\n' "$1" > "$work/$1"; echo "$work/$1"; }
 
-test_tar_archive_lists_exactly_the_four_files() {
+test_tar_archive_lists_exactly_its_files() {
   local name=${FUNCNAME[0]} dist=$work/dist-tar out list
   out=$(DIST_DIR=$dist "$sh" "$ci/package.sh" linux x86_64 "$(fake_binary rogg-linux)")
   [[ $out == "$dist/rogg-linux-x86_64.tar.gz" && -f $out ]] || { fail "$name" "printed '$out'"; return; }
   list=$(tar -tzf "$out" | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' ')
-  [[ $list == "Inter-OFL.txt JetBrainsMono-OFL.txt README.md rogg " ]] || { fail "$name" "listing '$list'"; return; }
+  [[ $list == "Inter-OFL.txt JetBrainsMono-OFL.txt README.md rogg rogg.png " ]] || { fail "$name" "listing '$list'"; return; }
   tar -tvzf "$out" | grep -E ' (\./)?rogg$' | grep -q '^-rwx' || { fail "$name" "rogg is not executable"; return; }
+  pass "$name"
+}
+
+test_mac_and_windows_archives_carry_no_png() {
+  local name=${FUNCNAME[0]} dist=$work/dist-nopng out
+  out=$(DIST_DIR=$dist "$sh" "$ci/package.sh" macos universal "$(fake_binary rogg-mac-nopng)")
+  ! tar -tzf "$out" | grep -q rogg.png || { fail "$name" "the macOS archive has rogg.png"; return; }
   pass "$name"
 }
 
@@ -334,7 +341,7 @@ test_scripts_are_checked_out_with_lf() {
   pass "$name"
 }
 
-for t in test_tar_archive_lists_exactly_the_four_files test_windows_archive_is_a_zip_with_rogg_exe \
+for t in test_tar_archive_lists_exactly_its_files test_mac_and_windows_archives_carry_no_png test_windows_archive_is_a_zip_with_rogg_exe \
          test_package_refuses_missing_binary_and_unknown_os test_manifest_checksums_verify_and_json_describes_the_archives \
          test_manifest_rejects_bad_build_numbers test_manifest_rejects_unexpected_archives \
          test_publish_creates_a_draft_then_publishes_it_as_latest test_publish_keeps_the_newest_30_builds \

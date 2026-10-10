@@ -12,6 +12,8 @@ os=$1 arch=$2 binary=$3
 root=$(cd "$(dirname "$0")/../.." && pwd)
 fonts=$root/crates/rogg-ui/assets/fonts
 docs=("$root/README.md" "$fonts/Inter-OFL.txt" "$fonts/JetBrainsMono-OFL.txt")
+# Linux archives carry the app icon for install.sh's desktop entry.
+if [[ $os == linux ]]; then docs+=("$root/crates/rogg-app/assets/icon/rogg.png"); fi
 for f in "$binary" "${docs[@]}"; do [[ -f $f ]] || die "missing $f"; done
 
 exe=rogg
