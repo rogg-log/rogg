@@ -6,6 +6,23 @@ Design: `docs/superpowers/specs/2026-10-06-rogg-design.md` (the app) and `docs/s
 
 `./dev` is the single entry point for development. `./dev help` lists every command.
 
+## Install
+
+On macOS and Linux:
+
+    curl -fsSL https://raw.githubusercontent.com/rogg-log/rogg/main/install.sh | bash
+
+The installer asks what to install (on macOS: `rogg.app` or the command-line binary) and where (`/Applications` for
+the app, `~/.local/bin` for the binary). It shows the installed and the new version before changing anything, checks
+the download against the release's `SHA256SUMS`, offers to add the binary's folder to your `PATH`, and on Linux offers
+an applications-menu entry. Run it again to upgrade. To remove rogg (settings and data are kept):
+
+    curl -fsSL https://raw.githubusercontent.com/rogg-log/rogg/main/install.sh | bash -s -- --uninstall
+
+Or download an archive for your platform from the [latest release](https://github.com/rogg-log/rogg/releases/latest).
+`rogg --version` shows the installed version and build. While the repository is private, the installer and the
+downloads need access to it.
+
 ## macOS
 
 The primary platform, fully verified.

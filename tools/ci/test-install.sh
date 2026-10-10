@@ -158,10 +158,35 @@ test_no_terminal_stops_with_a_message() {
   pass "$name"
 }
 
+test_linux_desktop_entry_and_uninstall() {
+  local name=${FUNCNAME[0]} h data
+  h=$(new_home uninstall); data=$h/.local/share
+  run "$h" linux-x86_64 "$(release 7)" $'\n\n\n\n'
+  grep -qx "Exec=\"$h/.local/bin/rogg\" %F" "$data/applications/rogg.desktop" || { fail "$name" "desktop Exec"; return; }
+  [[ -s $data/icons/hicolor/256x256/apps/rogg.png ]] || { fail "$name" "icon not installed"; return; }
+  run "$h" linux-x86_64 "$(release 7)" $'\n\n' -- --uninstall
+  [[ $status == 0 ]] || { fail "$name" "exit $status: $(tail -3 "$work/out")"; return; }
+  has "rogg $version build 7" || { fail "$name" "did not list the install with its version"; return; }
+  [[ ! -e $h/.local/bin/rogg && ! -e $data/applications/rogg.desktop && ! -e $data/icons/hicolor/256x256/apps/rogg.png ]] || { fail "$name" "left files behind"; return; }
+  ! grep -q "added by rogg install.sh" "$h/.zshrc" || { fail "$name" "PATH line kept"; return; }
+  has "Settings and data are kept" || { fail "$name" "did not mention settings and data"; return; }
+  pass "$name"
+}
+
+test_path_line_lands_on_its_own_line() {
+  local name=${FUNCNAME[0]} h
+  h=$(new_home rcnewline); printf 'alias ll="ls -l"' > "$h/.zshrc"
+  run "$h" linux-x86_64 "$(release 7)" $'\n\n\nn\n'
+  [[ $(head -1 "$h/.zshrc") == 'alias ll="ls -l"' ]] || { fail "$name" "the last line was changed: $(head -1 "$h/.zshrc")"; return; }
+  grep -qx 'export PATH="$HOME/.local/bin:$PATH"  # added by rogg install.sh' "$h/.zshrc" || { fail "$name" "PATH line not on its own line"; return; }
+  pass "$name"
+}
+
 for t in test_main_is_called_last test_fresh_binary_install_adds_path_once test_upgrade_shows_both_builds \
          test_downgrade_is_refused_by_default test_checksum_mismatch_changes_nothing test_mac_app_installs_to_a_folder_with_spaces \
          test_mac_binary_uses_bash_profile_for_bash test_an_old_binary_without_version_shows_unknown_and_upgrades \
-         test_unsupported_platform_stops_cleanly test_no_terminal_stops_with_a_message; do
+         test_unsupported_platform_stops_cleanly test_no_terminal_stops_with_a_message \
+         test_linux_desktop_entry_and_uninstall test_path_line_lands_on_its_own_line; do
   "$t"
 done
 (( failures == 0 )) && echo "all install tests passed" || { echo "$failures failed"; exit 1; }

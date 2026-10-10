@@ -234,7 +234,53 @@ main_install() {
   fi
 }
 
-main_uninstall() { die "--uninstall is not implemented yet"; }
+main_uninstall() {
+  local found=() c p bin rc data=${XDG_DATA_HOME:-$HOME/.local/share} desktop icon sudo removed=0
+  for c in /Applications/rogg.app "$HOME/Applications/rogg.app" "$HOME/.local/bin/rogg"; do [[ -e $c ]] && found+=("$c"); done
+  p=$(command -v rogg 2>/dev/null || true)
+  if [[ -n $p && $p != */rogg.app/* ]]; then
+    for c in "${found[@]+"${found[@]}"}"; do [[ $c == "$p" ]] && p=""; done
+    [[ -n $p ]] && found+=("$p")
+  fi
+  desktop=$data/applications/rogg.desktop; icon=$data/icons/hicolor/256x256/apps/rogg.png
+
+  if (( ${#found[@]} == 0 )) && [[ ! -e $desktop ]]; then
+    say "No rogg installation found in the usual places (/Applications, ~/Applications, ~/.local/bin, PATH)."
+  else
+    say "Found:"
+    for c in "${found[@]+"${found[@]}"}"; do
+      bin=$c; [[ $c == *.app ]] && bin=$c/Contents/MacOS/rogg
+      say "  $(pretty "$c") — $(describe "$(installed_version "$bin")")"
+    done
+    [[ -e $desktop ]] && say "  $(pretty "$desktop") (applications menu entry)"
+    if yes_no "Remove these?" y; then
+      for c in "${found[@]+"${found[@]}"}"; do
+        sudo=""
+        writable "$(dirname "$c")" || { say "$(pretty "$(dirname "$c")") needs administrator rights; sudo will ask for your password."; sudo=sudo; }
+        $sudo rm -rf "$c"
+      done
+      rm -f "$desktop" "$icon"
+      if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$data/applications" >/dev/null 2>&1 || true; fi
+      removed=1
+      say "Removed."
+    fi
+  fi
+
+  for rc in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.config/fish/conf.d/rogg.fish"; do
+    if [[ ! -f $rc ]] || ! grep -qF "$MARK" "$rc"; then continue; fi
+    if yes_no "Remove the PATH line the installer added to $(pretty "$rc")?" y; then
+      if [[ $rc == */rogg.fish ]]; then rm -f "$rc"
+      else grep -vF "$MARK" "$rc" > "$rc.rogg-tmp" || true; cat "$rc.rogg-tmp" > "$rc"; rm -f "$rc.rogg-tmp"; fi
+    fi
+  done
+
+  if [[ $PLATFORM == macos-* ]]; then
+    say "Settings and data are kept in ~/Library/Application Support/rogg and ~/Library/Caches/rogg; delete them yourself if you want."
+  else
+    say "Settings and data are kept in ${XDG_CONFIG_HOME:-~/.config}/rogg, ${XDG_DATA_HOME:-~/.local/share}/rogg and ${XDG_CACHE_HOME:-~/.cache}/rogg; delete them yourself if you want."
+  fi
+  (( removed )) || true
+}
 
 main() {
   local input=${ROGG_INSTALL_INPUT:-/dev/tty}
