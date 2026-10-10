@@ -59,6 +59,8 @@ jobs:
         run: cargo test --locked --workspace
       - name: CI script tests
         run: bash tools/ci/test.sh
+      - name: Installer tests
+        run: bash tools/ci/test-install.sh
 
   macos:
     needs: check
