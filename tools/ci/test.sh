@@ -341,7 +341,25 @@ test_scripts_are_checked_out_with_lf() {
   pass "$name"
 }
 
-for t in test_tar_archive_lists_exactly_its_files test_mac_and_windows_archives_carry_no_png test_windows_archive_is_a_zip_with_rogg_exe \
+test_ico_holds_six_png_sizes() {
+  local name=${FUNCNAME[0]}
+  python3 - "$root/crates/rogg-app/assets/icon/rogg.ico" <<'PY' || { fail "$name" "rogg.ico is not a six-size PNG icon"; return; }
+import struct, sys
+data = open(sys.argv[1], "rb").read()
+reserved, kind, count = struct.unpack_from("<HHH", data, 0)
+assert (reserved, kind, count) == (0, 1, 6), (reserved, kind, count)
+sizes = []
+for i in range(count):
+    w, h, _, _, planes, bpp, size, offset = struct.unpack_from("<BBBBHHII", data, 6 + 16 * i)
+    sizes.append(w or 256)
+    assert w == h and planes == 1 and bpp == 32, (w, h, planes, bpp)
+    assert data[offset:offset + 8] == b"\x89PNG\r\n\x1a\n", i
+assert sizes == [16, 24, 32, 48, 64, 256], sizes
+PY
+  pass "$name"
+}
+
+for t in test_ico_holds_six_png_sizes test_tar_archive_lists_exactly_its_files test_mac_and_windows_archives_carry_no_png test_windows_archive_is_a_zip_with_rogg_exe \
          test_package_refuses_missing_binary_and_unknown_os test_manifest_checksums_verify_and_json_describes_the_archives \
          test_manifest_rejects_bad_build_numbers test_manifest_rejects_unexpected_archives \
          test_publish_creates_a_draft_then_publishes_it_as_latest test_publish_keeps_the_newest_30_builds \

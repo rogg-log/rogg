@@ -4,6 +4,11 @@
 extern crate gpui_kit as gpui;
 
 pub mod about;
+#[cfg(test)]
+#[path = "../build/winres.rs"]
+mod winres;
+#[cfg(test)]
+mod winres_tests;
 pub mod actions;
 pub mod args;
 pub mod cache;

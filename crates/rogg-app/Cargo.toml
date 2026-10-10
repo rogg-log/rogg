@@ -26,3 +26,7 @@ rogg-genlog = { path = "../rogg-genlog" }
 # Only the Unix FIFO test (`tests/streams.rs`) uses it.
 [target.'cfg(unix)'.dev-dependencies]
 libc.workspace = true
+
+[build-dependencies]
+# Compiles rogg.exe's icon and version resources on Windows targets (build.rs).
+embed-resource = "3.0.12"
