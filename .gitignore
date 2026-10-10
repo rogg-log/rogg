@@ -4,3 +4,4 @@ node_modules/
 .claude/worktrees/
 tools/visual-diff/node_modules/
 target/visual/
+dist/

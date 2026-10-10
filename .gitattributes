@@ -1,0 +1,5 @@
+# Scripts must keep LF endings on every checkout (Windows runners convert to CRLF by default, which breaks bash).
+*.sh text eol=lf
+dev text eol=lf
+*.yml text eol=lf
+justfile text eol=lf

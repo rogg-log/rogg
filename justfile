@@ -91,3 +91,6 @@ windows-build:
 
 check-all:
     @./dev check-all
+
+ci-test:
+    @./dev ci-test

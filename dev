@@ -114,6 +114,9 @@ ${BOLD}Windows${RESET}   (cross-build from macOS with cargo-xwin; ./dev setup of
   windows-build                 cargo xwin build --workspace --target x86_64-pc-windows-msvc
   check-all                     check + linux-test + windows-build
 
+${BOLD}CI${RESET}
+  ci-test                       Test the CI scripts in tools/ci (archives, checksums, manifest, publishing)
+
 Set DRY=1 to print the commands without running them.
 EOF
 }
@@ -319,6 +322,8 @@ cmd_windows_build() {
   run cargo xwin build --workspace --target x86_64-pc-windows-msvc
 }
 cmd_check_all() { cmd_check; cmd_linux_test; cmd_windows_build; ok "macOS, Linux and Windows checks passed"; }
+# The CI scripts must run under macOS's /bin/bash 3.2 as well as the runners' bash, so test with /bin/bash.
+cmd_ci_test() { step "CI script tests"; run /bin/bash tools/ci/test.sh; }
 cmd_linux_shot() {
   local args=${(j: :)${(q)@}}
   step "Linux screenshots"
@@ -389,6 +394,7 @@ case $command in
   linux-shell) cmd_linux_shell ;;
   windows-build) cmd_windows_build ;;
   check-all) cmd_check_all ;;
+  ci-test) cmd_ci_test ;;
   clean) cmd_clean "$@" ;;
   *) die "unknown command '$command' — ./dev help lists them" ;;
 esac
