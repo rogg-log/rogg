@@ -141,7 +141,7 @@ rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt
 | Key | Value |
 |---|---|
 | `CFBundleName`, `CFBundleDisplayName` | `rogg` |
-| `CFBundleIdentifier` | `io.github.rogg-log.rogg` (changing it later resets users' macOS permission grants) |
+| `CFBundleIdentifier` | `io.rogg-log.rogg` (changing it later resets users' macOS permission grants) |
 | `CFBundleExecutable` | `rogg` |
 | `CFBundlePackageType` | `APPL` |
 | `CFBundleShortVersionString` | the workspace version from `Cargo.toml` (`0.1.0`) |
