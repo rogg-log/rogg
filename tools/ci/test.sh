@@ -104,6 +104,81 @@ test_manifest_rejects_unexpected_archives() {
   pass "$name"
 }
 
+# A real Mach-O where codesign exists (it cannot sign a text file as a main executable), a stand-in elsewhere.
+app_binary() {
+  if command -v codesign >/dev/null 2>&1 && [[ -f /usr/bin/true ]]; then cp /usr/bin/true "$work/rogg-app-bin"; echo "$work/rogg-app-bin"
+  else fake_binary rogg-app-bin; fi
+}
+
+test_mac_app_archive_holds_a_signed_bundle_with_its_info_plist() {
+  local name=${FUNCNAME[0]} dist=$work/dist-app out list expected x
+  out=$(DIST_DIR=$dist ROGG_BUILD_NUMBER=42 "$sh" "$ci/macos-app.sh" "$(app_binary)" 2>/dev/null) || { fail "$name" "macos-app.sh failed"; return; }
+  [[ $out == "$dist/rogg-macos-universal-app.tar.gz" && -f $out ]] || { fail "$name" "printed '$out'"; return; }
+  list=$(tar -tzf "$out" | sed 's|^\./||' | grep -v '/$' | LC_ALL=C sort | tr '\n' ' ')
+  expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md "
+  command -v codesign >/dev/null 2>&1 && expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md rogg.app/Contents/_CodeSignature/CodeResources "
+  [[ $list == "$expected" ]] || { fail "$name" "listing '$list'"; return; }
+  x=$work/app-x; mkdir -p "$x"; tar -xzf "$out" -C "$x"
+  [[ -x $x/rogg.app/Contents/MacOS/rogg ]] || { fail "$name" "the binary is not executable"; return; }
+  [[ $(cat "$x/rogg.app/Contents/PkgInfo") == 'APPL????' ]] || { fail "$name" "PkgInfo"; return; }
+  python3 - "$x/rogg.app/Contents/Info.plist" "$root/Cargo.toml" <<'PY' || { fail "$name" "Info.plist values"; return; }
+import plistlib, re, sys
+p = plistlib.load(open(sys.argv[1], "rb"))
+version = re.search(r'^version = "([^"]+)"', open(sys.argv[2]).read(), re.M).group(1)
+want = {"CFBundleName": "rogg", "CFBundleDisplayName": "rogg", "CFBundleIdentifier": "io.rogg-log.rogg",
+        "CFBundleExecutable": "rogg", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
+        "CFBundleVersion": "42", "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
+        "LSApplicationCategoryType": "public.app-category.developer-tools"}
+for k, v in want.items():
+    assert p.get(k) == v, (k, p.get(k), v)
+PY
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --verify --deep --strict "$x/rogg.app" 2>/dev/null || { fail "$name" "the bundle signature does not verify"; return; }
+  fi
+  pass "$name"
+}
+
+test_mac_app_build_number_defaults_to_zero_and_rejects_junk() {
+  local name=${FUNCNAME[0]} dist=$work/dist-app0 out x
+  out=$(env -u ROGG_BUILD_NUMBER DIST_DIR=$dist "$sh" "$ci/macos-app.sh" "$(app_binary)" 2>/dev/null) || { fail "$name" "macos-app.sh failed"; return; }
+  x=$work/app0-x; mkdir -p "$x"; tar -xzf "$out" -C "$x"
+  python3 -c "import plistlib,sys; assert plistlib.load(open(sys.argv[1],'rb'))['CFBundleVersion']=='0'" "$x/rogg.app/Contents/Info.plist" \
+    || { fail "$name" "a local build is not version 0"; return; }
+  if DIST_DIR=$work/dist-appbad ROGG_BUILD_NUMBER=007 "$sh" "$ci/macos-app.sh" "$(app_binary)" >/dev/null 2>&1; then fail "$name" "accepted build 007"; return; fi
+  if DIST_DIR=$work/dist-appbad "$sh" "$ci/macos-app.sh" "$work/nope" >/dev/null 2>&1; then fail "$name" "accepted a missing binary"; return; fi
+  pass "$name"
+}
+
+test_manifest_marks_the_app_and_the_binaries() {
+  local name=${FUNCNAME[0]} dir
+  dir=$(make_release_dir rel-kind)
+  DIST_DIR=$dir "$sh" "$ci/macos-app.sh" "$(app_binary)" >/dev/null 2>&1 || { fail "$name" "macos-app.sh failed"; return; }
+  "$sh" "$ci/manifest.sh" "$dir" 9 abc1234 main || { fail "$name" "manifest.sh failed"; return; }
+  python3 - "$dir/manifest.json" <<'PY' || { fail "$name" "kinds"; return; }
+import json, sys
+m = json.load(open(sys.argv[1]))
+kinds = {a["name"]: (a["os"], a["arch"], a["kind"]) for a in m["assets"]}
+assert kinds == {
+    "rogg-linux-arm64.tar.gz": ("linux", "arm64", "binary"),
+    "rogg-linux-x86_64.tar.gz": ("linux", "x86_64", "binary"),
+    "rogg-macos-universal-app.tar.gz": ("macos", "universal", "app"),
+    "rogg-macos-universal.tar.gz": ("macos", "universal", "binary"),
+    "rogg-windows-x86_64.zip": ("windows", "x86_64", "binary"),
+}, kinds
+PY
+  pass "$name"
+}
+
+test_manifest_rejects_app_archives_off_macos() {
+  local name=${FUNCNAME[0]} dir
+  dir=$work/rel-app-odd; mkdir -p "$dir"
+  printf x > "$dir/rogg-linux-x86_64-app.tar.gz"
+  if "$sh" "$ci/manifest.sh" "$dir" 1 abc1234 main >/dev/null 2>&1; then fail "$name" "accepted a Linux app"; return; fi
+  rm "$dir/rogg-linux-x86_64-app.tar.gz"; printf x > "$dir/rogg-macos-universal-app.zip"
+  if "$sh" "$ci/manifest.sh" "$dir" 1 abc1234 main >/dev/null 2>&1; then fail "$name" "accepted an app .zip"; return; fi
+  pass "$name"
+}
+
 # A fake `gh` and `git` that log their arguments; `gh release view <tag>` succeeds only when GH_RELEASE_EXISTS=1.
 make_stubs() {
   local bin=$work/bin
@@ -201,7 +276,7 @@ test_workflow_is_guarded() {
 
 test_scripts_are_checked_out_with_lf() {
   local name=${FUNCNAME[0]} f
-  for f in tools/ci/package.sh tools/ci/manifest.sh tools/ci/publish.sh tools/ci/test.sh tools/ci/linux-deps.sh tools/linux/shot.sh dev .github/workflows/build.yml; do
+  for f in tools/ci/package.sh tools/ci/macos-app.sh tools/ci/manifest.sh tools/ci/publish.sh tools/ci/test.sh tools/ci/linux-deps.sh tools/linux/shot.sh dev .github/workflows/build.yml; do
     [[ $(cd "$root" && git check-attr eol -- "$f" | sed 's/.*: //') == lf ]] || { fail "$name" "$f is not eol=lf"; return; }
   done
   pass "$name"
@@ -211,7 +286,9 @@ for t in test_tar_archive_lists_exactly_the_four_files test_windows_archive_is_a
          test_package_refuses_missing_binary_and_unknown_os test_manifest_checksums_verify_and_json_describes_the_archives \
          test_manifest_rejects_bad_build_numbers test_manifest_rejects_unexpected_archives \
          test_publish_uploads_manifest_last_and_prunes_stale_assets test_publish_refuses_without_manifest \
-         test_publish_refuses_other_branches test_workflow_is_guarded test_scripts_are_checked_out_with_lf; do
+         test_publish_refuses_other_branches test_workflow_is_guarded test_scripts_are_checked_out_with_lf \
+         test_mac_app_archive_holds_a_signed_bundle_with_its_info_plist test_mac_app_build_number_defaults_to_zero_and_rejects_junk \
+         test_manifest_marks_the_app_and_the_binaries test_manifest_rejects_app_archives_off_macos; do
   "$t"
 done
 (( failures == 0 )) && echo "all CI script tests passed" || { echo "$failures failed"; exit 1; }

@@ -48,13 +48,16 @@ tests on Linux, then builds:
 
 | File | Platform |
 |---|---|
-| `rogg-macos-universal.tar.gz` | macOS 11+, Apple silicon and Intel (ad-hoc signed, not notarised) |
+| `rogg-macos-universal.tar.gz` | macOS 11+, Apple silicon and Intel: the bare `rogg` binary (ad-hoc signed, not notarised) |
+| `rogg-macos-universal-app.tar.gz` | the same binary as `rogg.app`, to open from Finder (ad-hoc signed, not notarised) |
 | `rogg-linux-x86_64.tar.gz` | Linux x86_64, glibc 2.35+ |
 | `rogg-linux-arm64.tar.gz` | Linux arm64, glibc 2.35+ |
 | `rogg-windows-x86_64.zip` | Windows x86_64 |
 
-They are published, with `SHA256SUMS` and `manifest.json` (build number, commit, checksums), to the rolling
+They are published, with `SHA256SUMS` and `manifest.json` (build number, commit, and each file's checksum and
+`kind`, `binary` or `app`), to the rolling
 prerelease `main-latest`: `https://github.com/rogg-log/rogg/releases/download/main-latest/<file>`. The manifest is
 uploaded last; check every download against it. While the repository is private, downloads need a GitHub token.
 
-`./dev ci-test` tests the packaging scripts locally; `./dev ci-lint` lints the workflow.
+`./dev ci-test` tests the packaging scripts locally; `./dev ci-lint` lints the workflow; `./dev mac-app` builds
+`rogg.app` for this Mac into `target/mac-app/`.

@@ -97,3 +97,6 @@ ci-test:
 
 ci-lint:
     @./dev ci-lint
+
+mac-app:
+    @./dev mac-app

@@ -23,15 +23,20 @@ while IFS= read -r a; do archives+=("$a"); done < <(printf '%s\n' "${found[@]}" 
 sums=""
 entries=""
 for a in "${archives[@]}"; do
-  [[ $a =~ ^rogg-(macos|linux|windows)-([a-z0-9_]+)\.(tar\.gz|zip)$ ]] || die "unexpected archive name '$a'"
-  os=${BASH_REMATCH[1]} arch=${BASH_REMATCH[2]} ext=${BASH_REMATCH[3]}
+  [[ $a =~ ^rogg-(macos|linux|windows)-([a-z0-9_]+)(-app)?\.(tar\.gz|zip)$ ]] || die "unexpected archive name '$a'"
+  os=${BASH_REMATCH[1]} arch=${BASH_REMATCH[2]} suffix=${BASH_REMATCH[3]} ext=${BASH_REMATCH[4]}
   if [[ $os == windows ]]; then [[ $ext == zip ]] || die "$a: Windows archives are .zip"
   else [[ $ext == tar.gz ]] || die "$a: macOS and Linux archives are .tar.gz"; fi
+  kind=binary
+  if [[ -n $suffix ]]; then
+    [[ $os == macos ]] || die "$a: only macOS has an app bundle"
+    kind=app
+  fi
   hash=$(sha256 "$a")
   size=$(wc -c < "$a" | tr -d ' ')
   sums+="$hash  $a"$'\n'
   [[ -n $entries ]] && entries+=$',\n'
-  entries+="    { \"name\": \"$a\", \"os\": \"$os\", \"arch\": \"$arch\", \"sha256\": \"$hash\", \"size\": $size }"
+  entries+="    { \"name\": \"$a\", \"os\": \"$os\", \"arch\": \"$arch\", \"kind\": \"$kind\", \"sha256\": \"$hash\", \"size\": $size }"
 done
 
 printf '%s' "$sums" > SHA256SUMS

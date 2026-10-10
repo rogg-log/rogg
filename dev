@@ -76,6 +76,7 @@ ${BOLD}Build and run${RESET}
   build [--release]             Build every crate (tests and benches included)
   run [files...]                Run the app (release); '-' reads stdin
   demo                          Run the app with the reference sample data (--demo)
+  mac-app                       Build rogg.app for this Mac into target/mac-app/ (release; open it from Finder)
   gallery                       Open the component gallery
   smoke                         Gallery smoke run (opens, renders, exits)
 
@@ -165,6 +166,17 @@ cmd_build() {
 
 cmd_run()     { need_rust; run cargo run --release -p rogg-app -- "$@"; }
 cmd_demo()    { need_rust; run cargo run --release -p rogg-app -- --demo; }
+
+# The same bundling step CI uses (tools/ci/macos-app.sh), around a release build for this Mac's architecture.
+cmd_mac_app() {
+  need_rust
+  step "rogg.app"
+  run cargo build --release -p rogg-app
+  run rm -rf target/mac-app
+  run env DIST_DIR=target/mac-app tools/ci/macos-app.sh target/release/rogg
+  run tar -xzf target/mac-app/rogg-macos-universal-app.tar.gz -C target/mac-app
+  ok "target/mac-app/rogg.app"
+}
 cmd_gallery() { need_rust; run cargo run -p rogg-gallery; }
 cmd_smoke()   { need_rust; ROGG_GALLERY_SMOKE=1 run cargo run -p rogg-gallery; }
 
@@ -381,6 +393,7 @@ case $command in
   build) cmd_build "$@" ;;
   run) cmd_run "$@" ;;
   demo) cmd_demo ;;
+  mac-app) cmd_mac_app ;;
   gallery) cmd_gallery ;;
   smoke) cmd_smoke ;;
   check) cmd_check "$@" ;;

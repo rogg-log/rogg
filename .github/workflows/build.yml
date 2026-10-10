@@ -100,10 +100,14 @@ jobs:
           [[ $archs == *x86_64* && $archs == *arm64* ]] || { echo "unexpected architectures: $archs"; exit 1; }
       - name: Package
         run: tools/ci/package.sh macos universal target/universal/rogg
+      - name: App bundle (the same binary in rogg.app)
+        run: tools/ci/macos-app.sh target/universal/rogg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rogg-macos-universal
-          path: dist/rogg-macos-universal.tar.gz
+          path: |
+            dist/rogg-macos-universal.tar.gz
+            dist/rogg-macos-universal-app.tar.gz
           retention-days: 1
           if-no-files-found: error
 
