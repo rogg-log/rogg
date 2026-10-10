@@ -1,4 +1,5 @@
-//! Build details for the About dialog: the short git commit, the build date and the compiler version. Anything
+//! Build details for the About dialog: the short git commit, the build date, the compiler version, and the CI build
+//! number and channel when CI sets them. Anything
 //! that cannot be found (no git checkout) is left unset, and the app shows `unknown`.
 use std::path::Path;
 use std::process::Command;
@@ -31,10 +32,14 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 fn main() {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+    let env = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
     let values = [
         ("ROGG_GIT_COMMIT", output("git", &["rev-parse", "--short", "HEAD"])),
         ("ROGG_BUILD_DATE", Some(today())),
         ("ROGG_RUSTC_VERSION", output(&rustc, &["--version"])),
+        // Set by CI (.github/workflows/build.yml): the run number and channel the updater compares against.
+        ("ROGG_BUILD_NUMBER", env("ROGG_BUILD_NUMBER")),
+        ("ROGG_BUILD_CHANNEL", env("ROGG_BUILD_CHANNEL")),
     ];
     for (key, value) in values {
         if let Some(v) = value {
@@ -44,6 +49,8 @@ fn main() {
     // Rerun when HEAD moves (a checkout, or a commit on the current branch), so the commit stays current.
     // A missing path makes cargo rerun on every build, so only name files that exist.
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=ROGG_BUILD_NUMBER");
+    println!("cargo:rerun-if-env-changed=ROGG_BUILD_CHANNEL");
     let git_dir = output("git", &["rev-parse", "--absolute-git-dir"]);
     if let Some(dir) = &git_dir {
         println!("cargo:rerun-if-changed={dir}/HEAD");

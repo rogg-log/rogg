@@ -20,21 +20,43 @@ pub fn tagline(chrome: ChromeStyle) -> &'static str {
 }
 pub const BUILT_WITH: &str = "Built with Rust, gpui and gpui-kit";
 
+/// What a build made outside CI shows in place of a build number.
+pub const LOCAL: &str = "local";
+
 pub struct BuildInfo {
     pub version: &'static str,
     pub commit: &'static str,
     pub date: &'static str,
     pub rustc: &'static str,
+    /// `123 (main)` for a CI build, `local` otherwise.
+    pub build: String,
 }
 
 /// Build details captured by `build.rs`.
 pub fn build_info() -> BuildInfo {
-    describe(option_env!("ROGG_GIT_COMMIT"), option_env!("ROGG_BUILD_DATE"), option_env!("ROGG_RUSTC_VERSION"))
+    describe(
+        option_env!("ROGG_GIT_COMMIT"),
+        option_env!("ROGG_BUILD_DATE"),
+        option_env!("ROGG_RUSTC_VERSION"),
+        option_env!("ROGG_BUILD_NUMBER"),
+        option_env!("ROGG_BUILD_CHANNEL"),
+    )
 }
 
-/// `unknown` for each detail the build could not find.
-pub fn describe(commit: Option<&'static str>, date: Option<&'static str>, rustc: Option<&'static str>) -> BuildInfo {
-    BuildInfo { version: env!("CARGO_PKG_VERSION"), commit: commit.unwrap_or(UNKNOWN), date: date.unwrap_or(UNKNOWN), rustc: rustc.unwrap_or(UNKNOWN) }
+/// `unknown` for each detail the build could not find; `local` when no CI build number was set.
+pub fn describe(
+    commit: Option<&'static str>,
+    date: Option<&'static str>,
+    rustc: Option<&'static str>,
+    number: Option<&'static str>,
+    channel: Option<&'static str>,
+) -> BuildInfo {
+    let build = match (number, channel) {
+        (Some(n), Some(c)) => format!("{n} ({c})"),
+        (Some(n), None) => n.to_string(),
+        (None, _) => LOCAL.to_string(),
+    };
+    BuildInfo { version: env!("CARGO_PKG_VERSION"), commit: commit.unwrap_or(UNKNOWN), date: date.unwrap_or(UNKNOWN), rustc: rustc.unwrap_or(UNKNOWN), build }
 }
 
 /// The main open-source crates and their licenses, copied from each crate's manifest on 2026-10-08.
@@ -82,7 +104,7 @@ pub fn view(cx: &App) -> AboutView {
     AboutView {
         version: format!("rogg {}", b.version).into(),
         tagline: tagline(cx.rogg().chrome).into(),
-        build: vec![("Commit".into(), b.commit.into()), ("Built".into(), b.date.into()), ("Rust".into(), b.rustc.into())],
+        build: vec![("Build".into(), b.build.into()), ("Commit".into(), b.commit.into()), ("Built".into(), b.date.into()), ("Rust".into(), b.rustc.into())],
         data: data_folders(cx).into_iter().map(|(label, path)| (label, path.display().to_string().into())).collect(),
         built_with: BUILT_WITH.into(),
         credits: CREDITS.iter().map(|(n, l)| (SharedString::from(*n), SharedString::from(*l))).collect(),
@@ -95,11 +117,19 @@ mod tests {
 
     #[test]
     fn missing_build_details_read_unknown() {
-        let b = describe(None, None, None);
+        let b = describe(None, None, None, None, None);
         assert_eq!((b.commit, b.date, b.rustc), ("unknown", "unknown", "unknown"));
         assert_eq!(b.version, env!("CARGO_PKG_VERSION"));
-        let b = describe(Some("abc1234"), Some("2026-10-08"), Some("rustc 1.99.0"));
+        let b = describe(Some("abc1234"), Some("2026-10-08"), Some("rustc 1.99.0"), None, None);
         assert_eq!((b.commit, b.date, b.rustc), ("abc1234", "2026-10-08", "rustc 1.99.0"));
+    }
+
+    #[test]
+    fn ci_builds_show_their_number_and_channel_and_local_builds_say_local() {
+        assert_eq!(describe(None, None, None, Some("123"), Some("main")).build, "123 (main)");
+        assert_eq!(describe(None, None, None, Some("123"), None).build, "123");
+        assert_eq!(describe(None, None, None, None, Some("main")).build, LOCAL);
+        assert_eq!(describe(None, None, None, None, None).build, LOCAL);
     }
 
     #[test]
