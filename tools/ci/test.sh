@@ -135,9 +135,12 @@ test_publish_uploads_manifest_last_and_prunes_stale_assets() {
   "$sh" "$ci/manifest.sh" "$dir" 7 0123456789abcdef0123456789abcdef01234567 main >/dev/null
   bin=$(make_stubs); log=$work/publish-new.log; : > "$log"
   STUB_LOG=$log PATH=$bin:$PATH GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 ROGG_BUILD_NUMBER=7 GH_RELEASE_EXISTS=0 \
-    "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed"; return; }
+    GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed"; return; }
   grep -q -- "gh release create main-latest --prerelease --target 0123456789abcdef0123456789abcdef01234567" "$log" || { fail "$name" "no create"; return; }
-  grep -q -- "git push -f origin refs/tags/main-latest" "$log" || { fail "$name" "tag not pushed"; return; }
+  # The tag moves through the API (no git push: GITHUB_TOKEN may not push refs whose commits change workflows).
+  grep -q -- "gh api -X PATCH repos/rogg-log/rogg/git/refs/tags/main-latest -f sha=0123456789abcdef0123456789abcdef01234567 -F force=true" "$log" \
+    || { fail "$name" "tag not moved through the API"; return; }
+  ! grep -q -- "git push" "$log" || { fail "$name" "used git push"; return; }
   grep -q -- "--title Build 7 · 0123456" "$log" || { fail "$name" "title"; return; }
   a=$(line_of "$log" "upload main-latest .*rogg-windows-x86_64.zip"); s=$(line_of "$log" "upload main-latest .*SHA256SUMS"); m=$(line_of "$log" "upload main-latest .*manifest.json")
   [[ -n $a && -n $s && -n $m && $a -lt $s && $s -lt $m ]] || { fail "$name" "upload order archives=$a sums=$s manifest=$m"; return; }
@@ -145,7 +148,7 @@ test_publish_uploads_manifest_last_and_prunes_stale_assets() {
   ! grep -qE -- "delete-asset main-latest (rogg-|manifest.json|SHA256SUMS)" "$log" || { fail "$name" "deleted a current asset"; return; }
   log=$work/publish-existing.log; : > "$log"
   STUB_LOG=$log PATH=$bin:$PATH GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 ROGG_BUILD_NUMBER=7 GH_RELEASE_EXISTS=1 \
-    "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed on an existing release"; return; }
+    GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null || { fail "$name" "publish.sh failed on an existing release"; return; }
   ! grep -q -- "release create" "$log" || { fail "$name" "re-created an existing release"; return; }
   grep -q -- "gh release edit main-latest" "$log" || { fail "$name" "no edit"; return; }
   pass "$name"
@@ -154,7 +157,37 @@ test_publish_uploads_manifest_last_and_prunes_stale_assets() {
 test_publish_refuses_without_manifest() {
   local name=${FUNCNAME[0]} dir
   dir=$(make_release_dir rel-nomanifest)
-  if GITHUB_SHA=abc1234 ROGG_BUILD_NUMBER=1 "$sh" "$ci/publish.sh" "$dir" >/dev/null 2>&1; then fail "$name" "published without a manifest"; return; fi
+  if GITHUB_SHA=abc1234 ROGG_BUILD_NUMBER=1 GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null 2>&1; then
+    fail "$name" "published without a manifest"; return
+  fi
+  pass "$name"
+}
+
+test_publish_refuses_other_branches() {
+  local name=${FUNCNAME[0]} dir bin log
+  dir=$(make_release_dir rel-branch)
+  "$sh" "$ci/manifest.sh" "$dir" 8 0123456789abcdef0123456789abcdef01234567 main >/dev/null
+  bin=$(make_stubs); log=$work/publish-branch.log; : > "$log"
+  if STUB_LOG=$log PATH=$bin:$PATH GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 ROGG_BUILD_NUMBER=8 \
+       GITHUB_REF=refs/heads/feature GITHUB_REPOSITORY=rogg-log/rogg "$sh" "$ci/publish.sh" "$dir" >/dev/null 2>&1; then
+    fail "$name" "published from refs/heads/feature"; return
+  fi
+  ! grep -q -- "gh " "$log" || { fail "$name" "called gh before refusing"; return; }
+  pass "$name"
+}
+
+# The workflow's safety rails (CI review): publish only from main and never cancelled mid-upload; builds time out;
+# cargo never re-resolves Cargo.lock; checkouts don't keep the token.
+test_workflow_is_guarded() {
+  local name=${FUNCNAME[0]} wf=$root/.github/workflows/build.yml jobs timeouts
+  grep -qx "    if: github.ref == 'refs/heads/main'" "$wf" || { fail "$name" "publish is not limited to main"; return; }
+  grep -qx "      group: publish-main-latest" "$wf" || { fail "$name" "publish has no own concurrency group"; return; }
+  grep -qx "      cancel-in-progress: false" "$wf" || { fail "$name" "publish can be cancelled"; return; }
+  ! grep -qE "^concurrency:" "$wf" || { fail "$name" "workflow-level concurrency would cancel publish"; return; }
+  jobs=$(sed -n '/^jobs:$/,$p' "$wf" | grep -cE "^  [a-z0-9_-]+:$"); timeouts=$(grep -cE "^    timeout-minutes: [0-9]+$" "$wf")
+  [[ $jobs -gt 0 && $jobs == "$timeouts" ]] || { fail "$name" "$timeouts timeouts for $jobs jobs"; return; }
+  ! grep -E "cargo (build|clippy|test)" "$wf" | grep -qv -- "--locked" || { fail "$name" "a cargo command without --locked"; return; }
+  [[ $(grep -c "actions/checkout@" "$wf") == $(grep -c "persist-credentials: false" "$wf") ]] || { fail "$name" "a checkout keeps the token"; return; }
   pass "$name"
 }
 
@@ -170,7 +203,7 @@ for t in test_tar_archive_lists_exactly_the_four_files test_windows_archive_is_a
          test_package_refuses_missing_binary_and_unknown_os test_manifest_checksums_verify_and_json_describes_the_archives \
          test_manifest_rejects_bad_build_numbers test_manifest_rejects_unexpected_archives \
          test_publish_uploads_manifest_last_and_prunes_stale_assets test_publish_refuses_without_manifest \
-         test_scripts_are_checked_out_with_lf; do
+         test_publish_refuses_other_branches test_workflow_is_guarded test_scripts_are_checked_out_with_lf; do
   "$t"
 done
 (( failures == 0 )) && echo "all CI script tests passed" || { echo "$failures failed"; exit 1; }
