@@ -87,6 +87,12 @@ expand_path() {
   # shellcheck disable=SC2088 # matches a typed, literal ~/ prefix to expand it
   [[ $p == "~/"* ]] && p=$HOME/${p#"~/"}
   [[ -n $p ]] || die "no folder given"
+  # A relative folder would put a relative entry on PATH (any project's ./bin would then shadow real commands).
+  [[ $p == /* ]] || die "give an absolute folder, starting with / or ~ (not \"$p\")"
+  # These would break the PATH line and the desktop entry, which quote the folder.
+  # shellcheck disable=SC1003 # '\' is a literal backslash to match, not an attempt to escape a quote
+  case $p in *'"'* | *'$'* | *'`'* | *'\'*) die "the folder name can't contain \" \$ \` or \\" ;; esac
+  while [[ $p == */ && $p != / ]]; do p=${p%/}; done
   printf '%s' "$p"
 }
 
@@ -129,8 +135,18 @@ add_to_path() {
   fi
 }
 
+# shadow_note <installed binary>: says which rogg the shell will run when another copy comes first on PATH.
+shadow_note() {
+  local first
+  first=$(command -v rogg 2>/dev/null || true)
+  [[ -n $first && $first != "$1" ]] || return 0
+  say "Note: typing rogg runs $(pretty "$first") ($(describe "$(installed_version "$first")")), which comes first on PATH."
+}
+
 desktop_entry() {
   local target=$1 icon=$2 data=${XDG_DATA_HOME:-$HOME/.local/share}
+  # Releases made before the icon shipped in the Linux archives have none; the install itself is already done.
+  if [[ ! -f $icon ]]; then say "This release has no icon for an applications-menu entry; skipping it."; return 0; fi
   yes_no "Add rogg to your applications menu?" y || return 0
   mkdir -p "$data/icons/hicolor/256x256/apps" "$data/applications"
   cp "$icon" "$data/icons/hicolor/256x256/apps/rogg.png"
@@ -177,10 +193,12 @@ main_install() {
       3) dir=$(expand_path "$(ask "Folder:" "")") ;;
       *) die "choose 1, 2 or 3" ;;
     esac
+    [[ $dir != *.app ]] || die "give the folder to install into, not the app itself (for example $(pretty "$(dirname "$dir")"))"
     target=$dir/rogg.app; bin=$target/Contents/MacOS/rogg; archive=rogg-macos-universal-app.tar.gz
   else
     dir=$(expand_path "$(ask "Install the binary to [~/.local/bin]:" "$HOME/.local/bin")")
     target=$dir/rogg; bin=$target; archive=rogg-$PLATFORM.tar.gz
+    [[ ! -d $target ]] || die "$(pretty "$target") is a folder; choose another place for the binary"
   fi
 
   current=$(installed_version "$bin")
@@ -224,28 +242,31 @@ main_install() {
     fi
     $sudo rm -rf "$target.old"
     say "Installed rogg $version build $build to $(pretty "$target"). Open it from Finder, or: open \"$target\""
+    shadow_note "$bin"
   else
     $sudo cp "$tmp/x/rogg" "$dir/.rogg.new.$$"
     $sudo chmod 755 "$dir/.rogg.new.$$"
     $sudo mv -f "$dir/.rogg.new.$$" "$target"
     say "Installed rogg $version build $build to $(pretty "$target")."
     add_to_path "$dir"
+    shadow_note "$target"
     if [[ $PLATFORM == linux-* ]]; then desktop_entry "$target" "$tmp/x/rogg.png"; fi
   fi
 }
 
 main_uninstall() {
-  local found=() c p bin rc data=${XDG_DATA_HOME:-$HOME/.local/share} desktop icon sudo removed=0
+  local found=() c p other="" bin rc data=${XDG_DATA_HOME:-$HOME/.local/share} desktop icon sudo t s
+  # Only the places the installer uses are removed; a rogg elsewhere (a package manager, cargo install) is pointed out.
   for c in /Applications/rogg.app "$HOME/Applications/rogg.app" "$HOME/.local/bin/rogg"; do [[ -e $c ]] && found+=("$c"); done
   p=$(command -v rogg 2>/dev/null || true)
   if [[ -n $p && $p != */rogg.app/* ]]; then
-    for c in "${found[@]+"${found[@]}"}"; do [[ $c == "$p" ]] && p=""; done
-    [[ -n $p ]] && found+=("$p")
+    other=$p
+    for c in "${found[@]+"${found[@]}"}"; do [[ $c == "$p" ]] && other=""; done
   fi
   desktop=$data/applications/rogg.desktop; icon=$data/icons/hicolor/256x256/apps/rogg.png
 
   if (( ${#found[@]} == 0 )) && [[ ! -e $desktop ]]; then
-    say "No rogg installation found in the usual places (/Applications, ~/Applications, ~/.local/bin, PATH)."
+    say "No rogg installation found in the usual places (/Applications, ~/Applications, ~/.local/bin)."
   else
     say "Found:"
     for c in "${found[@]+"${found[@]}"}"; do
@@ -261,17 +282,29 @@ main_uninstall() {
       done
       rm -f "$desktop" "$icon"
       if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$data/applications" >/dev/null 2>&1 || true; fi
-      removed=1
       say "Removed."
     fi
   fi
+  if [[ -n $other ]]; then
+    say "Also on PATH: $(pretty "$other") ($(describe "$(installed_version "$other")")). The installer did not put it there; remove it yourself if you want."
+  fi
+  say "A rogg installed into another folder you chose has to be removed by hand."
 
   for rc in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.config/fish/conf.d/rogg.fish"; do
     if [[ ! -f $rc ]] || ! grep -qF "$MARK" "$rc"; then continue; fi
-    if yes_no "Remove the PATH line the installer added to $(pretty "$rc")?" y; then
-      if [[ $rc == */rogg.fish ]]; then rm -f "$rc"
-      else grep -vF "$MARK" "$rc" > "$rc.rogg-tmp" || true; cat "$rc.rogg-tmp" > "$rc"; rm -f "$rc.rogg-tmp"; fi
+    yes_no "Remove the PATH line the installer added to $(pretty "$rc")?" y || continue
+    if [[ $rc == */rogg.fish ]]; then rm -f "$rc"; continue; fi
+    # Filter into a temporary file elsewhere, then copy back over the original (keeping its owner, mode and any
+    # symlink). grep exits 1 when nothing is left; anything else means leave the file alone.
+    s=0
+    t=$(mktemp) || { say "Could not edit $(pretty "$rc"); remove the line ending in \"$MARK\" yourself."; continue; }
+    grep -vF "$MARK" "$rc" > "$t" || s=$?
+    if (( s <= 1 )) && cat "$t" > "$rc"; then
+      say "Removed the PATH line from $(pretty "$rc")."
+    else
+      say "Could not edit $(pretty "$rc"); remove the line ending in \"$MARK\" yourself."
     fi
+    rm -f "$t"
   done
 
   if [[ $PLATFORM == macos-* ]]; then
@@ -279,7 +312,6 @@ main_uninstall() {
   else
     say "Settings and data are kept in ${XDG_CONFIG_HOME:-~/.config}/rogg, ${XDG_DATA_HOME:-~/.local/share}/rogg and ${XDG_CACHE_HOME:-~/.cache}/rogg; delete them yourself if you want."
   fi
-  (( removed )) || true
 }
 
 main() {

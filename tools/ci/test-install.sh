@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SC2016: fake scripts and expected PATH lines contain a literal $1/$HOME/$PATH on purpose.
 # SC2015: `check && check || { fail ...; return; }` is the house style here; fail always runs the else branch.
-# shellcheck disable=SC2016,SC2015
+# SC2088: some expected messages contain a literal ~/ (install.sh prints home paths that way).
+# shellcheck disable=SC2016,SC2015,SC2088
 # Tests for install.sh against a fake release served through file:// (a temporary HOME, scripted answers).
 # Runs under macOS /bin/bash 3.2 and on Linux. Usage: bash tools/ci/test-install.sh
 set -euo pipefail
@@ -44,7 +45,7 @@ run() {
   [[ ${1:-} == -- ]] && shift
   printf '%s' "$answers" > "$work/answers"
   set +e
-  env -i HOME="$home" SHELL="${TEST_SHELL:-/bin/zsh}" PATH=/usr/bin:/bin TERM=dumb \
+  env -i HOME="$home" SHELL="${TEST_SHELL:-/bin/zsh}" PATH="${TEST_PATH:-/usr/bin:/bin}" TERM=dumb ${ZDOTDIR_TEST:+ZDOTDIR="$ZDOTDIR_TEST"} \
     ROGG_INSTALL_BASE="file://$rel" ROGG_INSTALL_INPUT="$work/answers" ROGG_INSTALL_PLATFORM="$plat" \
     "$sh" "$root/install.sh" "$@" > "$work/out" 2>&1
   status=$?
@@ -182,11 +183,79 @@ test_path_line_lands_on_its_own_line() {
   pass "$name"
 }
 
+test_uninstall_keeps_the_rest_of_a_startup_file() {
+  local name=${FUNCNAME[0]} h zd
+  h=$(new_home rckeep); zd=$h/zdot; mkdir -p "$zd"
+  printf 'alias ll="ls -l"\nexport EDITOR=vim\n' > "$zd/.zshrc"
+  ZDOTDIR_TEST=$zd run "$h" linux-x86_64 "$(release 7)" $'\n\n\nn\n'
+  grep -q "added by rogg install.sh" "$zd/.zshrc" || { fail "$name" "setup: PATH line not added"; return; }
+  # The folder holding .zshrc is read-only (the file itself stays writable): no temporary file can go next to it.
+  chmod 555 "$zd"
+  ZDOTDIR_TEST=$zd run "$h" linux-x86_64 "$(release 7)" $'\n\n' -- --uninstall
+  chmod 755 "$zd"
+  grep -q 'alias ll="ls -l"' "$zd/.zshrc" && grep -q 'export EDITOR=vim' "$zd/.zshrc" || { fail "$name" "the user's own lines are gone: '$(cat "$zd/.zshrc")'"; return; }
+  ! grep -q "added by rogg install.sh" "$zd/.zshrc" || { fail "$name" "PATH line kept"; return; }
+  pass "$name"
+}
+
+test_uninstall_leaves_copies_outside_the_default_places() {
+  local name=${FUNCNAME[0]} h
+  h=$(new_home othercopy); mkdir -p "$h/opt/bin"; fake_rogg "$h/opt/bin/rogg" 3
+  TEST_PATH="$h/opt/bin:/usr/bin:/bin" run "$h" linux-x86_64 "$(release 7)" $'\n\n' -- --uninstall
+  [[ -x $h/opt/bin/rogg ]] || { fail "$name" "deleted a rogg it did not install"; return; }
+  has "~/opt/bin/rogg" && has "remove it yourself" || { fail "$name" "did not point out the other copy"; return; }
+  pass "$name"
+}
+
+test_a_relative_folder_is_refused() {
+  local name=${FUNCNAME[0]} h
+  h=$(new_home relative)
+  run "$h" linux-x86_64 "$(release 7)" $'bin\n\n\n\n'
+  [[ $status != 0 ]] && has "absolute" || { fail "$name" "exit $status: $(tail -2 "$work/out")"; return; }
+  [[ ! -e $h/.zshrc ]] || { fail "$name" "wrote a PATH line: $(cat "$h/.zshrc")"; return; }
+  pass "$name"
+}
+
+test_a_folder_naming_the_app_is_refused() {
+  local name=${FUNCNAME[0]} h
+  h=$(new_home appfolder)
+  run "$h" macos-universal "$(release 7)" "1"$'\n'"3"$'\n'"$h/Apps/rogg.app"$'\n\n'
+  [[ $status != 0 ]] && has "the folder" || { fail "$name" "exit $status: $(tail -2 "$work/out")"; return; }
+  [[ ! -e $h/Apps/rogg.app/rogg.app ]] || { fail "$name" "nested the app"; return; }
+  pass "$name"
+}
+
+test_another_rogg_earlier_on_path_is_pointed_out() {
+  local name=${FUNCNAME[0]} h
+  h=$(new_home shadow); mkdir -p "$h/opt/bin"; fake_rogg "$h/opt/bin/rogg" 3
+  TEST_PATH="$h/opt/bin:/usr/bin:/bin" run "$h" linux-x86_64 "$(release 7)" $'\n\nn\nn\n'
+  [[ $status == 0 ]] || { fail "$name" "exit $status: $(tail -3 "$work/out")"; return; }
+  has "~/opt/bin/rogg" && has "build 3" || { fail "$name" "did not say which rogg the shell runs"; return; }
+  pass "$name"
+}
+
+test_a_release_without_the_icon_skips_the_desktop_entry() {
+  local name=${FUNCNAME[0]} h rel s
+  h=$(new_home noicon); rel=$work/release-noicon; s=$work/stage-noicon
+  rm -rf "$rel" "$s"; mkdir -p "$rel" "$s"
+  fake_rogg "$s/rogg" 7
+  (cd "$s" && tar -czf "$rel/rogg-linux-x86_64.tar.gz" rogg)
+  "$sh" "$root/tools/ci/manifest.sh" "$rel" 7 abc1234 main
+  run "$h" linux-x86_64 "$rel" $'\n\nn\n\n'
+  [[ $status == 0 ]] || { fail "$name" "exit $status: $(tail -3 "$work/out")"; return; }
+  [[ -x $h/.local/bin/rogg ]] || { fail "$name" "binary not installed"; return; }
+  [[ ! -e $h/.local/share/applications/rogg.desktop ]] && has "no icon" || { fail "$name" "did not skip the entry with a note"; return; }
+  pass "$name"
+}
+
 for t in test_main_is_called_last test_fresh_binary_install_adds_path_once test_upgrade_shows_both_builds \
          test_downgrade_is_refused_by_default test_checksum_mismatch_changes_nothing test_mac_app_installs_to_a_folder_with_spaces \
          test_mac_binary_uses_bash_profile_for_bash test_an_old_binary_without_version_shows_unknown_and_upgrades \
          test_unsupported_platform_stops_cleanly test_no_terminal_stops_with_a_message \
-         test_linux_desktop_entry_and_uninstall test_path_line_lands_on_its_own_line; do
+         test_linux_desktop_entry_and_uninstall test_path_line_lands_on_its_own_line \
+         test_uninstall_keeps_the_rest_of_a_startup_file test_uninstall_leaves_copies_outside_the_default_places \
+         test_a_relative_folder_is_refused test_a_folder_naming_the_app_is_refused \
+         test_another_rogg_earlier_on_path_is_pointed_out test_a_release_without_the_icon_skips_the_desktop_entry; do
   "$t"
 done
 (( failures == 0 )) && echo "all install tests passed" || { echo "$failures failed"; exit 1; }

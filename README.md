@@ -20,8 +20,8 @@ an applications-menu entry. Run it again to upgrade. To remove rogg (settings an
     curl -fsSL https://raw.githubusercontent.com/rogg-log/rogg/main/install.sh | bash -s -- --uninstall
 
 Or download an archive for your platform from the [latest release](https://github.com/rogg-log/rogg/releases/latest).
-`rogg --version` shows the installed version and build. While the repository is private, the installer and the
-downloads need access to it.
+`rogg --version` shows the installed version and build. The installer uses plain `curl` with no credentials, so it
+works only once the repository is public.
 
 ## macOS
 
