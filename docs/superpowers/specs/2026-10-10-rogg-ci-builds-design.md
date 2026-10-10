@@ -133,7 +133,7 @@ Approved in conversation: keep the bare macOS binary, and add a `rogg.app` built
 rogg.app/Contents/Info.plist
 rogg.app/Contents/PkgInfo                      APPL????
 rogg.app/Contents/MacOS/rogg                   the same universal binary
-rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt
+rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt, rogg.icns
 ```
 
 **Info.plist:**
@@ -150,7 +150,7 @@ rogg.app/Contents/Resources/README.md, Inter-OFL.txt, JetBrainsMono-OFL.txt
 | `NSHighResolutionCapable` | `true` |
 | `LSApplicationCategoryType` | `public.app-category.developer-tools` |
 
-There is no app icon yet; macOS shows its generic one until an `.icns` is designed.
+**Icon** (approved 2026-10-10, concept "the match": dim log lines, one highlighted in rogg's amber): the source is `crates/rogg-app/assets/icon/rogg.svg`, plus `rogg-small.svg` (three thicker lines) for the 16 and 32 px renders. `./dev icon` (`tools/icon/make-icns.mjs`: Playwright Chromium renders, then `iconutil`) regenerates the committed `rogg.icns`. `macos-app.sh` copies it to `Contents/Resources/rogg.icns`, and `Info.plist` gains `CFBundleIconFile` = `rogg`.
 
 **Signing:** after assembling, `codesign --force --sign - rogg.app` (ad-hoc, covering `Info.plist` and resources), then `codesign --verify --deep --strict`. Where `codesign` is missing (the Linux `check` job runs the script's tests), the script skips signing and says so. Gatekeeper behaviour is the same as for the bare binary: no prompt when not quarantined (`curl`, `install.sh`); "Open Anyway" when downloaded by a browser.
 
@@ -171,4 +171,4 @@ There is no app icon yet; macOS shows its generic one until an `.icns` is design
 - the manifest's `kind` for each asset;
 - `-app` rejected for Linux, Windows and `.zip`.
 
-**Out of scope:** an app icon, a `.dmg`, Developer ID signing and notarisation, file associations.
+**Out of scope:** a `.dmg`, Developer ID signing and notarisation, file associations.

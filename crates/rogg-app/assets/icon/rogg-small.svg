@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- rogg.svg simplified for 16 and 32 px (Finder lists, the menu bar): three thicker lines, so the highlighted one
+       still reads at that size. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22262a"/>
+      <stop offset="1" stop-color="#111315"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)"/>
+  <rect x="240" y="290" width="440" height="90" rx="45" fill="#bbc5ce" fill-opacity=".40"/>
+  <rect x="190" y="430" width="644" height="164" rx="50" fill="#443b28"/>
+  <rect x="240" y="467" width="544" height="90" rx="45" fill="#e0c283"/>
+  <rect x="240" y="644" width="380" height="90" rx="45" fill="#bbc5ce" fill-opacity=".40"/>
+</svg>

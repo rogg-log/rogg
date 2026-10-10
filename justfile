@@ -100,3 +100,6 @@ ci-lint:
 
 mac-app:
     @./dev mac-app
+
+icon:
+    @./dev icon

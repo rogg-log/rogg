@@ -77,6 +77,7 @@ ${BOLD}Build and run${RESET}
   run [files...]                Run the app (release); '-' reads stdin
   demo                          Run the app with the reference sample data (--demo)
   mac-app                       Build rogg.app for this Mac into target/mac-app/ (release; open it from Finder)
+  icon                          Regenerate crates/rogg-app/assets/icon/rogg.icns from rogg.svg and rogg-small.svg
   gallery                       Open the component gallery
   smoke                         Gallery smoke run (opens, renders, exits)
 
@@ -168,6 +169,8 @@ cmd_run()     { need_rust; run cargo run --release -p rogg-app -- "$@"; }
 cmd_demo()    { need_rust; run cargo run --release -p rogg-app -- --demo; }
 
 # The same bundling step CI uses (tools/ci/macos-app.sh), around a release build for this Mac's architecture.
+cmd_icon() { need_node; step "App icon"; run node tools/icon/make-icns.mjs; }
+
 cmd_mac_app() {
   need_rust
   step "rogg.app"
@@ -394,6 +397,7 @@ case $command in
   run) cmd_run "$@" ;;
   demo) cmd_demo ;;
   mac-app) cmd_mac_app ;;
+  icon) cmd_icon ;;
   gallery) cmd_gallery ;;
   smoke) cmd_smoke ;;
   check) cmd_check "$@" ;;

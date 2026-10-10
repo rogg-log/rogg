@@ -115,12 +115,13 @@ test_mac_app_archive_holds_a_signed_bundle_with_its_info_plist() {
   out=$(DIST_DIR=$dist ROGG_BUILD_NUMBER=42 "$sh" "$ci/macos-app.sh" "$(app_binary)" 2>/dev/null) || { fail "$name" "macos-app.sh failed"; return; }
   [[ $out == "$dist/rogg-macos-universal-app.tar.gz" && -f $out ]] || { fail "$name" "printed '$out'"; return; }
   list=$(tar -tzf "$out" | sed 's|^\./||' | grep -v '/$' | LC_ALL=C sort | tr '\n' ' ')
-  expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md "
-  command -v codesign >/dev/null 2>&1 && expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md rogg.app/Contents/_CodeSignature/CodeResources "
+  expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md rogg.app/Contents/Resources/rogg.icns "
+  command -v codesign >/dev/null 2>&1 && expected="rogg.app/Contents/Info.plist rogg.app/Contents/MacOS/rogg rogg.app/Contents/PkgInfo rogg.app/Contents/Resources/Inter-OFL.txt rogg.app/Contents/Resources/JetBrainsMono-OFL.txt rogg.app/Contents/Resources/README.md rogg.app/Contents/Resources/rogg.icns rogg.app/Contents/_CodeSignature/CodeResources "
   [[ $list == "$expected" ]] || { fail "$name" "listing '$list'"; return; }
   x=$work/app-x; mkdir -p "$x"; tar -xzf "$out" -C "$x"
   [[ -x $x/rogg.app/Contents/MacOS/rogg ]] || { fail "$name" "the binary is not executable"; return; }
   [[ $(cat "$x/rogg.app/Contents/PkgInfo") == 'APPL????' ]] || { fail "$name" "PkgInfo"; return; }
+  [[ $(head -c 4 "$x/rogg.app/Contents/Resources/rogg.icns") == icns ]] || { fail "$name" "rogg.icns is not an icon file"; return; }
   python3 - "$x/rogg.app/Contents/Info.plist" "$root/Cargo.toml" <<'PY' || { fail "$name" "Info.plist values"; return; }
 import plistlib, re, sys
 p = plistlib.load(open(sys.argv[1], "rb"))
@@ -128,7 +129,7 @@ version = re.search(r'^version = "([^"]+)"', open(sys.argv[2]).read(), re.M).gro
 want = {"CFBundleName": "rogg", "CFBundleDisplayName": "rogg", "CFBundleIdentifier": "io.rogg-log.rogg",
         "CFBundleExecutable": "rogg", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": "42", "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
-        "LSApplicationCategoryType": "public.app-category.developer-tools"}
+        "LSApplicationCategoryType": "public.app-category.developer-tools", "CFBundleIconFile": "rogg"}
 for k, v in want.items():
     assert p.get(k) == v, (k, p.get(k), v)
 PY

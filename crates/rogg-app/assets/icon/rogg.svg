@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- rogg's app icon, "the match": a few dim log lines and one highlighted in rogg's amber. The macOS app-icon grid:
+       an 824×824 rounded square on a 1024 canvas. Colours are rogg's dark palette (crates/rogg-ui/src/theme/palette.rs).
+       Regenerate rogg.icns with ./dev icon. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22262a"/>
+      <stop offset="1" stop-color="#111315"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-opacity=".35"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)" filter="url(#shadow)"/>
+  <rect x="101" y="101" width="822" height="822" rx="184" fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="2"/>
+  <rect x="250" y="300" width="420" height="44" rx="22" fill="#bbc5ce" fill-opacity=".30"/>
+  <rect x="250" y="380" width="520" height="44" rx="22" fill="#bbc5ce" fill-opacity=".30"/>
+  <rect x="214" y="446" width="596" height="116" rx="34" fill="#443b28"/>
+  <rect x="250" y="482" width="300" height="44" rx="22" fill="#e0c283"/>
+  <rect x="574" y="482" width="200" height="44" rx="22" fill="#bbc5ce" fill-opacity=".55"/>
+  <rect x="250" y="600" width="470" height="44" rx="22" fill="#bbc5ce" fill-opacity=".30"/>
+  <rect x="250" y="680" width="360" height="44" rx="22" fill="#bbc5ce" fill-opacity=".30"/>
+</svg>

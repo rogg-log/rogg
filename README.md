@@ -60,4 +60,4 @@ prerelease `main-latest`: `https://github.com/rogg-log/rogg/releases/download/ma
 uploaded last; check every download against it. While the repository is private, downloads need a GitHub token.
 
 `./dev ci-test` tests the packaging scripts locally; `./dev ci-lint` lints the workflow; `./dev mac-app` builds
-`rogg.app` for this Mac into `target/mac-app/`.
+`rogg.app` for this Mac into `target/mac-app/`; `./dev icon` regenerates the app icon from `crates/rogg-app/assets/icon/rogg.svg`.
