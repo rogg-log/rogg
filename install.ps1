@@ -8,6 +8,8 @@ param([switch]$Uninstall)
 
 & {
   $ErrorActionPreference = 'Stop'
+  # Windows PowerShell 5.1's progress bar slows Invoke-WebRequest by an order of magnitude.
+  $ProgressPreference = 'SilentlyContinue'
   $Base = if ($env:ROGG_INSTALL_BASE) { $env:ROGG_INSTALL_BASE.TrimEnd('/') } else { 'https://github.com/rogg-log/rogg/releases/latest/download' }
   $Archive = 'rogg-windows-x86_64.zip'
   $DefaultDir = Join-Path $env:LOCALAPPDATA 'Programs\rogg'
@@ -52,7 +54,15 @@ param([switch]$Uninstall)
     if ($p.StartsWith('~')) { $p = Join-Path $env:USERPROFILE $p.Substring(1).TrimStart('\', '/') }
     if ($p -notmatch '^([A-Za-z]:\\|\\\\)') { Fail "give an absolute folder such as C:\Tools\rogg (not `"$Answer`")" }
     if ($p -match '["$]') { Fail 'the folder name cannot contain " or $' }
+    # A bare drive would become a drive-relative "C:" entry on PATH.
+    if ($p -match '^[A-Za-z]:\\*$') { Fail "choose a folder, not the whole drive $p" }
     return $p.TrimEnd('\')
+  }
+
+  # Downloads <name> from the release; a failure says which file and where from.
+  function Get-ReleaseFile([string]$Name, [string]$OutFile) {
+    try { Invoke-WebRequest -UseBasicParsing "$Base/$Name" -OutFile $OutFile }
+    catch { Fail "could not download $Name from $Base ($($_.Exception.Message))" }
   }
 
   # The user PATH as stored (keeping %VAR% entries unexpanded), and writing it back as an expandable string.
@@ -112,9 +122,12 @@ param([switch]$Uninstall)
     $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
     if ($arch -eq 'ARM64') { Say 'Windows on ARM: installing the x64 build, which runs under emulation.' }
 
-    $manifest = Invoke-RestMethod -UseBasicParsing "$Base/manifest.json"
+    try { $manifest = Invoke-RestMethod -UseBasicParsing "$Base/manifest.json" }
+    catch { Fail "could not download manifest.json from $Base ($($_.Exception.Message))" }
     $version = [string]$manifest.version
-    $build = [int]$manifest.build
+    $buildText = [string]$manifest.build
+    if ($version -notmatch '^\d+\.\d+\.\d+$' -or $buildText -notmatch '^\d+$') { Fail "the release manifest at $Base could not be read" }
+    $build = [int]$buildText
     Say "rogg installer - latest release: rogg $version build $build"
 
     $dir = Resolve-Folder (Ask "Install to [$DefaultDir]" $DefaultDir)
@@ -136,8 +149,8 @@ param([switch]$Uninstall)
     try {
       $zip = Join-Path $tmp $Archive
       $sums = Join-Path $tmp 'SHA256SUMS'
-      Invoke-WebRequest -UseBasicParsing "$Base/$Archive" -OutFile $zip
-      Invoke-WebRequest -UseBasicParsing "$Base/SHA256SUMS" -OutFile $sums
+      Get-ReleaseFile $Archive $zip
+      Get-ReleaseFile 'SHA256SUMS' $sums
       $want = $null
       foreach ($line in Get-Content -LiteralPath $sums) {
         $fields = $line -split '\s+', 2
@@ -151,6 +164,10 @@ param([switch]$Uninstall)
 
       New-Item -ItemType Directory -Force -Path $dir | Out-Null
       Remove-OldExes $dir
+      # The new exe is copied next to the old one first, so a failed copy (a full disk) leaves the old one untouched.
+      $new = Join-Path $dir 'rogg.exe.new'
+      Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue
+      Copy-Item -LiteralPath (Join-Path $unpacked 'rogg.exe') -Destination $new -Force
       # A running rogg.exe can't be overwritten but can be renamed; the renamed file goes on the next run.
       $old = $null
       if (Test-Path -LiteralPath $exe) {
@@ -158,12 +175,20 @@ param([switch]$Uninstall)
         Move-Item -LiteralPath $exe -Destination $old
       }
       try {
-        Copy-Item -Path (Join-Path $unpacked '*') -Destination $dir -Recurse -Force
+        Move-Item -LiteralPath $new -Destination $exe
       } catch {
-        if ($old -and -not (Test-Path -LiteralPath $exe)) { Move-Item -LiteralPath $old -Destination $exe }
+        if ($old) { Move-Item -LiteralPath $old -Destination $exe }
         throw
       }
-      Get-ChildItem -LiteralPath $dir -File | Unblock-File
+      foreach ($f in $Files) {
+        $from = Join-Path $unpacked $f
+        if ($f -ne 'rogg.exe' -and (Test-Path -LiteralPath $from)) { Copy-Item -LiteralPath $from -Destination $dir -Force }
+      }
+      # Only rogg's own files; other files in a folder the user chose keep their download mark.
+      foreach ($f in $Files) {
+        $p = Join-Path $dir $f
+        if (Test-Path -LiteralPath $p) { Unblock-File -LiteralPath $p -ErrorAction SilentlyContinue }
+      }
       Remove-OldExes $dir
       Say "Installed rogg $version build $build to $dir."
     } finally {
@@ -177,7 +202,13 @@ param([switch]$Uninstall)
   function Uninstall-Rogg {
     $exe = Join-Path $DefaultDir 'rogg.exe'
     $hasExe = Test-Path -LiteralPath $exe -PathType Leaf
-    $hasLink = Test-Path -LiteralPath $Shortcut
+    # Only a Start-menu entry pointing into the default folder is ours to remove.
+    $hasLink = $false
+    if (Test-Path -LiteralPath $Shortcut) {
+      $target = (New-Object -ComObject WScript.Shell).CreateShortcut($Shortcut).TargetPath
+      $hasLink = $target.StartsWith($DefaultDir, [StringComparison]::OrdinalIgnoreCase)
+      if (-not $hasLink) { Say "The Start menu entry points to $target; it is left alone." }
+    }
     if (-not $hasExe -and -not $hasLink) {
       Say "No rogg installation found in $DefaultDir."
     } else {
@@ -185,14 +216,17 @@ param([switch]$Uninstall)
       if ($hasLink) { Say "Found: $Shortcut (Start menu)" }
       if (YesNo 'Remove it?' $true) {
         foreach ($f in $Files) { Remove-Item -LiteralPath (Join-Path $DefaultDir $f) -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath (Join-Path $DefaultDir 'rogg.exe.new') -Force -ErrorAction SilentlyContinue
         Remove-OldExes $DefaultDir
-        Remove-Item -LiteralPath $Shortcut -Force -ErrorAction SilentlyContinue
+        if ($hasLink) { Remove-Item -LiteralPath $Shortcut -Force -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $exe) {
           Say 'rogg.exe is in use: quit rogg and run the uninstaller again to remove it.'
-        } elseif ((Test-Path -LiteralPath $DefaultDir) -and -not (Get-ChildItem -LiteralPath $DefaultDir -Force)) {
-          Remove-Item -LiteralPath $DefaultDir -Force
+        } else {
+          if ((Test-Path -LiteralPath $DefaultDir) -and -not (Get-ChildItem -LiteralPath $DefaultDir -Force)) {
+            Remove-Item -LiteralPath $DefaultDir -Force
+          }
+          Say 'Removed.'
         }
-        Say 'Removed.'
       }
     }
     $user = Get-UserPath
