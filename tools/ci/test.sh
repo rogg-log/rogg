@@ -191,6 +191,11 @@ test_workflow_is_guarded() {
   # Debug test binaries with full debuginfo filled the runner's disk on the first run (ld: Bus error, 0 MB left).
   sed -n '/^  check:$/,/^  macos:$/p' "$wf" | grep -q 'CARGO_PROFILE_DEV_DEBUG: "0"' || { fail "$name" "check builds tests with debuginfo"; return; }
   sed -n '/^  check:$/,/^  macos:$/p' "$wf" | grep -q "name: Free disk space" || { fail "$name" "check does not free disk space"; return; }
+  # Builds wait for check: a failing check must not spend (10× macOS, 2× Windows) minutes on builds it can't publish.
+  local job
+  for job in macos linux windows-x86_64; do
+    sed -n "/^  $job:\$/,/^  [a-z0-9_-]*:\$/p" "$wf" | grep -qx "    needs: check" || { fail "$name" "$job does not wait for check"; return; }
+  done
   pass "$name"
 }
 

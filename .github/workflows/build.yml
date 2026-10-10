@@ -7,7 +7,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Concurrency is per job: a newer push cancels older builds, but never a publish that is half-way through its uploads.
+# check runs first; the builds wait for it, so a failing check spends no macOS/Windows minutes. Concurrency is per
+# job: a newer push cancels older builds, but never a publish that is half-way through its uploads.
 
 permissions:
   contents: read
@@ -60,6 +61,7 @@ jobs:
         run: bash tools/ci/test.sh
 
   macos:
+    needs: check
     runs-on: macos-14
     timeout-minutes: 90
     concurrency:
@@ -107,6 +109,7 @@ jobs:
 
   linux:
     name: linux-${{ matrix.arch }}
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -148,6 +151,7 @@ jobs:
           if-no-files-found: error
 
   windows-x86_64:
+    needs: check
     runs-on: windows-latest
     timeout-minutes: 90
     concurrency:
