@@ -134,3 +134,51 @@ A new "Install" section near the top covers:
 - Signing and notarisation.
 - Package managers (Homebrew, apt).
 - Auto-update inside the app.
+
+## 9. Amendment (2026-10-10): Windows — `install.ps1`, and the version and icon built into `rogg.exe`
+
+Agreed in conversation: a PowerShell installer for Windows, the version and icon embedded in `rogg.exe` as Windows resources, and **no automated installer tests** (checked by hand on Windows).
+
+**`rogg.exe` resources (`crates/rogg-app/build.rs`, Windows targets only):**
+- **Why:** a release `rogg.exe` has no console, so `rogg.exe --version` prints nothing an installer can read.
+- **How:** when `CARGO_CFG_TARGET_OS` is `windows`, `build.rs` writes a resource script into `OUT_DIR` and compiles it with `embed-resource` (already in `Cargo.lock` through gpui). It contains:
+  - `1 ICON` → `crates/rogg-app/assets/icon/rogg.ico`;
+  - `1 VERSIONINFO` with:
+    - `FILEVERSION` / `PRODUCTVERSION` `<major>,<minor>,<patch>,<build or 0>`;
+    - strings `ProductName` `rogg`, `FileDescription` `rogg log viewer`, `CompanyName` `rogg-log`, `OriginalFilename` `rogg.exe`, `FileVersion` `<version>.<build or 0>`;
+    - `ProductVersion` = the same text as `rogg --version`: `rogg 0.1.0 (build 6, main, 3b4060e)` or `rogg 0.1.0 (local, <commit>)`.
+- **Format:** `build.rs` repeats `about::version_line`'s format, because a build script can't call the crate. A comment ties the two together.
+- **Platforms:** macOS and Linux builds are untouched. The local cross-build (`./dev windows-build`) compiles the script with LLVM's `llvm-rc`, which is already on its PATH.
+- **The icon:** `./dev icon` also writes `rogg.ico`: PNG-compressed 16, 24, 32, 48, 64 and 256 px images in one ICO file, from the same SVGs (the small variant for 16 and 24 px). It is committed. Explorer, the taskbar and the Start-menu shortcut then show the app icon.
+
+**`install.ps1` (repository root), Windows PowerShell 5.1 and PowerShell 7:**
+
+```powershell
+irm https://raw.githubusercontent.com/rogg-log/rogg/main/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/rogg-log/rogg/main/install.ps1))) -Uninstall
+```
+
+**Steps:**
+1. **Platform:** x64 Windows. ARM64 Windows also gets the x64 build, which runs under emulation, with a note saying so.
+2. **Latest release:** turn on TLS 1.2 (Windows PowerShell 5.1 may default lower), then read `manifest.json` with `Invoke-RestMethod`, which parses JSON natively. `$env:ROGG_INSTALL_BASE` overrides the release URL, as in `install.sh`.
+3. **Where:** `%LOCALAPPDATA%\Programs\rogg` by default (per user, no admin rights); another folder is offered. Relative folders and the characters `"` and `$` are refused, matching `install.sh`.
+4. **Installed now:** read `(Get-Item <folder>\rogg.exe).VersionInfo.ProductVersion` with the same `build N` / `local` / unknown logic, then show `Installed:` / `Installing:`. Reinstall and downgrade prompts default to no, as in `install.sh`.
+5. **Download and check:** `rogg-windows-x86_64.zip` and `SHA256SUMS` go into a temporary folder, checked with `Get-FileHash -Algorithm SHA256`. A mismatch changes nothing.
+6. **Install:** unpack with `Expand-Archive`. A running `rogg.exe` can't be overwritten but can be renamed, so an existing one is renamed to `rogg.exe.old` first (deleted now if possible, otherwise on the next run). Then copy the archive's files into the folder.
+7. **PATH:** if the folder isn't on the user `PATH` (`[Environment]::GetEnvironmentVariable('Path','User')`), offer to add it. Then say to open a new terminal.
+8. **Start menu:** offer a shortcut, `%APPDATA%\Microsoft\Windows\Start Menu\Programs\rogg.lnk` created through `WScript.Shell`, with the icon from `rogg.exe`.
+9. **Other copies:** if `Get-Command rogg` resolves to another copy, say which one a terminal will run.
+
+**`-Uninstall`:**
+- Removes rogg from the default folder: the files the archive installs, `rogg.exe.old`, and the folder if it's then empty.
+- Removes the Start-menu shortcut, and offers to remove the folder from the user `PATH`.
+- Points out a `rogg.exe` found elsewhere without deleting it.
+- Says that settings and data are kept in `%APPDATA%\rogg` and `%LOCALAPPDATA%\rogg\cache`.
+
+**Robustness:** `$ErrorActionPreference = 'Stop'`; everything is a function, and the last line calls it, so a cut-off download runs nothing. Temporary files are removed in a `finally` block. Downloads made with `Invoke-WebRequest` carry no internet-zone mark, so SmartScreen doesn't prompt. `Unblock-File` is run on the installed files anyway.
+
+**README:** the "Install" section gains the two PowerShell commands.
+
+**Testing:** none automated, by decision. The Windows CI build proves that the resources compile. A manual-checks section covers: a fresh install, an upgrade, the icon in Explorer and Start, a version read back, `PATH`, `-Uninstall`, and replacing a running `rogg.exe`.
+
+**Out of scope:** an MSI or winget/scoop packages, installing to Program Files (that would need admin rights), Windows ARM64 builds, code signing.
