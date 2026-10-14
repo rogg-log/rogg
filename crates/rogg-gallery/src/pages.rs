@@ -220,6 +220,7 @@ fn filter(view: &GalleryView, p: &Palette) -> AnyElement {
     div()
         .child(section("Chips: slot × state", chips, p))
         .child(section("Reference band", frame(1000., 90., p, FilterBand::new(terms.clone()).summary("2 include · 1 exclude · 1 off".into())), p))
+        .child(section("No filters (hint opens the editor)", frame(1000., 90., p, FilterBand::new(vec![]).summary("0 include · 0 exclude · 0 off".into())), p))
         .child(section(
             "Editing with error",
             frame(1000., 110., p, FilterBand::new(terms.clone()).editing(Some(view.inputs.expression.clone())).error(Some("unclosed group".into())).summary("2 include · 1 exclude · 1 off".into())),

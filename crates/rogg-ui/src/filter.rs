@@ -1,6 +1,7 @@
 use crate::controls::{CompactSelect, FlagButton, IconButton, TextButton};
 use crate::layout::BandDrag;
 use crate::icons::{IconName, icon};
+use crate::keys::shortcut_label;
 use crate::theme::{ActiveRoggTheme, ChipColor, Color, Palette, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState};
@@ -328,6 +329,30 @@ impl RenderOnce for FilterBand {
                             move |_, w, cx| f(w, cx)
                         }),
                 )
+                .into_any_element(),
+            // No terms: the whole row is a hint that opens the editor, so the band never looks blank.
+            None if self.terms.is_empty() => div()
+                .id("filter-empty")
+                .test_support()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .h(px(size::CHIP_H))
+                .items_center()
+                .gap(px(6.))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_size(s.px(11.))
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(move |st| st.text_color(p.text))
+                .child("Click to add filter terms, e.g.")
+                .child(div().font_family(t.fonts.mono.clone()).child("error || timeout"))
+                .child(div().ml(px(6.)).text_color(p.faint).child(shortcut_label("⌘ L", t.chrome)))
+                .on_click({
+                    let f = call(&self.on_edit);
+                    move |_, w, cx| f(w, cx)
+                })
                 .into_any_element(),
             None => {
                 let mut row = div().id("filters").test_support().flex().flex_1().min_w_0().items_center().gap(px(7.)).overflow_x_scroll();

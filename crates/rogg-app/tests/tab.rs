@@ -40,6 +40,19 @@ fn a_file_opens_into_both_panes_with_the_reference_chrome(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn clicking_the_empty_filter_line_opens_the_editor(cx: &mut TestAppContext) {
+    let (_dir, w, _, tab) = open_one(cx);
+    common::wait_until(cx, |cx| tab.read_with(cx, |t, cx| t.is_ready(cx)));
+    assert!(common::exists(cx, w, "filter-empty"), "no filter yet: the filter line shows its hint");
+    common::click(cx, w, "filter-empty");
+    assert!(tab.read_with(cx, |t, _| t.editing.is_some()), "the hint opens the expression editor");
+    assert!(common::exists(cx, w, "expression"));
+    assert!(!common::exists(cx, w, "filter-empty"));
+    let placeholder = tab.read_with(cx, |t, cx| t.editing.as_ref().unwrap().read(cx).presentation().placeholder().to_string());
+    assert_eq!(placeholder, "Terms separated by ||, e.g. error || timeout");
+}
+
+#[gpui_kit::test]
 fn filter_follow_selection_and_pins(cx: &mut TestAppContext) {
     let (_dir, w, _, tab) = open_one(cx);
     let doc = tab.read_with(cx, |t, _| t.doc.clone());

@@ -631,7 +631,7 @@ impl Tab {
             return;
         }
         let text = self.doc.read(cx).filter.spec.expression();
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(text));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Terms separated by ||, e.g. error || timeout").default_value(text));
         input.update(cx, |i, cx| i.focus(window, cx));
         self.edit_subscription = Some(cx.subscribe_in(&input, window, |tab, _, ev: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = ev {

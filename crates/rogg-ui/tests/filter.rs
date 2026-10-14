@@ -136,3 +136,36 @@ fn the_band_keeps_its_height_in_edit_mode(cx: &mut TestAppContext) {
     assert_eq!(common::bounds(cx, editing, "expression").size.height, px(28.));
     assert_eq!(common::bounds(cx, editing, "apply").size.height, px(28.));
 }
+
+#[gpui_kit::test]
+fn an_empty_band_shows_a_clickable_hint_that_starts_editing(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let edits = Rc::new(Cell::new(0));
+    let e = edits.clone();
+    let w = common::open(cx, 1200., 200., move |_, _| {
+        let e = e.clone();
+        FilterBand::new(vec![]).on_edit(move |_, _| e.set(e.get() + 1)).into_any_element()
+    });
+    assert!(common::exists(cx, w, "filter-empty"));
+    // The hint fills the row up to the actions (the line's 6px gap plus their 6px margin), so any click there edits.
+    let (hint, actions) = (common::bounds(cx, w, "filter-empty"), common::bounds(cx, w, "filter-actions"));
+    assert!(actions.left() - hint.right() <= px(12.5), "hint {hint:?} stops short of actions {actions:?}");
+    assert_eq!(hint.size.height, px(28.));
+    common::click(cx, w, "filter-empty");
+    assert_eq!(edits.get(), 1);
+}
+
+#[gpui_kit::test]
+fn a_band_with_terms_has_no_hint(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let w = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(2)).into_any_element());
+    assert!(!common::exists(cx, w, "filter-empty"));
+}
+
+#[gpui_kit::test]
+fn the_empty_band_keeps_the_chip_band_height(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let chips = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(3)).into_any_element());
+    let empty = common::open(cx, 1200., 200., |_, _| FilterBand::new(vec![]).into_any_element());
+    assert_eq!(common::bounds(cx, chips, "filter-band").size.height, common::bounds(cx, empty, "filter-band").size.height);
+}
