@@ -252,3 +252,38 @@ fn mac_style_double_click_leaves_zooming_to_the_system(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn right_click_builds_the_menu_for_that_tab_without_selecting_it(cx: &mut TestAppContext) {
+    use gpui_kit::component::menu::PopupMenuItem;
+    use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};
+    common::setup(cx);
+    let built = Rc::new(RefCell::new(Vec::new()));
+    let selected = Rc::new(RefCell::new(Vec::new()));
+    let (b, s) = (built.clone(), selected.clone());
+    let w = common::open(cx, 1440., 200., move |_, _| {
+        let (b, s) = (b.clone(), s.clone());
+        TitleBar::new(tabs(3))
+            .on_select_tab(move |i, _, _| s.borrow_mut().push(i))
+            .tab_menu(move |i, menu, _, _| {
+                b.borrow_mut().push(i);
+                menu.item(PopupMenuItem::new("Close Tab"))
+            })
+            .into_any_element()
+    });
+    let position = common::bounds(cx, w, "tab-1").center();
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+        window.render_frame(cx);
+        let down = MouseDownEvent { button: MouseButton::Right, position, click_count: 1, ..Default::default() };
+        window.dispatch_event(PlatformInput::MouseDown(down), cx);
+        let up = MouseUpEvent { button: MouseButton::Right, position, click_count: 1, ..Default::default() };
+        window.dispatch_event(PlatformInput::MouseUp(up), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(built.borrow().last(), Some(&1), "the menu is built for the right-clicked tab");
+    assert!(selected.borrow().is_empty(), "a right-click does not switch tabs");
+}

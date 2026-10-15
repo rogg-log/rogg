@@ -4,7 +4,7 @@ use crate::theme::{ActiveRoggTheme, ChromeStyle, Color, Palette, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::prelude::*;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
-use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     AnyElement, App, Context, Decorations, FontWeight, MouseButton, Pixels, ScrollHandle, SharedString, TestSupportExt, Window, WindowControlArea, div, px,
@@ -14,6 +14,8 @@ use std::rc::Rc;
 
 /// Fills the ☰ app menu each time it opens (gpui-kit's dropdown menu builder).
 pub type AppMenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
+/// Builds a tab's context menu; gets the right-clicked tab's index.
+pub type TabMenuBuilder = Rc<dyn Fn(usize, PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabItem {
@@ -39,6 +41,7 @@ pub struct TitleBar {
     on_shortcuts: Option<Callback>,
     on_settings: Option<Callback>,
     app_menu: Option<AppMenuBuilder>,
+    tab_menu: Option<TabMenuBuilder>,
     on_close_window: Option<Callback>,
     force_window_controls: bool,
 }
@@ -58,6 +61,7 @@ impl TitleBar {
             on_shortcuts: None,
             on_settings: None,
             app_menu: None,
+            tab_menu: None,
             on_close_window: None,
             force_window_controls: false,
         }
@@ -117,6 +121,12 @@ impl TitleBar {
     /// The ☰ menu's items (Linux and Windows styles; the Mac style uses the native menu bar).
     pub fn app_menu(mut self, f: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static) -> Self {
         self.app_menu = Some(Rc::new(f));
+        self
+    }
+
+    /// A tab's right-click menu. Right-clicking does not select the tab; the menu acts on the tab it was opened on.
+    pub fn tab_menu(mut self, f: impl Fn(usize, PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static) -> Self {
+        self.tab_menu = Some(Rc::new(f));
         self
     }
 
@@ -311,6 +321,7 @@ impl RenderOnce for TitleBar {
                     force_hover: self.force_hover_tab == Some(i),
                     on_select: self.on_select_tab.clone(),
                     on_close: self.on_close_tab.clone(),
+                    menu: self.tab_menu.clone(),
                 }
             }));
 
@@ -358,7 +369,8 @@ impl RenderOnce for TitleBar {
     }
 }
 
-/// `.tab-shell`: tab button + hover-revealed close button + accent underline when active. Middle-click closes.
+/// `.tab-shell`: tab button + hover-revealed close button + accent underline when active. Middle-click closes;
+/// right-click opens the tab menu.
 #[derive(IntoElement)]
 struct TabShell {
     index: usize,
@@ -366,6 +378,7 @@ struct TabShell {
     force_hover: bool,
     on_select: Option<IndexCallback>,
     on_close: Option<IndexCallback>,
+    menu: Option<TabMenuBuilder>,
 }
 
 impl RenderOnce for TabShell {
@@ -376,7 +389,8 @@ impl RenderOnce for TabShell {
         let active = self.item.active;
         let group: SharedString = format!("tab-group-{i}").into();
         let (on_select, on_close, on_middle) = (self.on_select, self.on_close.clone(), self.on_close);
-        div()
+        let menu = self.menu;
+        let shell = div()
             .id(SharedString::from(format!("tab-shell-{i}")))
             .test_support()
             .group(group.clone())
@@ -457,6 +471,10 @@ impl RenderOnce for TabShell {
             .when(active, |d| {
                 d.child(div().absolute().top(px(-1.)).bottom(px(-1.)).left(px(-1.)).right(px(-1.)).rounded(px(5.)).border_1().border_color(p.border))
                     .child(div().absolute().bottom(px(-1.)).left(px(9.)).right(px(9.)).h(px(1.)).bg(p.accent).opacity(0.7))
-            })
+            });
+        match menu {
+            Some(menu) => shell.context_menu(move |m, window, cx| menu(i, m, window, cx)).into_any_element(),
+            None => shell.into_any_element(),
+        }
     }
 }

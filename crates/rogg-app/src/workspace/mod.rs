@@ -2,6 +2,7 @@
 
 pub mod chrome;
 pub mod keys;
+pub mod tab_menu;
 
 use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowAbout, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
@@ -700,6 +701,10 @@ impl Workspace {
             .tab_scroll(self.tab_scroll.clone())
             .on_select_tab(act_ix(this, |ws, i, window, cx| ws.activate(i, window, cx)))
             .on_close_tab(act_ix(this, |ws, i, window, cx| ws.close_tab(i, window, cx)))
+            .tab_menu({
+                let this = this.clone();
+                move |i, menu, _, cx| tab_menu::build(&this, i, menu, cx)
+            })
             .on_toggle_sidebar(act(this, |ws, _, cx| ws.toggle_sidebar(cx)))
             .on_all_tabs(act(this, |ws, _, cx| ws.open_dialog(Dialog::AllTabs, cx)))
             .on_shortcuts(act(this, |ws, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))

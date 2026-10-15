@@ -25,9 +25,11 @@ fn source_refs_name_their_chain() {
     assert_eq!(log.name(), "x.log");
     assert_eq!(log.crumbs(), ["incident.zip", "nested", "inner.tgz", "app", "x.log"]);
     assert_eq!(log.tooltip(), "x.log · incident.zip");
+    assert_eq!(log.full_path(), Path::new("/b/incident.zip/nested/inner.tgz/app/x.log"), "file-manager style, nested archives included");
     let file = SourceRef::File(PathBuf::from("/var/log/api.log"));
     assert_eq!(file.crumbs(), ["log", "api.log"]);
     assert_eq!(file.tooltip(), "/var/log/api.log");
+    assert_eq!(file.full_path(), Path::new("/var/log/api.log"));
     assert!(file.member_chain().is_empty());
     let json = serde_json::to_string(&log).unwrap();
     assert_eq!(serde_json::from_str::<SourceRef>(&json).unwrap(), log);

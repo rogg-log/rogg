@@ -414,6 +414,30 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Closes every tab `close` picks (the tab menu's Close Other / Left / Right / All). The active tab stays active
+    /// if it survives; otherwise `anchor`, the right-clicked tab, takes over.
+    pub fn close_tabs_where(&mut self, anchor: usize, close: impl Fn(usize) -> bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (active, anchor) = (self.tabs.get(self.active).cloned(), self.tabs.get(anchor).cloned());
+        for (i, tab) in std::mem::take(&mut self.tabs).into_iter().enumerate() {
+            if close(i) {
+                self.tab_subscriptions.remove(&tab.entity_id());
+                self.end_capture_of(&tab, cx);
+            } else {
+                self.tabs.push(tab);
+            }
+        }
+        let position = |tab: Option<Entity<Tab>>| tab.and_then(|t| self.tabs.iter().position(|x| *x == t));
+        match position(active).or_else(|| position(anchor)) {
+            Some(next) => self.activate(next, window, cx),
+            None if !self.tabs.is_empty() => self.activate(0, window, cx),
+            None => {
+                self.active = 0;
+                window.set_window_title("rogg");
+            }
+        }
+        cx.notify();
+    }
+
     /// A stream tab owns its capture: closing the tab stops the copy and deletes the capture file (best effort — a
     /// snapshot of it that is still alive stays readable through its mapping).
     fn end_capture_of(&mut self, tab: &Entity<Tab>, cx: &App) {

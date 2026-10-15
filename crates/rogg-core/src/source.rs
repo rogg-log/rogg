@@ -73,6 +73,16 @@ impl SourceRef {
         }
     }
 
+    /// The path as a file manager writes it: a file's own path; a member's archive path followed by the member path
+    /// (`/b/incident.zip/logs/api.log`), nested archives included. Tab menu › Copy Path.
+    pub fn full_path(&self) -> PathBuf {
+        let mut path = self.root_path().to_path_buf();
+        for member in self.member_chain() {
+            path.extend(member.split('/').filter(|s| !s.is_empty()));
+        }
+        path
+    }
+
     /// Tab tooltip: a file's full path; a member as `api.log · incident.zip` (the reference's tab title).
     pub fn tooltip(&self) -> String {
         match self {
