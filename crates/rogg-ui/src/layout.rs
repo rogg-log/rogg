@@ -87,6 +87,13 @@ impl LayoutMeasure {
     }
 }
 
+/// One of the two log panes, for `MainWindowLayout::expanded`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneSlot {
+    Top,
+    Bottom,
+}
+
 enum Body {
     Panes(MainWindowParts),
     Single(SingleParts),
@@ -98,20 +105,28 @@ pub struct MainWindowLayout {
     body: Body,
     measure: Option<Rc<LayoutMeasure>>,
     sidebar_resizable: bool,
+    expanded: Option<PaneSlot>,
 }
 
 impl MainWindowLayout {
     pub fn new(parts: MainWindowParts) -> Self {
-        Self { body: Body::Panes(parts), measure: None, sidebar_resizable: false }
+        Self { body: Body::Panes(parts), measure: None, sidebar_resizable: false, expanded: None }
     }
 
     pub fn single(parts: SingleParts) -> Self {
-        Self { body: Body::Single(parts), measure: None, sidebar_resizable: false }
+        Self { body: Body::Single(parts), measure: None, sidebar_resizable: false, expanded: None }
     }
 
     /// Record the main column and band bounds into `measure` on every layout.
     pub fn measure(mut self, measure: Rc<LayoutMeasure>) -> Self {
         self.measure = Some(measure);
+        self
+    }
+
+    /// One pane fills the window below the title bar: the sidebar, info bar, band, other pane and status bar are
+    /// left out (the pane keeps its header).
+    pub fn expanded(mut self, pane: Option<PaneSlot>) -> Self {
+        self.expanded = pane;
         self
     }
 
@@ -217,6 +232,17 @@ impl RenderOnce for MainWindowLayout {
                         // take clicks over the header, the band or the status bar.
                         .child(div().flex_1().min_h_0().overflow_hidden().child(body))
                 };
+                if let Some(slot) = self.expanded {
+                    let (id, header, body) = match slot {
+                        PaneSlot::Top => ("pane-top", parts.top_header, parts.top_body),
+                        PaneSlot::Bottom => ("pane-bottom", parts.bottom_header, parts.bottom_body),
+                    };
+                    return root
+                        .child(parts.titlebar)
+                        .child(div().id("workspace").test_support().flex().flex_col().flex_1().min_h_0().child(pane(id, 1., header, body)))
+                        .children(parts.overlay)
+                        .child(drag_cursor());
+                }
                 let band = div().relative().flex_none().child(parts.band).when_some(self.measure.clone(), |d, m| d.child(recorder(m, true)));
                 root.child(parts.titlebar)
                     .child(

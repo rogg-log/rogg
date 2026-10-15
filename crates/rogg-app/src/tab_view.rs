@@ -124,6 +124,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
             }
             let top_header = top_header
                 .tool(ToolButton::new("tool-wrap-top", IconName::Wrap, "Wrap").pressed(t.full.read(cx).wrap()).on_click(tab_act(tab, |t, _, cx| t.toggle_wrap(Pane::Full, cx))))
+                .expand("tool-expand-top", t.expanded == Some(Pane::Full), tab_act(tab, |t, _, cx| t.toggle_expand(Pane::Full, cx)))
                 .into_any_element();
             let bottom_header = PaneHeader::new("pane-bottom-head", "Filtered log", format!("{} shown", group_digits(shown)))
                 .find(FindField::new("find-bottom", t.find[1].clone()).count(d.search(Pane::Filtered).label()))
@@ -134,6 +135,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                         .pressed(t.filtered.read(cx).wrap())
                         .on_click(tab_act(tab, |t, _, cx| t.toggle_wrap(Pane::Filtered, cx))),
                 )
+                .expand("tool-expand-bottom", t.expanded == Some(Pane::Filtered), tab_act(tab, |t, _, cx| t.toggle_expand(Pane::Filtered, cx)))
                 .into_any_element();
             let spec = &d.filter.spec;
             let (context_items, context_selected) = context_options(spec.context);

@@ -133,3 +133,45 @@ fn a_short_filtered_pane_keeps_recent_filters_inside_it(cx: &mut gpui_kit::TestA
     common::click(cx, w, "recent-filter-2");
     assert_eq!(picked.get(), Some(2));
 }
+
+fn expanded_layout(cx: &mut TestAppContext, slot: rogg_ui::layout::PaneSlot) -> gpui_kit::AnyWindowHandle {
+    common::setup(cx);
+    common::open(cx, 1440., 900., move |_, _| {
+        MainWindowLayout::new(MainWindowParts {
+            titlebar: TitleBar::new(vec![]).into_any_element(),
+            sidebar: Some(Sidebar::new().into_any_element()),
+            info_bar: InfoBar::new(vec!["a.log".into()], "Default".into()).into_any_element(),
+            top_header: PaneHeader::new("pane-top-head", "Full log", "").into_any_element(),
+            top_body: div().id("top-body").test_support().size_full().into_any_element(),
+            band: FilterBand::new(vec![]).into_any_element(),
+            bottom_header: PaneHeader::new("pane-bottom-head", "Filtered log", "").into_any_element(),
+            bottom_body: div().id("bottom-body").test_support().size_full().into_any_element(),
+            status: StatusBar::new("UTF-8".into()).into_any_element(),
+            overlay: None,
+            split: MainWindowParts::DEFAULT_SPLIT,
+        })
+        .expanded(Some(slot))
+        .into_any_element()
+    })
+}
+
+#[gpui_kit::test]
+fn an_expanded_top_pane_fills_the_window_below_the_title_bar(cx: &mut TestAppContext) {
+    let w = expanded_layout(cx, rogg_ui::layout::PaneSlot::Top);
+    let pane = common::bounds(cx, w, "pane-top");
+    assert_eq!((pane.origin.x, pane.origin.y, pane.size.width, pane.size.height), (px(0.), px(42.), px(1440.), px(900. - 42.)));
+    assert!(common::exists(cx, w, "pane-top-head") && common::exists(cx, w, "top-body"), "the pane keeps its header");
+    for gone in ["sidebar", "meta", "filter-band", "pane-bottom", "bottom-body", "statusbar", "sidebar-resize"] {
+        assert!(!common::exists(cx, w, gone), "{gone} should be hidden");
+    }
+}
+
+#[gpui_kit::test]
+fn an_expanded_bottom_pane_fills_the_window_below_the_title_bar(cx: &mut TestAppContext) {
+    let w = expanded_layout(cx, rogg_ui::layout::PaneSlot::Bottom);
+    let pane = common::bounds(cx, w, "pane-bottom");
+    assert_eq!((pane.origin.y, pane.size.width, pane.size.height), (px(42.), px(1440.), px(900. - 42.)));
+    for gone in ["sidebar", "meta", "filter-band", "pane-top", "top-body", "statusbar"] {
+        assert!(!common::exists(cx, w, gone), "{gone} should be hidden");
+    }
+}

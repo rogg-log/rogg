@@ -126,6 +126,8 @@ pub struct Tab {
     /// moves the end away); consumed by the first `Grew`.
     end_in_view: Option<bool>,
     pub split: f32,
+    /// The pane filling the window (the header's expand button); temporary, not saved in the session.
+    pub expanded: Option<Pane>,
     pub labels: TabLabels,
     /// The pane ⌘F, ⌘G and Wrap act on.
     pub last_pane: Pane,
@@ -176,6 +178,7 @@ impl Tab {
             focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             find,
             editing: None,
+            expanded: None,
             follow: init.follow,
             live: LiveFollow::default(),
             live_started: false,
@@ -516,6 +519,7 @@ impl Tab {
     /// Return: centres the selected line in the full log.
     pub fn reveal_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(number) = self.selection {
+            self.show_pane(Pane::Full);
             self.select(Pane::Full, number, true, cx);
         }
     }
@@ -525,6 +529,7 @@ impl Tab {
         if self.full.read(cx).rows().row_for_number(number).is_none() {
             return false;
         }
+        self.show_pane(Pane::Full);
         self.last_pane = Pane::Full;
         self.select(Pane::Full, number, true, cx);
         true
@@ -537,6 +542,23 @@ impl Tab {
         let Some(line) = self.doc.read(cx).next_hit(pane, from, backwards) else { return };
         self.last_pane = pane;
         self.select(pane, base + line, true, cx);
+    }
+
+    /// Expands `pane` to the whole window, or restores both panes when it already is. While expanded, ⌘F and Tab
+    /// stay in the pane; actions that need a hidden part (the filter editor, the full log) restore the panes first.
+    pub fn toggle_expand(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        self.expanded = if self.expanded == Some(pane) { None } else { Some(pane) };
+        if self.expanded.is_some() {
+            self.last_pane = pane;
+        }
+        cx.notify();
+    }
+
+    /// Restores both panes if `pane` is hidden behind the other, expanded one.
+    fn show_pane(&mut self, pane: Pane) {
+        if self.expanded.is_some_and(|e| e != pane) {
+            self.expanded = None;
+        }
     }
 
     pub fn toggle_wrap(&mut self, pane: Pane, cx: &mut Context<Self>) {
@@ -579,7 +601,7 @@ impl Tab {
         if !self.is_ready(cx) {
             return;
         }
-        let input = self.find[self.last_pane.index()].clone();
+        let input = self.find[self.expanded.unwrap_or(self.last_pane).index()].clone();
         input.update(cx, |i, cx| i.focus(window, cx));
     }
 
@@ -590,6 +612,13 @@ impl Tab {
             return;
         }
         let filtered_focusable = self.filtered_focusable(cx);
+        if let Some(pane) = self.expanded {
+            // The other pane and the band are hidden: Tab returns to the expanded pane.
+            if pane == Pane::Full || filtered_focusable {
+                self.focus[if pane == Pane::Full { 0 } else { 2 }].focus(window, cx);
+            }
+            return;
+        }
         let current = self.focus.iter().position(|f| f.contains_focused(window, cx));
         let mut next = match current {
             None => 0,
@@ -630,6 +659,8 @@ impl Tab {
         if self.editing.is_some() || !self.is_ready(cx) {
             return;
         }
+        // The editor lives in the band, which an expanded pane hides.
+        self.expanded = None;
         let text = self.doc.read(cx).filter.spec.expression();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Terms separated by ||, e.g. error || timeout").default_value(text));
         input.update(cx, |i, cx| i.focus(window, cx));

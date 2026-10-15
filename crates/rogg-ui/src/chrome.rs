@@ -1,7 +1,8 @@
 use crate::controls::{FindField, TextButton, ToolButton};
-use crate::icons::IconName;
+use crate::icons::{IconName, icon};
 use crate::theme::{ActiveRoggTheme, size};
 use crate::{Callback, IndexCallback};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, FontWeight, SharedString, TestSupportExt, Window, div, px, relative};
 use std::rc::Rc;
@@ -116,11 +117,23 @@ pub struct PaneHeader {
     count: SharedString,
     find: Option<FindField>,
     tools: Vec<ToolButton>,
+    expand: Option<(SharedString, bool, Callback)>,
+}
+
+/// The expand button's icon: arrows pointing apart, or at each other once the pane is expanded.
+pub fn expand_icon(expanded: bool) -> IconName {
+    if expanded { IconName::Collapse } else { IconName::Expand }
 }
 
 impl PaneHeader {
     pub fn new(id: impl Into<SharedString>, title: impl Into<SharedString>, count: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), title: title.into(), count: count.into(), find: None, tools: vec![] }
+        Self { id: id.into(), title: title.into(), count: count.into(), find: None, tools: vec![], expand: None }
+    }
+
+    /// The trailing icon button that expands the pane to the whole window, or restores the panes when `expanded`.
+    pub fn expand(mut self, id: impl Into<SharedString>, expanded: bool, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.expand = Some((id.into(), expanded, Rc::new(f)));
+        self
     }
 
     pub fn find(mut self, find: FindField) -> Self {
@@ -153,7 +166,27 @@ impl RenderOnce for PaneHeader {
             .whitespace_nowrap()
             .child(div().min_w_0().truncate().text_size(s.px(11.)).font_weight(FontWeight(550.)).text_color(p.text).child(self.title))
             .child(div().flex_none().text_size(s.px(10.)).text_color(p.faint).child(self.count))
-            .child(div().ml_auto().flex_none().flex().items_center().gap(px(6.)).children(self.find).children(self.tools))
+            .child(
+                div().ml_auto().flex_none().flex().items_center().gap(px(6.)).children(self.find).children(self.tools).when_some(self.expand, |d, (id, expanded, f)| {
+                    let tip = if expanded { "Restore panels" } else { "Expand panel" };
+                    d.child(
+                        div()
+                            .id(id)
+                            .test_support()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .justify_center()
+                            .size(px(size::TOOL_H))
+                            .rounded(px(5.))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(p.hover))
+                            .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+                            .child(icon(expand_icon(expanded)).size(px(13.)).text_color(p.muted))
+                            .on_click(move |_, window, cx| f(window, cx)),
+                    )
+                }),
+            )
     }
 }
 

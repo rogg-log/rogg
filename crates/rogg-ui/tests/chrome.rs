@@ -123,3 +123,22 @@ fn the_statistics_area_is_clickable_only_with_a_handler(cx: &mut TestAppContext)
     common::click(cx, w, "footer-stats");
     assert_eq!(clicks.get(), 1);
 }
+
+#[gpui_kit::test]
+fn the_expand_button_reports_clicks_and_flips_its_arrows(cx: &mut TestAppContext) {
+    use rogg_ui::chrome::expand_icon;
+    use rogg_ui::icons::IconName;
+    common::setup(cx);
+    let clicks = std::rc::Rc::new(std::cell::Cell::new(0));
+    let c = clicks.clone();
+    let w = common::open(cx, 1000., 100., move |_, _| {
+        let c = c.clone();
+        PaneHeader::new("pane-top-head", "Full log", "").expand("tool-expand-top", false, move |_, _| c.set(c.get() + 1)).into_any_element()
+    });
+    assert_eq!(common::bounds(cx, w, "tool-expand-top").size.height, px(25.), "as tall as the other header tools");
+    common::click(cx, w, "tool-expand-top");
+    assert_eq!(clicks.get(), 1);
+    assert_eq!((expand_icon(false), expand_icon(true)), (IconName::Expand, IconName::Collapse));
+    let plain = common::open(cx, 1000., 100., |_, _| PaneHeader::new("pane-top-head", "Full log", "").into_any_element());
+    assert!(!common::exists(cx, plain, "tool-expand-top"), "no button unless asked for (the replica has none)");
+}

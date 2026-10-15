@@ -6,7 +6,7 @@ pub mod tab_menu;
 
 use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowAbout, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
-use crate::document::Source;
+use crate::document::{Pane, Source};
 use crate::history::HistoryStore;
 use crate::recent::RecentStore;
 use crate::sidebar_model::FixedSidebar;
@@ -21,7 +21,7 @@ use gpui_kit::{
 };
 use rogg_ui::dialogs::{self, ModalLayer};
 use rogg_ui::empty;
-use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, SidebarDrag, SingleParts};
+use rogg_ui::layout::{BandDrag, LayoutMeasure, MainWindowLayout, MainWindowParts, PaneSlot, SidebarDrag, SingleParts};
 use crate::settings::SettingsStore;
 use rogg_core::settings::{DensitySetting, ThemeSetting};
 use rogg_ui::theme::size;
@@ -678,6 +678,8 @@ impl Workspace {
             tab.update(cx, |t, cx| {
                 if t.editing.is_some() {
                     t.cancel_edit(window, cx);
+                } else if let Some(pane) = t.expanded {
+                    t.toggle_expand(pane, cx);
                 }
             });
         }
@@ -874,6 +876,10 @@ impl Render for Workspace {
                 .into_any_element(),
             Some(tab) => {
                 let parts = tab_view::parts(&tab, window, cx);
+                let expanded = tab.read(cx).expanded.map(|pane| match pane {
+                    Pane::Full => PaneSlot::Top,
+                    Pane::Filtered => PaneSlot::Bottom,
+                });
                 match parts.body {
                     TabBody::Panes { top_header, top_body, band, bottom_header, bottom_body, split } => MainWindowLayout::new(MainWindowParts {
                         titlebar,
@@ -890,6 +896,7 @@ impl Render for Workspace {
                     })
                     .measure(self.measure.clone())
                     .sidebar_resizable(true)
+                    .expanded(expanded)
                     .into_any_element(),
                     TabBody::Placeholder(body) => {
                         MainWindowLayout::single(SingleParts { titlebar, sidebar, info_bar: Some(parts.info_bar), body, status: Some(parts.status), overlay })
