@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Writes SHA256SUMS and manifest.json for the rogg-* archives in <dir> (CI spec §5). Consumers (install.sh, the
 # updater) trust only these checksums. Usage: tools/ci/manifest.sh <dir> <build> <commit> <channel>
+#
+# FROZEN CONTRACT: every installed rogg reads this manifest to update itself (crates/rogg-core/src/update/mod.rs), so
+# changing any of the following breaks self-update for every copy already installed:
+#   - manifest.json at releases/latest/download/ (publish.sh marks each build latest), with the fields
+#     version (string), build (JSON number, not a string), commit (string), date (string), and
+#     assets[] of { name, os, arch, sha256 (hex), size (JSON number) }. Other fields (channel, kind) may be added;
+#     none of these may be renamed, retyped or dropped.
+#   - the release tag v<version>-build.<n>; assets are downloaded from releases/download/<tag>/<name>.
+#   - the five asset names: rogg-macos-universal-app.tar.gz, rogg-macos-universal.tar.gz, rogg-linux-x86_64.tar.gz,
+#     rogg-linux-arm64.tar.gz, rogg-windows-x86_64.zip.
+#   - the archive roots: rogg (macOS and Linux binaries), rogg.exe (Windows), rogg.app/Contents/MacOS/rogg (the app).
 set -euo pipefail
 die() { echo "manifest.sh: $*" >&2; exit 1; }
 
