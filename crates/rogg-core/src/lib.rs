@@ -31,6 +31,7 @@ pub mod style;
 pub mod stream;
 pub mod text;
 pub mod tree;
+pub mod update;
 pub mod view;
 
 pub use cancel::CancelToken;
