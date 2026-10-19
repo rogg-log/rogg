@@ -68,6 +68,19 @@ pub fn find_on_path(name: &str, path: &OsStr) -> Option<PathBuf> {
         .find(|candidate| is_executable(candidate))
 }
 
+/// Where pkexec is installed on the distributions rogg supports.
+pub const PKEXEC: &str = "/usr/bin/pkexec";
+
+/// The pkexec to run: `fixed` ([`PKEXEC`]) when it is an executable file, else the first one on `path` (`PATH`).
+/// Like the fixed `/usr/bin/osascript` on macOS, the known location comes first, so what runs with admin rights
+/// doesn't depend on the environment unless pkexec lives elsewhere.
+pub fn find_pkexec(fixed: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
+    if is_executable(fixed) {
+        return Some(fixed.to_path_buf());
+    }
+    path.and_then(|path| find_on_path("pkexec", path))
+}
+
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -134,8 +147,8 @@ mod imp {
     use std::process::{Command, Stdio};
 
     pub fn run(exe: &Path, staged: &Path, target: &Path) -> Result<(), Failure> {
-        let path = std::env::var_os("PATH").ok_or(Failure::NoPkexec)?;
-        let pkexec = find_on_path("pkexec", &path).ok_or(Failure::NoPkexec)?;
+        let path = std::env::var_os("PATH");
+        let pkexec = find_pkexec(Path::new(PKEXEC), path.as_deref()).ok_or(Failure::NoPkexec)?;
         let out = Command::new(pkexec)
             .args(pkexec_argv(exe, staged, target))
             .stdin(Stdio::null())
@@ -286,6 +299,44 @@ mod tests {
         }
         let path = std::env::join_paths([empty.path(), bin.path()]).unwrap();
         assert_eq!(find_on_path("pkexec", &path), Some(pkexec));
+    }
+
+    fn executable(path: &Path) {
+        std::fs::write(path, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_fixed_pkexec_comes_before_the_path() {
+        let fixed_dir = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let fixed = fixed_dir.path().join("pkexec");
+        let on_path = bin.path().join("pkexec");
+        executable(&on_path);
+        let path = bin.path().as_os_str();
+        // Missing: the PATH one.
+        assert_eq!(find_pkexec(&fixed, Some(path)), Some(on_path.clone()));
+        executable(&fixed);
+        assert_eq!(find_pkexec(&fixed, Some(path)), Some(fixed.clone()));
+        assert_eq!(find_pkexec(&fixed, None), Some(fixed));
+        assert_eq!(find_pkexec(&fixed_dir.path().join("none"), None), None);
+        assert_eq!(find_pkexec(fixed_dir.path(), None), None, "a folder isn't pkexec");
+        assert_eq!(Path::new(PKEXEC), Path::new("/usr/bin/pkexec"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fixed_pkexec_that_isnt_executable_is_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fixed = dir.path().join("pkexec");
+        std::fs::write(&fixed, "").unwrap();
+        std::fs::set_permissions(&fixed, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(find_pkexec(&fixed, None), None);
     }
 
     #[cfg(unix)]
