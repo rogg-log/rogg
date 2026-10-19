@@ -153,13 +153,27 @@ impl ReplaceStyle {
     }
 }
 
-/// Test hook: makes one step of [`apply_with_fault`] fail.
+/// Test hook: makes steps of [`apply_with_fault`] fail.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
     None,
     /// The final rename of `<target>.rogg-new` onto the target fails.
     SwapIn,
+    /// A stale `<target>.rogg-old` can't be removed.
+    StuckOld,
+    /// Both.
+    StuckOldAndSwapIn,
+}
+
+impl Fault {
+    fn stuck_old(self) -> bool {
+        matches!(self, Fault::StuckOld | Fault::StuckOldAndSwapIn)
+    }
+
+    fn swap_in(self) -> bool {
+        matches!(self, Fault::SwapIn | Fault::StuckOldAndSwapIn)
+    }
 }
 
 fn is_app_name(target: &Path) -> bool {
@@ -181,10 +195,53 @@ pub fn is_rogg_target(target: &Path) -> bool {
         || fs::symlink_metadata(target.join("Contents/MacOS/rogg")).is_ok_and(|m| m.file_type().is_file())
 }
 
-/// A failed update can leave the only copy at `<target>.rogg-old` with the target gone; put it back.
-fn restore_old(target: &Path) -> Result<(), UpdateError> {
+/// How many unique names [`old_aside`] tries.
+const UNIQUE_OLD_TRIES: u32 = 100;
+
+/// Where the old version is renamed aside: `<target>.rogg-old`, or, when a stale one is there and can't be removed
+/// (a leftover owned by another user, or on Windows an old exe that is still running), `<target>.rogg-old-<pid>-<n>`
+/// for this run, so a stuck leftover doesn't block every later update. Sweep removes those later.
+fn old_aside(target: &Path, fault: Fault) -> Result<PathBuf, UpdateError> {
     let old = beside(target, OLD_SUFFIX);
-    if fs::symlink_metadata(target).is_err() && fs::symlink_metadata(&old).is_ok() {
+    let removed = if fault.stuck_old() && fs::symlink_metadata(&old).is_ok() {
+        Err(io::Error::other("injected failure"))
+    } else {
+        remove_any(&old)
+    };
+    let Err(stuck) = removed else { return Ok(old) };
+    let pid = std::process::id();
+    (0..UNIQUE_OLD_TRIES)
+        .map(|n| beside(target, &format!("{OLD_SUFFIX}-{pid}-{n}")))
+        .find(|p| fs::symlink_metadata(p).is_err_and(|e| e.kind() == io::ErrorKind::NotFound))
+        .ok_or(UpdateError::Io { path: old, source: stuck })
+}
+
+/// `<target>.rogg-old-*`: old versions put aside under a name of their own by [`old_aside`].
+fn unique_olds(target: &Path) -> Vec<PathBuf> {
+    let Some(name) = target.file_name() else { return Vec::new() };
+    let mut prefix = name.to_os_string();
+    prefix.push(OLD_SUFFIX);
+    prefix.push("-");
+    let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().as_encoded_bytes().starts_with(prefix.as_encoded_bytes()))
+        .map(|e| target.with_file_name(e.file_name()))
+        .collect();
+    found.sort();
+    found
+}
+
+/// A failed update can leave the only copy at `<target>.rogg-old` (or a unique `-<pid>-<n>` name) with the target
+/// gone; put it back.
+fn restore_old(target: &Path) -> Result<(), UpdateError> {
+    if fs::symlink_metadata(target).is_ok() {
+        return Ok(());
+    }
+    let mut candidates = std::iter::once(beside(target, OLD_SUFFIX)).chain(unique_olds(target));
+    if let Some(old) = candidates.find(|old| fs::symlink_metadata(old).is_ok()) {
         fs::rename(&old, target).map_err(io_err(&old))?;
     }
     Ok(())
@@ -241,10 +298,10 @@ pub fn apply_with_fault(
         return Err(UpdateError::NotRogg(target.to_path_buf()));
     }
     let new = beside(target, NEW_SUFFIX);
-    let old = beside(target, OLD_SUFFIX);
-    // Leftovers of an earlier attempt would make the renames below fail. The target exists here, so `old` is stale.
+    // Leftovers of an earlier attempt would make the renames below fail. The target exists here, so a `.rogg-old`
+    // is stale.
     remove_any(&new).map_err(io_err(&new))?;
-    remove_any(&old).map_err(io_err(&old))?;
+    let old = old_aside(target, fault)?;
 
     let placed = match transfer {
         Transfer::Move => move_into(staged, &new),
@@ -258,10 +315,7 @@ pub fn apply_with_fault(
         let _ = remove_any(&new);
         return Err(UpdateError::Replace { rolled_back: true, old: target.to_path_buf(), source });
     }
-    let swap = match fault {
-        Fault::SwapIn => Err(io::Error::other("injected failure")),
-        Fault::None => fs::rename(&new, target),
-    };
+    let swap = if fault.swap_in() { Err(io::Error::other("injected failure")) } else { fs::rename(&new, target) };
     if let Err(source) = swap {
         let rolled_back = fs::rename(&old, target).is_ok();
         if rolled_back {
@@ -374,7 +428,9 @@ pub fn sweep_at(target: Option<&Path>, work_dir: &Path, now: SystemTime) {
     let mut in_use = false;
     for entry in fs::read_dir(work_dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        // A modification time in the future (a changed clock) counts as fresh.
+        // A modification time in the future (a changed clock) counts as fresh. Freshness relies on what the job
+        // writes itself: the download (`.part`, then the archive) and the folders it creates. Unpacked files may
+        // keep the archive's old times, so `stage` must never backdate the folders it makes.
         let fresh = newest_change(&path).is_some_and(|t| now.duration_since(t).map_or(true, |age| age < SWEEP_IN_USE));
         if fresh {
             in_use = true;
@@ -386,10 +442,16 @@ pub fn sweep_at(target: Option<&Path>, work_dir: &Path, now: SystemTime) {
         return;
     }
     if let Some(target) = target {
-        // With the target gone, `.rogg-old` is the only copy of the program: restore it rather than delete it.
+        // With the target gone, an old copy is the only copy of the program: restore it rather than delete it.
         let _ = restore_old(target);
-        for suffix in [NEW_SUFFIX, OLD_SUFFIX, WINDOWS_OLD_SUFFIX] {
+        for suffix in [NEW_SUFFIX, WINDOWS_OLD_SUFFIX] {
             let _ = remove_any(&beside(target, suffix));
+        }
+        // If the restore failed, the old copies are all that is left: keep them.
+        if fs::symlink_metadata(target).is_ok() {
+            for old in std::iter::once(beside(target, OLD_SUFFIX)).chain(unique_olds(target)) {
+                let _ = remove_any(&old);
+            }
         }
     }
     let _ = remove_any(work_dir);

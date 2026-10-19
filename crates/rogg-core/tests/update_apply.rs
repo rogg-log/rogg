@@ -328,6 +328,128 @@ fn apply_rolls_back_when_the_swap_fails() {
     assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
 }
 
+fn unique_olds(dir: &Path, stem: &str) -> Vec<String> {
+    leftovers(dir, stem).into_iter().filter(|n| n.starts_with(&format!("{stem}.rogg-old-"))).collect()
+}
+
+/// A stale `.rogg-old` that can't be removed (root-owned, or on Windows an old exe still running) mustn't block every
+/// later update: the old version goes aside under a name of its own instead.
+#[test]
+fn a_stuck_old_copy_does_not_block_the_update() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let target = bin.join("rogg");
+    let staged = tmp.path().join("stage/rogg");
+    write(&target, b"cur");
+    write(&bin.join("rogg.rogg-old"), b"stuck");
+    write(&staged, b"new");
+    apply_with_fault(&staged, &target, ReplaceStyle::Unix, Transfer::Move, Fault::StuckOld).unwrap();
+    assert_eq!(read(&target), b"new");
+    assert_eq!(read(&bin.join("rogg.rogg-old")), b"stuck");
+    assert!(unique_olds(&bin, "rogg").is_empty(), "the Unix style deletes the old version");
+
+    // The Windows style keeps the old exe as `.old`; when that is still running too, the unique name stays.
+    let target = tmp.path().join("win/rogg.exe");
+    let staged = tmp.path().join("stage/rogg.exe");
+    write(&target, b"cur");
+    write(&tmp.path().join("win/rogg.exe.rogg-old"), b"stuck");
+    write(&staged, b"new");
+    apply_with_fault(&staged, &target, ReplaceStyle::Windows, Transfer::Copy, Fault::StuckOld).unwrap();
+    assert_eq!(read(&target), b"new");
+    assert_eq!(read(&tmp.path().join("win/rogg.exe.old")), b"cur");
+}
+
+/// The same without the fault hook: a `.rogg-old` folder holding a file in a read-only folder can't be removed.
+#[cfg(unix)]
+#[test]
+fn a_really_undeletable_old_copy_does_not_block_the_update() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let apps = tmp.path().join("apps");
+    let target = apps.join("rogg.app");
+    write(&target.join("Contents/MacOS/rogg"), b"cur");
+    let locked = apps.join("rogg.app.rogg-old/Contents/locked");
+    write(&locked.join("f"), b"stuck");
+    write(&locked.join("g"), b"stuck");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::remove_file(locked.join("g")).is_ok() {
+        // Running as root: nothing is undeletable here.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let staged = tmp.path().join("stage/rogg.app");
+    write(&staged.join("Contents/MacOS/rogg"), b"new");
+    let applied = apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move);
+    let still_stuck = locked.join("f").exists();
+    let unique = unique_olds(&apps, "rogg.app");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    applied.unwrap();
+    assert_eq!(read(&target.join("Contents/MacOS/rogg")), b"new");
+    assert!(still_stuck);
+    assert!(unique.is_empty(), "{unique:?}");
+
+    // Once it can be removed, sweep does.
+    sweep_at(Some(&target), &tmp.path().join("cache"), SystemTime::now());
+    assert!(leftovers(&apps, "rogg.app").is_empty());
+}
+
+#[test]
+fn a_failed_swap_beside_a_stuck_old_copy_rolls_back_from_the_unique_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let target = bin.join("rogg");
+    write(&target, b"cur");
+    write(&bin.join("rogg.rogg-old"), b"stuck");
+    let staged = tmp.path().join("stage/rogg");
+    write(&staged, b"new");
+    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Transfer::Move, Fault::StuckOldAndSwapIn);
+    match r {
+        Err(UpdateError::Replace { rolled_back: true, old, .. }) => assert_eq!(old, target),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(read(&target), b"cur");
+    assert_eq!(read(&bin.join("rogg.rogg-old")), b"stuck");
+    assert!(unique_olds(&bin, "rogg").is_empty());
+    assert!(!bin.join("rogg.rogg-new").exists());
+}
+
+#[test]
+fn sweep_removes_unique_old_copies_once_no_update_is_in_progress() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("rogg.exe");
+    write(&target, b"cur");
+    write(&tmp.path().join("rogg.exe.rogg-old-4242-0"), b"o");
+    write(&tmp.path().join("rogg.exe.rogg-old-4242-1"), b"o");
+    write(&tmp.path().join("other.exe.rogg-old-1-0"), b"not ours");
+    let work = tmp.path().join("cache/update");
+    write(&work.join("14/a.zip.part"), b"fresh");
+    sweep(Some(&target), &work);
+    assert_eq!(unique_olds(tmp.path(), "rogg.exe").len(), 2, "left alone while an update may be swapping");
+
+    sweep_at(Some(&target), &work, SystemTime::now() + SWEEP_IN_USE + Duration::from_secs(1));
+    assert!(unique_olds(tmp.path(), "rogg.exe").is_empty());
+    assert_eq!(read(&target), b"cur");
+    assert_eq!(read(&tmp.path().join("other.exe.rogg-old-1-0")), b"not ours");
+}
+
+#[test]
+fn a_stranded_old_copy_under_a_unique_name_is_restored() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("rogg");
+    write(&tmp.path().join("rogg.rogg-old-77-0"), b"precious");
+    sweep(Some(&target), &tmp.path().join("cache"));
+    assert_eq!(read(&target), b"precious");
+    assert!(leftovers(tmp.path(), "rogg").is_empty());
+
+    // apply restores it first too, then replaces it.
+    fs::rename(&target, tmp.path().join("rogg.rogg-old-77-0")).unwrap();
+    let staged = tmp.path().join("stage/rogg");
+    write(&staged, b"new");
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move).unwrap();
+    assert_eq!(read(&target), b"new");
+    assert!(leftovers(tmp.path(), "rogg").is_empty());
+}
+
 #[test]
 fn windows_style_keeps_the_old_exe_aside() {
     let tmp = tempfile::tempdir().unwrap();
