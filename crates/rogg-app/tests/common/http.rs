@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -15,6 +15,26 @@ pub enum Route {
     Stall,
     /// Send the headers (with the full length) and the first `n` body bytes, then stall.
     StallAfter(u16, Vec<u8>, usize),
+    /// Send the headers (with the full length) and the first `n` body bytes, wait for the gate, then the rest.
+    Gated(u16, Vec<u8>, usize, Gate),
+}
+
+/// Held by a test to let a `Route::Gated` response finish. It gives up waiting after 60 s.
+#[derive(Clone, Default)]
+pub struct Gate(Arc<(Mutex<bool>, Condvar)>);
+
+impl Gate {
+    pub fn open(&self) {
+        let (open, cv) = &*self.0;
+        *open.lock().unwrap() = true;
+        cv.notify_all();
+    }
+
+    fn wait(&self) {
+        let (open, cv) = &*self.0;
+        let guard = open.lock().unwrap();
+        let _ = cv.wait_timeout_while(guard, Duration::from_secs(60), |open| !*open).unwrap();
+    }
 }
 
 pub struct TestServer {
@@ -77,6 +97,12 @@ fn serve(stream: TcpStream, routes: &HashMap<&'static str, Route>, hits: &Mutex<
             let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
             let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(&body[..*n])).and_then(|()| stream.flush());
             thread::sleep(Duration::from_secs(60));
+        }
+        Some(Route::Gated(status, body, n, gate)) => {
+            let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
+            let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(&body[..*n])).and_then(|()| stream.flush());
+            gate.wait();
+            let _ = stream.write_all(&body[*n..]);
         }
         Some(Route::Stall) => thread::sleep(Duration::from_secs(60)),
         None => {

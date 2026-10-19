@@ -5877,6 +5877,7 @@ dependencies = [
  "rogg-core",
  "rogg-genlog",
  "rogg-ui",
+ "sha2 0.10.9",
  "tempfile",
  "ureq",
 ]
