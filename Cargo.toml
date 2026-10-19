@@ -25,7 +25,7 @@ proptest = "=1.11.0"
 criterion = "=0.8.2"
 tempfile = "=3.27.0"
 libc = "=0.2.190"
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_Time"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_Time", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 flate2 = "=1.1.10"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
 tar = "=0.4.46"

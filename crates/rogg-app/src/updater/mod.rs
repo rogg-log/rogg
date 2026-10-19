@@ -1,5 +1,6 @@
 //! Self-update support for the app: the `Updater` global, its check and update jobs, and the elevated helper mode.
 
+pub mod elevate;
 pub mod http;
 pub mod state;
 
@@ -48,6 +49,23 @@ pub struct UpdaterConfig {
     /// `<cache>/update`; an update works in `<work_dir>/<build>/`.
     pub work_dir: PathBuf,
     pub elevator: Elevator,
+}
+
+impl UpdaterConfig {
+    /// The running app's configuration; `cache` is the app's cache folder.
+    pub fn from_env(cache: &Path) -> UpdaterConfig {
+        let os = Os::current();
+        let install = std::env::current_exe().map_or(Install::Unsupported, |exe| Install::detect(&exe, os));
+        UpdaterConfig {
+            base: http::base_url(),
+            running_build: crate::about::build_info().number.and_then(|n| n.parse().ok()),
+            install,
+            os,
+            arch: std::env::consts::ARCH.to_string(),
+            work_dir: cache.join("update"),
+            elevator: Arc::new(elevate::apply_elevated),
+        }
+    }
 }
 
 /// What a job reports to the updater.
@@ -347,6 +365,20 @@ mod tests {
 
     fn manifest() -> Manifest {
         Manifest::parse(r#"{"version":"0.1.0","build":14,"commit":"a1b2c3d","date":"2026-10-18","assets":[]}"#).unwrap()
+    }
+
+    #[test]
+    fn from_env_reads_the_build_and_install() {
+        let cache = Path::new("/var/cache/rogg");
+        let config = UpdaterConfig::from_env(cache);
+        assert_eq!(config.work_dir, cache.join("update"));
+        // Tests are built without ROGG_BUILD_NUMBER.
+        assert_eq!(config.running_build, None);
+        assert_eq!(config.os, Os::current());
+        assert_eq!(config.arch, std::env::consts::ARCH);
+        assert_eq!(config.base, http::base_url());
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(config.install, Install::detect(&exe, Os::current()));
     }
 
     #[test]

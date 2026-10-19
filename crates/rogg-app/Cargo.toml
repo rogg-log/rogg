@@ -25,6 +25,10 @@ tempfile.workspace = true
 rogg-genlog = { path = "../rogg-genlog" }
 sha2.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The UAC prompt for an update (updater/elevate.rs).
+windows-sys.workspace = true
+
 # Only the Unix FIFO test (`tests/streams.rs`) uses it.
 [target.'cfg(unix)'.dev-dependencies]
 libc.workspace = true
