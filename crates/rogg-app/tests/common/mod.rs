@@ -7,6 +7,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyWindowHandle, Bounds, Entity, Pixels, Point, TestAppContext, WindowBounds, WindowOptions, px, size};
 use rogg_app::args::Args;
 use rogg_app::paths::AppPaths;
+use rogg_app::updater::Updater;
 use rogg_app::workspace::Workspace;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,12 +15,26 @@ use std::time::Duration;
 /// Initialises the app with state files in a fresh temp dir (kept alive by the returned guard).
 pub fn setup(cx: &mut TestAppContext) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let paths = AppPaths::under(dir.path());
-    cx.update(|cx| rogg_app::init_with(cx, paths));
+    init(cx, AppPaths::under(dir.path()));
     dir
 }
 
+/// `rogg_app::init_with`, with an updater that never reaches the network installed first. Tests that exercise the
+/// updater replace it with their own.
+pub fn init(cx: &mut TestAppContext, paths: AppPaths) {
+    let work_dir = paths.cache.join("update");
+    cx.update(|cx| {
+        cx.set_global(Updater::new(update::offline_config(work_dir)));
+        rogg_app::init_with(cx, paths);
+    });
+}
+
 pub fn open_workspace(cx: &mut TestAppContext, args: Args) -> (AnyWindowHandle, Entity<Workspace>) {
+    // R10: a workspace's startup check must never reach GitHub. Initialise through `init` (or `setup`).
+    cx.read(|cx| {
+        let base = cx.try_global::<Updater>().map(|u| u.config().base.trim_end_matches('/').to_string());
+        assert_ne!(base.as_deref(), Some(rogg_app::updater::http::DEFAULT_BASE), "initialise the test app with common::init");
+    });
     let handle = cx.update(|cx| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: Point::default(), size: size(px(1440.), px(900.)) })),
@@ -30,6 +45,7 @@ pub fn open_workspace(cx: &mut TestAppContext, args: Args) -> (AnyWindowHandle, 
                 let mut ws = Workspace::new(args, window, cx);
                 // gpui's test platform panics on reveal_path; `last_revealed` still records the folder.
                 ws.reveal_in_finder = false;
+                ws.open_urls = false;
                 ws
             })
         })

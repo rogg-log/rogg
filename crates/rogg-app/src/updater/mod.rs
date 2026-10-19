@@ -3,6 +3,7 @@
 pub mod elevate;
 pub mod http;
 pub mod state;
+pub mod view;
 
 pub use state::{Failure, Release, UpdateState};
 
@@ -66,6 +67,20 @@ impl UpdaterConfig {
             elevator: Arc::new(elevate::apply_elevated),
         }
     }
+
+    /// An updater that never fetches or installs: a local build on an unsupported install, with an unroutable base.
+    /// For hosts that show the app without being it (the gallery) and for tests.
+    pub fn disabled(work_dir: PathBuf) -> UpdaterConfig {
+        UpdaterConfig {
+            base: "http://127.0.0.1:9".into(),
+            running_build: None,
+            install: Install::Unsupported,
+            os: Os::current(),
+            arch: std::env::consts::ARCH.to_string(),
+            work_dir,
+            elevator: Arc::new(|_: &Path, _: &Path| Err(Failure::RolledBack)),
+        }
+    }
 }
 
 /// What a job reports to the updater.
@@ -104,11 +119,21 @@ impl Updater {
         &self.state
     }
 
+    pub fn config(&self) -> &UpdaterConfig {
+        &self.config
+    }
+
     /// Fetches the manifest. A `manual` check reports every outcome; otherwise failures and "up to date" leave the
     /// state `Idle`. A local build never fetches. Once an update is installed, a check never leaves `Installed`.
-    /// Returns false (and does nothing) while a job runs.
+    /// A manual check during a silent one adopts it (its outcome is then reported); otherwise this returns false
+    /// (and does nothing) while a job runs.
     pub fn check(&mut self, manual: bool) -> bool {
-        if self.job.is_some() {
+        if let Some(job) = &mut self.job {
+            if manual && let UpdateState::Checking { manual: silent @ false } = &mut self.state {
+                job.manual = true;
+                *silent = true;
+                return true;
+            }
             return false;
         }
         if self.config.running_build.is_none() {

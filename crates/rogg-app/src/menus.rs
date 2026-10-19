@@ -22,6 +22,7 @@ pub fn app_menus(recent: &[RecentEntry]) -> Vec<Menu> {
     vec![
         Menu::new("rogg").items([
             MenuItem::action("About rogg", ShowAbout),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
@@ -179,8 +180,14 @@ mod tests {
         let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
         assert_eq!(names, ["rogg", "File", "Edit", "View", "Window"]);
         let app = &menus[0];
-        assert_eq!(app.items.len(), 9, "About rogg, separator, Settings…, separator, Hide rogg, Hide Others, Show All, separator, Quit rogg");
+        assert_eq!(
+            app.items.len(),
+            10,
+            "About rogg, Check for Updates…, separator, Settings…, separator, Hide rogg, Hide Others, Show All, separator, Quit rogg"
+        );
         assert!(matches!(&app.items[0], MenuItem::Action { name, .. } if name.as_ref() == "About rogg"));
+        assert!(matches!(&app.items[1], MenuItem::Action { name, action, .. }
+            if name.as_ref() == "Check for Updates…" && action.partial_eq(&CheckForUpdates)));
         let file = &menus[1];
         let recent = file.items.iter().find_map(|i| match i {
             MenuItem::Submenu(m) if m.name.as_ref() == "Open Recent" => Some(m),
@@ -200,8 +207,8 @@ mod tests {
         for label in MAC_ONLY_ITEMS {
             assert!(!popup.iter().any(|l| l == label), "☰ menu has the macOS-only {label}");
         }
-        // Spec §4.3 order: About, Settings…, the File…Window submenus, Quit last.
-        assert_eq!(popup.first().map(String::as_str), Some("About rogg"));
+        // Spec §4.3 order: About, Check for Updates…, Settings…, the File…Window submenus, Quit last.
+        assert_eq!(popup[..2], ["About rogg", "Check for Updates…"]);
         assert_eq!(popup.last().map(String::as_str), Some("Quit rogg"));
         let at = |l: &str| popup.iter().position(|p| p == l).unwrap_or_else(|| panic!("{l} missing"));
         assert!(at("Settings…") < at("File") && at("File") < at("Edit") && at("Edit") < at("View") && at("View") < at("Window"));

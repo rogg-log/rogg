@@ -336,6 +336,21 @@ fn a_check_is_refused_while_one_runs() {
 }
 
 #[test]
+fn a_manual_check_adopts_a_running_silent_one() {
+    let fixture = Fixture::new();
+    let gate = Gate::default();
+    let server = TestServer::start(vec![("/manifest.json", Route::Gated(200, manifest(11, None), 0, gate.clone()))]);
+    let mut updater = Updater::new(fixture.config(&server, Some(11)));
+    assert!(updater.check(false));
+    assert!(updater.check(true), "the running check now reports its outcome");
+    assert!(matches!(updater.state(), UpdateState::Checking { manual: true }), "{:?}", updater.state());
+    gate.open();
+    run(&mut updater);
+    assert!(matches!(updater.state(), UpdateState::UpToDate), "{:?}", updater.state());
+    assert_eq!(server.hits("/manifest.json"), 1);
+}
+
+#[test]
 fn start_update_needs_a_release() {
     let fixture = Fixture::new();
     let server = TestServer::start(vec![]);

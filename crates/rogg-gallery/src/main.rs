@@ -42,7 +42,7 @@ fn main() {
             rogg_ui::fonts::register(cx);
             RoggTheme::new(Appearance::Dark, Density::Compact).with_chrome(chrome).install(cx);
             let state = std::env::temp_dir().join(format!("rogg-gallery-{}", std::process::id()));
-            rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(&state));
+            rogg_gallery::install_app_globals(cx, rogg_app::paths::AppPaths::under(&state));
             let bounds = Bounds::centered(None, size(px(1640.), px(1000.)), cx);
             gpui_kit::open_window(
                 WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() },

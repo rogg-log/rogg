@@ -6,6 +6,16 @@ use crate::paths::AppPaths;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 use rogg_genlog::bundle::write_gz;
 
+/// The app's globals under `dir`, with an updater that never fetches (CI builds the tests with a build number).
+fn init(cx: &mut TestAppContext, dir: &std::path::Path) {
+    let paths = AppPaths::under(dir);
+    let work_dir = paths.cache.join("update");
+    cx.update(|cx| {
+        cx.set_global(crate::updater::Updater::new(crate::updater::UpdaterConfig::disabled(work_dir)));
+        crate::init_with(cx, paths);
+    });
+}
+
 /// Polls until `done`, for up to 60 s of real time: generous enough for a slow CI runner, still bounded.
 fn wait_until(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppContext) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -34,7 +44,7 @@ fn lines(doc: &Entity<Document>, cx: &mut TestAppContext) -> u64 {
 #[gpui_kit::test]
 fn a_gz_whose_follower_ended_is_reloaded_complete_when_decompression_finishes(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    cx.update(|cx| crate::init_with(cx, AppPaths::under(dir.path())));
+    init(cx, dir.path());
     cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     const LINES: u64 = 3_000_000;
     let body: String = (0..LINES).map(|i| format!("line {i}\n")).collect();
@@ -59,7 +69,7 @@ fn a_gz_whose_follower_ended_is_reloaded_complete_when_decompression_finishes(cx
 #[gpui_kit::test]
 fn a_reload_drops_the_running_scan_and_its_progress(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    cx.update(|cx| crate::init_with(cx, AppPaths::under(dir.path())));
+    init(cx, dir.path());
     cx.update(|cx| cx.set_global(EngineConfig { sync_bytes: 0, ..Default::default() }));
     let body: String = (0..3_000_000u64).map(|i| format!("line {i}\n")).collect();
     let path = dir.path().join("big.log");

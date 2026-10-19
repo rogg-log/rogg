@@ -3,8 +3,9 @@
 pub mod chrome;
 pub mod keys;
 pub mod tab_menu;
+pub mod update;
 
-use crate::actions::{self, ActivateTab, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowAbout, ShowShortcuts, ToggleSidebar};
+use crate::actions::{self, ActivateTab, CheckForUpdates, CloseTab, Dismiss, Export, NextTab, OpenAsTab, OpenFile, OpenFolder, OpenRecent, OpenSettings, PrevTab, ShowAbout, ShowShortcuts, ToggleSidebar};
 use crate::args::Args;
 use crate::document::{Pane, Source};
 use crate::history::HistoryStore;
@@ -48,6 +49,8 @@ pub enum Dialog {
     Statistics,
     Export,
     About,
+    /// Follows the updater's state (spec §3.3).
+    Update,
     FullLine { number: u64, text: SharedString, view: Entity<TextareaState>, cut: bool },
 }
 
@@ -98,6 +101,13 @@ pub struct Workspace {
     /// Whether `reveal` asks the OS to show the folder. Tests turn it off: gpui's test platform panics on it.
     #[doc(hidden)]
     pub reveal_in_finder: bool,
+    /// The URL last opened in the browser (Release notes), remembered for tests.
+    last_opened_url: Option<String>,
+    /// Whether `open_url` asks the OS to open the URL. Tests turn it off, like `reveal_in_finder`.
+    #[doc(hidden)]
+    pub open_urls: bool,
+    /// A loop is polling the updater's job.
+    update_polling: bool,
 }
 
 /// A `Fn(&mut Window, &mut App)` callback that runs `f` on the workspace.
@@ -151,6 +161,9 @@ impl Workspace {
             export_all_tabs: false,
             last_revealed: None,
             reveal_in_finder: true,
+            last_opened_url: None,
+            open_urls: true,
+            update_polling: false,
             _appearance_subscription: cx.observe_window_appearance(window, |ws, window, cx| {
                 if ws.theme_override.map_or(SettingsStore::get(cx).appearance.theme, |(theme, _)| theme) == ThemeSetting::System {
                     ws.apply_appearance(window, cx);
@@ -204,6 +217,7 @@ impl Workspace {
             }
         }
         ws.start_autosave(window, cx);
+        ws.schedule_startup_check(window, cx);
         ws.open_paths(args.paths, window, cx);
         if args.demo {
             crate::demo::open(&mut ws, window, cx);
@@ -697,7 +711,7 @@ impl Workspace {
                 TabItem { label: d.title(), tooltip, active: i == self.active }
             })
             .collect();
-        TitleBar::new(items)
+        let bar = TitleBar::new(items)
             .sidebar_width(self.sidebar_width)
             .traffic_lights(self.traffic_lights)
             .tab_scroll(self.tab_scroll.clone())
@@ -716,7 +730,8 @@ impl Workspace {
                 window.remove_window();
             }))
             .force_window_controls(self.traffic_lights)
-            .when(!cx.rogg().chrome.is_mac(), |t| t.app_menu(app_menu))
+            .when(!cx.rogg().chrome.is_mac(), |t| t.app_menu(app_menu));
+        self.with_update_badge(bar, this, cx)
     }
 
     fn dialog_element(&self, dialog: &Dialog, this: &Entity<Self>, cx: &App) -> AnyElement {
@@ -765,6 +780,7 @@ impl Workspace {
                     .on_close(close)
                     .into_any_element()
             }
+            Dialog::Update => self.update_dialog(this, cx).on_close(close).into_any_element(),
             Dialog::About => dialogs::about(&crate::about::view(cx), Rc::new(act_ix(this, |ws, i, _, cx| ws.reveal_data_folder(i, cx))))
                 .on_close(close)
                 .into_any_element(),
@@ -812,6 +828,7 @@ impl Workspace {
             .on_action(keys::unless_dialog(cx, |ws, _: &ShowShortcuts, _, cx| ws.open_dialog(Dialog::Shortcuts, cx)))
             .on_action(cx.listener(|ws, _: &OpenSettings, _, cx| ws.open_settings(cx)))
             .on_action(cx.listener(|ws, _: &ShowAbout, _, cx| ws.open_dialog(Dialog::About, cx)))
+            .on_action(cx.listener(|ws, _: &CheckForUpdates, window, cx| ws.check_for_updates(true, window, cx)))
             .on_action(cx.listener(|ws, _: &OpenFile, window, cx| ws.prompt_open(false, window, cx)))
             .on_action(cx.listener(|ws, _: &OpenFolder, window, cx| ws.prompt_open(true, window, cx)))
             .on_action(cx.listener(|ws, action: &OpenRecent, window, cx| ws.open_recent(action.index, window, cx)))

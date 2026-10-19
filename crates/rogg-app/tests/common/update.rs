@@ -19,6 +19,16 @@ pub const NEW: &[u8] = b"new rogg build 14";
 
 pub type Calls = Arc<Mutex<Vec<(PathBuf, PathBuf)>>>;
 
+/// An updater that can never reach the network or install anything: a local build (no check ever fetches), an
+/// unsupported install, an unroutable base, and an elevator that fails the test if it is called. `common::init`
+/// installs it before the app's globals, so no test talks to GitHub (R10: CI builds the tests with a build number).
+pub fn offline_config(work_dir: PathBuf) -> UpdaterConfig {
+    UpdaterConfig {
+        elevator: Arc::new(|_: &Path, _: &Path| panic!("the offline test updater never elevates")),
+        ..UpdaterConfig::disabled(work_dir)
+    }
+}
+
 /// A temp folder holding `bin/rogg` (the installed copy) and `cache/update` (the work dir).
 pub struct Fixture {
     pub dir: tempfile::TempDir,

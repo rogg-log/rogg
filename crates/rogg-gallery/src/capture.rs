@@ -118,7 +118,7 @@ pub fn run(opts: CaptureOptions) -> anyhow::Result<()> {
         rogg_ui::fonts::register(cx);
         RoggTheme::new(appearance, density).with_chrome(chrome).install(cx);
         if let Some(dir) = &app_state {
-            rogg_app::install_globals(cx, rogg_app::paths::AppPaths::under(dir.path()));
+            crate::install_app_globals(cx, rogg_app::paths::AppPaths::under(dir.path()));
         }
     });
     let (page, dialog) = (opts.page, opts.dialog);

@@ -139,7 +139,7 @@ fn unreadable_recent_and_history_files_toast_at_start(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("recent.json"), "{ not json").unwrap();
     std::fs::write(dir.path().join("history.json"), "[[[").unwrap();
-    cx.update(|cx| rogg_app::init_with(cx, rogg_app::paths::AppPaths::under(dir.path())));
+    common::init(cx, rogg_app::paths::AppPaths::under(dir.path()));
     let (_w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![], ..Default::default() });
     let toasts: Vec<String> = ws.read_with(cx, |ws, _| ws.toasts.iter().map(|(_, m)| m.to_string()).collect());
     assert_eq!(toasts.len(), 2, "{toasts:?}");

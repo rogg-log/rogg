@@ -129,6 +129,9 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
         .child(FormRow::new("row-restore", "Restore session on launch").control(
             Toggle::new("setting-restore", b.restore_session).on_click(change(this, |s| s.behavior.restore_session = !s.behavior.restore_session)),
         ))
+        .child(FormRow::new("row-check-updates", "Check for updates on start").control(
+            Toggle::new("setting-check-updates", b.check_updates).on_click(change(this, |s| s.behavior.check_updates = !s.behavior.check_updates)),
+        ))
         .child(FormRow::new("row-cache", "Cache size limit").hint("Extracted archive members, decompressed files and conversions").control(
             Stepper::new("setting-cache", format!("{} GB", b.cache_limit_gb))
                 .bounds(b.cache_limit_gb > CACHE_LIMITS_GB[0], b.cache_limit_gb < CACHE_LIMITS_GB[CACHE_LIMITS_GB.len() - 1])

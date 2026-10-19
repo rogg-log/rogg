@@ -100,7 +100,7 @@ fn cache_limit_and_scan_depth_apply(cx: &mut TestAppContext) {
 fn unreadable_settings_toast_and_reset(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("settings.toml"), "[appearance\n").unwrap();
-    cx.update(|cx| rogg_app::init_with(cx, rogg_app::paths::AppPaths::under(dir.path())));
+    common::init(cx, rogg_app::paths::AppPaths::under(dir.path()));
     let (_w, ws) = common::open_workspace(cx, Args::default());
     ws.read_with(cx, |ws, _| assert!(ws.toasts.iter().any(|(_, t)| t.contains("settings.toml.bak")), "{:?}", ws.toasts));
     assert!(dir.path().join("settings.toml.bak").exists());
@@ -343,4 +343,17 @@ fn the_settings_dialog_toggles_the_omitted_markers(cx: &mut TestAppContext) {
     assert!(!saved.behavior.omitted_markers);
     common::click(cx, w, "setting-omitted");
     cx.update(|cx| assert!(SettingsStore::get(cx).behavior.omitted_markers));
+}
+
+#[gpui_kit::test]
+fn the_settings_dialog_toggles_the_startup_update_check(cx: &mut TestAppContext) {
+    let dir = common::setup(cx);
+    let (w, _ws) = common::open_workspace(cx, Args::default());
+    cx.update(|cx| assert!(SettingsStore::get(cx).behavior.check_updates));
+    common::press(cx, w, "cmd-,");
+    assert!(common::exists(cx, w, "row-check-updates") && common::exists(cx, w, "setting-check-updates"));
+    common::click(cx, w, "setting-check-updates");
+    cx.update(|cx| assert!(!SettingsStore::get(cx).behavior.check_updates));
+    let (saved, _) = rogg_core::settings::Settings::load(&dir.path().join("settings.toml")).unwrap();
+    assert!(!saved.behavior.check_updates);
 }

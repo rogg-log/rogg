@@ -92,7 +92,7 @@ fn an_unreadable_profile_is_reported(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
     std::fs::write(dir.path().join("profiles/Bad.toml"), "rules = 1").unwrap();
-    cx.update(|cx| rogg_app::init_with(cx, rogg_app::paths::AppPaths::under(dir.path())));
+    common::init(cx, rogg_app::paths::AppPaths::under(dir.path()));
     let (_w, ws) = common::open_workspace(cx, Args::default());
     ws.read_with(cx, |ws, _| assert!(ws.toasts.iter().any(|(_, t)| t.contains("Bad.toml.bak")), "{:?}", ws.toasts));
     cx.update(|cx| assert_eq!(cx.global::<ProfileStore>().names(), ["Default"]));

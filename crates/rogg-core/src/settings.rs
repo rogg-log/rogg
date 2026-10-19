@@ -74,6 +74,8 @@ pub struct BehaviorSettings {
     pub default_profile: String,
     /// Whether the filtered log shows `··· N lines omitted` rows between shown lines.
     pub omitted_markers: bool,
+    /// Whether rogg looks for a newer build a few seconds after it starts.
+    pub check_updates: bool,
 }
 
 impl Default for BehaviorSettings {
@@ -89,6 +91,7 @@ impl Default for BehaviorSettings {
             scan_depth: crate::folder::DEFAULT_SCAN_DEPTH as u32,
             default_profile: DEFAULT_PROFILE_NAME.into(),
             omitted_markers: true,
+            check_updates: true,
         }
     }
 }
@@ -158,6 +161,7 @@ mod tests {
         let b = &s.behavior;
         assert!(!b.wrap && b.follow_selection && !b.regex && !b.case_sensitive && b.restore_session);
         assert!(b.omitted_markers);
+        assert!(b.check_updates);
         assert_eq!((b.context, b.cache_limit_gb, b.scan_depth), (0, 20, 4));
         assert_eq!(b.default_profile, "Default");
         assert_eq!(s.cache_limit_bytes(), crate::cache::DEFAULT_LIMIT_BYTES);
@@ -211,6 +215,17 @@ mod tests {
         s.behavior.omitted_markers = false;
         s.save(&path).unwrap();
         assert!(std::fs::read_to_string(&path).unwrap().contains("omitted_markers = false"));
+    }
+
+    #[test]
+    fn a_settings_file_without_check_updates_loads_with_it_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "[behavior]\nwrap = true\n").unwrap();
+        let (s, recovered) = Settings::load(&path).unwrap();
+        assert!(!recovered && s.behavior.wrap && s.behavior.check_updates);
+        std::fs::write(&path, "[behavior]\ncheck_updates = false\n").unwrap();
+        assert!(!Settings::load(&path).unwrap().0.behavior.check_updates);
     }
 
     #[test]

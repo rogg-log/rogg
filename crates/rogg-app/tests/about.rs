@@ -34,7 +34,7 @@ fn separate_config_and_data_folders_each_reveal(cx: &mut TestAppContext) {
         profiles: config.join("profiles"),
         session: data.join("session.json"),
     };
-    cx.update(|cx| rogg_app::init_with(cx, paths));
+    common::init(cx, paths);
     let (w, ws) = common::open_workspace(cx, Args { demo: false, paths: vec![], ..Default::default() });
     cx.update_window(w, |_, window, cx| window.dispatch_action(Box::new(ShowAbout), cx)).unwrap();
     cx.run_until_parked();

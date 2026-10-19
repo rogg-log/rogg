@@ -37,6 +37,7 @@ gpui_kit::actions!(
         Export,
         OpenSettings,
         ShowAbout,
+        CheckForUpdates,
         Dismiss,
         ThemeSystem,
         ThemeLight,
