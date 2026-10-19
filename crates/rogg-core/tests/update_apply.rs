@@ -1,12 +1,13 @@
 //! Verifying, staging and replacing for self-update (spec §4.1).
 
 use rogg_core::update::apply::{
-    Fault, ReplaceStyle, apply, apply_with_fault, can_write, copy_tree, move_into, stage, sweep, verify,
+    Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_with_fault, can_write, copy_tree, move_into, stage, sweep, sweep_at, verify,
 };
 use rogg_core::update::{Install, UpdateError};
 use rogg_genlog::bundle::{BundleKind, write_archive};
-use std::fs;
+use std::fs::{self, File};
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 fn read(p: &Path) -> Vec<u8> {
     fs::read(p).unwrap()
@@ -291,6 +292,17 @@ fn move_into_falls_back_to_copying() {
     assert!(!file.exists());
 }
 
+/// Backdates every entry under `path` (and `path` itself) by `age`.
+fn age_tree(path: &Path, age: Duration) {
+    let when = SystemTime::now() - age;
+    if path.is_dir() {
+        for entry in fs::read_dir(path).unwrap() {
+            age_tree(&entry.unwrap().path(), age);
+        }
+    }
+    File::options().read(true).open(path).unwrap().set_modified(when).unwrap();
+}
+
 #[test]
 fn sweep_removes_leftovers() {
     let tmp = tempfile::tempdir().unwrap();
@@ -299,13 +311,56 @@ fn sweep_removes_leftovers() {
     write(&tmp.path().join("rogg.exe.old"), b"o");
     write(&tmp.path().join("rogg.exe.rogg-new"), b"n");
     write(&tmp.path().join("rogg.exe.rogg-old"), b"o");
-    let update = tmp.path().join("cache/update/7");
-    write(&update.join("rogg.exe"), b"staged");
-    sweep(Some(&target), &update);
+    let work = tmp.path().join("cache/update");
+    write(&work.join("7/rogg.exe"), b"staged");
+    // Long after the update: nothing is in use any more.
+    sweep_at(Some(&target), &work, SystemTime::now() + SWEEP_IN_USE + Duration::from_secs(1));
     assert!(target.exists());
-    for gone in ["rogg.exe.old", "rogg.exe.rogg-new", "rogg.exe.rogg-old", "cache/update/7"] {
+    for gone in ["rogg.exe.old", "rogg.exe.rogg-new", "rogg.exe.rogg-old", "cache/update"] {
         assert!(!tmp.path().join(gone).exists(), "{gone}");
     }
+}
+
+/// R12: another rogg process may be downloading or installing right now; its fresh build folder marks that.
+#[test]
+fn sweep_leaves_an_update_in_progress_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("rogg");
+    write(&tmp.path().join("rogg.rogg-new"), b"n");
+    write(&tmp.path().join("rogg.rogg-old"), b"o");
+    let work = tmp.path().join("cache/update");
+    write(&work.join("14/rogg-linux-x86_64.tar.gz.part"), b"half");
+    sweep(Some(&target), &work);
+    assert_eq!(read(&work.join("14/rogg-linux-x86_64.tar.gz.part")), b"half");
+    assert_eq!(read(&tmp.path().join("rogg.rogg-new")), b"n");
+    assert_eq!(read(&tmp.path().join("rogg.rogg-old")), b"o", "no restore while another update may be swapping");
+    assert!(!target.exists());
+}
+
+#[test]
+fn sweep_removes_a_stale_build_folder_and_keeps_a_fresh_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("rogg");
+    write(&target, b"cur");
+    write(&tmp.path().join("rogg.rogg-old"), b"o");
+    let work = tmp.path().join("cache/update");
+    write(&work.join("13/staged/rogg"), b"old staging");
+    age_tree(&work.join("13"), SWEEP_IN_USE + Duration::from_secs(60));
+    write(&work.join("14/a.tar.gz.part"), b"fresh");
+    // Only the staged binary is old: a recently written file anywhere in the folder keeps it.
+    write(&work.join("15/staged/rogg"), b"x");
+    age_tree(&work.join("15"), SWEEP_IN_USE + Duration::from_secs(60));
+    write(&work.join("15/staged/new"), b"y");
+    sweep(Some(&target), &work);
+    assert!(!work.join("13").exists(), "stale");
+    assert!(work.join("14/a.tar.gz.part").exists() && work.join("15/staged/rogg").exists());
+    assert!(tmp.path().join("rogg.rogg-old").exists(), "the siblings wait while a folder is in use");
+
+    age_tree(&work, SWEEP_IN_USE + Duration::from_secs(60));
+    sweep(Some(&target), &work);
+    assert!(!work.exists());
+    assert!(!tmp.path().join("rogg.rogg-old").exists());
+    assert_eq!(read(&target), b"cur");
 }
 
 #[cfg(unix)]

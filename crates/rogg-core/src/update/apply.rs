@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 const NEW_SUFFIX: &str = ".rogg-new";
 const OLD_SUFFIX: &str = ".rogg-old";
@@ -300,8 +301,32 @@ pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// Removes what an update leaves behind (best effort): the names beside the target and the staging folder.
-pub fn sweep(target: Option<&Path>, update_dir: &Path) {
+/// A build folder under the work dir with anything modified this recently belongs to an update in progress, maybe in
+/// another rogg process (there is no single-instance lock): `sweep` leaves it, and the names beside the target, alone.
+pub const SWEEP_IN_USE: Duration = Duration::from_secs(10 * 60);
+
+/// Removes what an update leaves behind (best effort): stale build folders in `work_dir` (`<cache>/update`), and, when
+/// no update is in progress, the names beside the target and the work dir itself.
+pub fn sweep(target: Option<&Path>, work_dir: &Path) {
+    sweep_at(target, work_dir, SystemTime::now());
+}
+
+/// `sweep` as of `now`.
+pub fn sweep_at(target: Option<&Path>, work_dir: &Path, now: SystemTime) {
+    let mut in_use = false;
+    for entry in fs::read_dir(work_dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        // A modification time in the future (a changed clock) counts as fresh.
+        let fresh = newest_change(&path).is_some_and(|t| now.duration_since(t).map_or(true, |age| age < SWEEP_IN_USE));
+        if fresh {
+            in_use = true;
+        } else {
+            let _ = remove_any(&path);
+        }
+    }
+    if in_use {
+        return;
+    }
     if let Some(target) = target {
         // With the target gone, `.rogg-old` is the only copy of the program: restore it rather than delete it.
         let _ = restore_old(target);
@@ -309,7 +334,19 @@ pub fn sweep(target: Option<&Path>, update_dir: &Path) {
             let _ = remove_any(&beside(target, suffix));
         }
     }
-    let _ = remove_any(update_dir);
+    let _ = remove_any(work_dir);
+}
+
+/// The latest modification time of `path` or anything under it (symlinks not followed).
+fn newest_change(path: &Path) -> Option<SystemTime> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    let mut newest = meta.modified().ok();
+    if meta.is_dir() {
+        for entry in fs::read_dir(path).into_iter().flatten().flatten() {
+            newest = newest.max(newest_change(&entry.path()));
+        }
+    }
+    newest
 }
 
 /// Whether files can be created in `dir` (so the update needs no admin rights).

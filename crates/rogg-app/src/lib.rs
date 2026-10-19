@@ -84,7 +84,8 @@ pub fn install_globals(cx: &mut App, paths: AppPaths) {
     if !cx.has_global::<updater::Updater>() {
         cx.set_global(updater::Updater::new(updater::UpdaterConfig::from_env(&paths.cache)));
     }
-    // What an earlier update left behind: the names beside the install and the staging folder.
+    // What an earlier update left behind: the names beside the install and stale staging folders (one in progress,
+    // maybe in another rogg process, is left alone).
     let config = cx.global::<updater::Updater>().config();
     rogg_core::update::apply::sweep(config.install.target(), &config.work_dir);
     cx.set_global(paths);
