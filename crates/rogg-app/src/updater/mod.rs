@@ -1,5 +1,7 @@
 //! Self-update support for the app.
 
+pub mod http;
+
 use std::path::Path;
 
 use rogg_core::update::apply::{ReplaceStyle, apply, is_rogg_target};

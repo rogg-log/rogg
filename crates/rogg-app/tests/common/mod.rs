@@ -1,6 +1,7 @@
 //! Headless app windows for integration tests. gpui's TestAppContext has a no-op text system: assert on
 //! state and on fixed sizes, not on text widths.
 #![allow(dead_code)]
+pub mod http;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyWindowHandle, Bounds, Entity, Pixels, Point, TestAppContext, WindowBounds, WindowOptions, px, size};
 use rogg_app::args::Args;

@@ -8,6 +8,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
 gpui-kit = "=0.7.1"
 rust-embed = { version = "8.7.2", features = ["include-exclude"] }
 anyhow = "1"

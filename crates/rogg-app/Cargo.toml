@@ -17,6 +17,7 @@ rogg-core = { path = "../rogg-core" }
 rogg-ui = { path = "../rogg-ui" }
 gpui-kit.workspace = true
 anyhow.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
