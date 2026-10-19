@@ -66,6 +66,8 @@ irm https://raw.githubusercontent.com/rogg-log/rogg/main/install.ps1 | iex
 It installs to `%LOCALAPPDATA%\Programs\rogg` (no admin rights), offers to add that folder to your PATH and a Start
 menu entry, and reads the installed version from `rogg.exe`'s properties.
 
+rogg checks for new builds at startup and can update itself: click **Update** in the title bar, or use **Check for Updates…** in the app menu.
+
 **Manual download.** Grab an archive for your platform from the [latest release](https://github.com/rogg-log/rogg/releases/latest).
 `rogg --version` shows the installed version and build (on Windows: `rogg.exe` → Properties → Details).
 
