@@ -40,7 +40,18 @@ pub fn release_of(state: &UpdateState) -> Option<&Release> {
 /// `rogg 0.1.0 · build 14 · 2026-10-18 · a1b2c3d`
 fn release_line(m: &Manifest) -> String {
     let sha: String = m.commit.chars().take(7).collect();
-    format!("rogg {} · build {} · {} · {sha}", m.version, m.build, m.date)
+    format!("rogg {} · build {} · {} · {sha}", m.version, m.build, day(&m.date))
+}
+
+/// The `YYYY-MM-DD` a date starts with (CI writes `2026-10-15T23:00:17Z`), else the date as it is.
+fn day(date: &str) -> &str {
+    let b = date.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    if b.len() >= 10 && digits(0..4) && b[4] == b'-' && digits(5..7) && b[7] == b'-' && digits(8..10) {
+        &date[..10]
+    } else {
+        date
+    }
 }
 
 /// Decimal megabytes with one decimal, as the sidebar shows sizes.
@@ -166,6 +177,26 @@ mod tests {
         assert_eq!(buttons, ["update-retry", "update-close"]);
         let (_, _, buttons) = shown(&failed(Some(release()), Failure::NoPkexec));
         assert_eq!(buttons, ["update-retry", "update-notes", "update-copy-command", "update-close"]);
+    }
+
+    fn release_dated(date: &str) -> Release {
+        let mut release = release();
+        release.manifest.date = date.into();
+        release
+    }
+
+    /// CI writes the date as a UTC timestamp; the dialog shows the day.
+    #[test]
+    fn the_available_line_shows_the_day_of_a_timestamp() {
+        let (lines, _, _) = shown(&UpdateState::Available(release_dated("2026-10-18T10:00:00Z")));
+        assert!(lines[0].contains("· 2026-10-18 ·"), "{lines:?}");
+        assert!(!lines[0].contains("T10"), "{lines:?}");
+        assert_eq!(lines, ["rogg 0.1.0 · build 14 · 2026-10-18 · a1b2c3d", "You have build 11."]);
+        // Anything that doesn't start with a date is shown as it is.
+        for date in ["2026-10-18", "Oct 18", "", "2026/10/18 10:00"] {
+            let (lines, _, _) = shown(&UpdateState::Available(release_dated(date)));
+            assert_eq!(lines[0], format!("rogg 0.1.0 · build 14 · {date} · a1b2c3d"));
+        }
     }
 
     #[test]

@@ -190,6 +190,19 @@ fn an_archive_without_rogg_fails_to_unpack() {
     assert!(fixture.work_dir_is_empty());
 }
 
+/// A connection that drops mid-download is a network problem, not a damaged download.
+#[test]
+fn a_dropped_connection_is_reported_as_offline() {
+    let fixture = Fixture::new();
+    let data = archive(&noise(200_000));
+    let server = release_server(&data, Route::Short(200, data.clone(), data.len() / 2));
+    let mut updater = available(&fixture, &server);
+    updater.start_update();
+    run(&mut updater);
+    assert_eq!(failure(updater.state()), Some(&Failure::Offline), "{:?}", updater.state());
+    assert!(fixture.work_dir_is_empty());
+}
+
 #[test]
 fn a_failed_download_keeps_the_release() {
     let fixture = Fixture::new();

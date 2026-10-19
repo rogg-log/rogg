@@ -15,6 +15,8 @@ pub enum Route {
     Stall,
     /// Send the headers (with the full length) and the first `n` body bytes, then stall.
     StallAfter(u16, Vec<u8>, usize),
+    /// Send the headers (with the full length) and the first `n` body bytes, then close the connection.
+    Short(u16, Vec<u8>, usize),
     /// Send the headers (with the full length) and the first `n` body bytes, wait for the gate, then the rest.
     Gated(u16, Vec<u8>, usize, Gate),
 }
@@ -97,6 +99,10 @@ fn serve(stream: TcpStream, routes: &HashMap<&'static str, Route>, hits: &Mutex<
             let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
             let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(&body[..*n])).and_then(|()| stream.flush());
             thread::sleep(Duration::from_secs(60));
+        }
+        Some(Route::Short(status, body, n)) => {
+            let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
+            let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(&body[..*n])).and_then(|()| stream.flush());
         }
         Some(Route::Gated(status, body, n, gate)) => {
             let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());

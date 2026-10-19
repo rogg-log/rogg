@@ -149,3 +149,13 @@ fn a_mid_body_stall_times_out() {
     assert!(matches!(result, Err(NetError::TimedOut)), "{result:?}");
     assert!(!dir.path().join("a.bin.part").exists());
 }
+
+#[test]
+fn a_body_shorter_than_its_length_is_a_dropped_connection() {
+    let server = TestServer::start(vec![("/a.bin", Route::Short(200, body(300_000), 100_000))]);
+    let dir = tempfile::tempdir().unwrap();
+    let result = download(&format!("{}/a.bin", server.base()), &dir.path().join("a.bin"), &mut |_, _| {}, &CancelToken::new());
+    assert_eq!(result, Err(NetError::Offline));
+    assert!(!dir.path().join("a.bin").exists());
+    assert!(!dir.path().join("a.bin.part").exists());
+}

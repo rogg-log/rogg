@@ -16,6 +16,11 @@ pub const DEFAULT_BASE: &str = "https://github.com/rogg-log/rogg/releases/latest
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// A download fails after this long without receiving any data.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// The download thread's own cap on reading the whole body, so a read stuck after the caller gave up (a mid-body
+/// stall, then a timeout or a cancel) ends eventually. The caller's 30 s idle limit is what fails a download; this
+/// only bounds the abandoned thread. An hour is far more than a real download needs: the largest asset is about
+/// 23 MB, which takes an hour only below about 6 KB/s, and the idle limit already fails a link that stops sending.
+const BODY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Progress is reported about every this many bytes.
 const PROGRESS_STEP: u64 = 64 * 1024;
 const CHUNK: usize = 16 * 1024;
@@ -78,6 +83,11 @@ fn map_io(e: &io::Error) -> NetError {
         io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound | io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable | io::ErrorKind::NetworkDown => {
             NetError::Offline
         }
+        // The connection dropped mid-transfer (ureq reports an early close as `UnexpectedEof`): a network problem,
+        // not a damaged download.
+        io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted | io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe => {
+            NetError::Offline
+        }
         _ => NetError::Io(e.to_string()),
     }
 }
@@ -102,7 +112,7 @@ pub fn download(url: &str, dest: &Path, on_progress: &mut dyn FnMut(u64, Option<
 /// ureq has no per-read timeout (`timeout_recv_body` caps the whole body and isn't restarted per read), so waiting
 /// for the response headers uses `timeout_recv_response`, and the body is read on a helper thread whose chunks the
 /// caller waits for with `idle` as the limit per chunk. A big download on a slow link therefore never times out
-/// while data keeps flowing.
+/// while data keeps flowing. The helper's body read is capped at an hour (`BODY_TIMEOUT`) only so that it ends.
 #[doc(hidden)]
 pub fn download_with_timeout(
     url: &str,
@@ -150,7 +160,9 @@ fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>
     let (tx, rx) = mpsc::sync_channel::<Result<Msg, NetError>>(4);
     let url = url.to_string();
     thread::spawn(move || {
-        let agent = agent(|b| b.timeout_connect(Some(MANIFEST_TIMEOUT)).timeout_recv_response(Some(idle)));
+        let agent = agent(|b| {
+            b.timeout_connect(Some(MANIFEST_TIMEOUT)).timeout_recv_response(Some(idle)).timeout_recv_body(Some(BODY_TIMEOUT))
+        });
         let response = match agent.get(&url).call() {
             Ok(response) => response,
             Err(e) => {
@@ -217,14 +229,27 @@ fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>
         }
     }
     let Some(mut file) = file else { return Err(NetError::Io("no response".into())) };
-    if let Some(total) = total
-        && done != total
-    {
-        return Err(NetError::Io(format!("the connection closed after {done} of {total} bytes")));
+    // The body ended short of its length: the connection closed early.
+    if total.is_some_and(|total| done != total) {
+        return Err(NetError::Offline);
     }
     file.flush().map_err(|e| NetError::Io(e.to_string()))?;
     if done != reported {
         on_progress(done, total);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_connection_is_offline() {
+        for kind in [io::ErrorKind::ConnectionReset, io::ErrorKind::ConnectionAborted, io::ErrorKind::UnexpectedEof, io::ErrorKind::BrokenPipe] {
+            assert_eq!(map_io(&io::Error::from(kind)), NetError::Offline, "{kind:?}");
+        }
+        // A local file error stays one.
+        assert!(matches!(map_io(&io::Error::from(io::ErrorKind::PermissionDenied)), NetError::Io(_)));
+    }
 }
