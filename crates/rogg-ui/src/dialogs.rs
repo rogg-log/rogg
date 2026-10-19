@@ -1,3 +1,4 @@
+use crate::chrome::bar_fraction;
 use crate::controls::{ActionButton, IconButton};
 use crate::form::SectionLabel;
 use crate::icons::{IconName, icon};
@@ -478,6 +479,71 @@ impl RenderOnce for FullLineText {
                     .text_size(t.metrics.log_font_size)
                     .text_color(t.palette.log_text),
             )
+    }
+}
+
+/// One button of the Software update dialog.
+pub struct UpdateButton {
+    pub id: &'static str,
+    pub label: SharedString,
+    pub primary: bool,
+    pub on_click: Callback,
+}
+
+/// What the Software update dialog shows: paragraphs, an optional progress bar with its label, right-aligned buttons.
+pub struct UpdateView {
+    pub title: SharedString,
+    pub lines: Vec<SharedString>,
+    pub progress: Option<(f32, SharedString)>,
+    pub buttons: Vec<UpdateButton>,
+}
+
+pub fn update(view: UpdateView) -> DialogFrame {
+    let mut frame = DialogFrame::new(view.title).child(UpdateBody { lines: view.lines, progress: view.progress });
+    if !view.buttons.is_empty() {
+        frame = frame.child(div().flex().justify_end().gap(px(8.)).pt(px(14.)).children(view.buttons.into_iter().map(|b| {
+            let f = b.on_click;
+            let btn = ActionButton::new(b.id, b.label).on_click(move |w, cx| f(w, cx));
+            if b.primary { btn.primary() } else { btn }
+        })));
+    }
+    frame
+}
+
+#[derive(IntoElement)]
+struct UpdateBody {
+    lines: Vec<SharedString>,
+    progress: Option<(f32, SharedString)>,
+}
+
+impl RenderOnce for UpdateBody {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = cx.rogg().palette;
+        let s = cx.rogg().text_scale();
+        div()
+            .id("update-body")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .mt(px(12.))
+            .children(self.lines.into_iter().map(|l| div().text_size(s.px(12.)).line_height(px(20.4)).text_color(p.muted).child(l)))
+            .when_some(self.progress, |d, (fraction, label)| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .text_size(s.px(11.))
+                        .text_color(p.muted)
+                        .child(
+                            div().id("update-progress").test_support().flex_1().h(px(3.)).rounded(px(2.)).bg(p.border).child(
+                                div().h_full().rounded(px(2.)).bg(p.accent).w(relative(bar_fraction(fraction))),
+                            ),
+                        )
+                        .child(label),
+                )
+            })
     }
 }
 

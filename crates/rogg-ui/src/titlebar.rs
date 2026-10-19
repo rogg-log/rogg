@@ -17,6 +17,12 @@ pub type AppMenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMe
 /// Builds a tab's context menu; gets the right-clicked tab's index.
 pub type TabMenuBuilder = Rc<dyn Fn(usize, PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
+struct UpdateBadge {
+    label: SharedString,
+    tooltip: SharedString,
+    on_click: Callback,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabItem {
     pub label: SharedString,
@@ -41,6 +47,7 @@ pub struct TitleBar {
     on_shortcuts: Option<Callback>,
     on_settings: Option<Callback>,
     app_menu: Option<AppMenuBuilder>,
+    update_badge: Option<UpdateBadge>,
     tab_menu: Option<TabMenuBuilder>,
     on_close_window: Option<Callback>,
     force_window_controls: bool,
@@ -61,6 +68,7 @@ impl TitleBar {
             on_shortcuts: None,
             on_settings: None,
             app_menu: None,
+            update_badge: None,
             tab_menu: None,
             on_close_window: None,
             force_window_controls: false,
@@ -108,6 +116,17 @@ impl TitleBar {
         self
     }
 
+    /// The update pill, first in the actions: an accent-coloured label with a tooltip.
+    pub fn update_badge(
+        mut self,
+        label: impl Into<SharedString>,
+        tooltip: impl Into<SharedString>,
+        on_click: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.update_badge = Some(UpdateBadge { label: label.into(), tooltip: tooltip.into(), on_click: Rc::new(on_click) });
+        self
+    }
+
     pub fn on_shortcuts(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_shortcuts = Some(Rc::new(f));
         self
@@ -144,6 +163,32 @@ impl TitleBar {
         self.force_window_controls = on;
         self
     }
+}
+
+/// `update-badge`: an accent pill as tall as a compact icon button, 10px text.
+fn update_badge(b: UpdateBadge, p: Palette, s: crate::theme::TextScale) -> AnyElement {
+    let (tip, on_click) = (b.tooltip, b.on_click);
+    div()
+        .id("update-badge")
+        .test_support()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .h(px(size::TITLEBAR_ICON_BTN))
+        .px(px(8.))
+        .rounded(px(size::TITLEBAR_ICON_BTN / 2.))
+        .border_1()
+        .border_color(p.accent_border)
+        .bg(p.accent_bg)
+        .text_color(p.accent)
+        .text_size(s.px(10.))
+        .cursor_pointer()
+        .hover(move |st| st.bg(p.hover))
+        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        .child(b.label)
+        .on_click(move |_, window, cx| on_click(window, cx))
+        .into_any_element()
 }
 
 fn button(b: IconButton, cb: Option<Callback>) -> IconButton {
@@ -358,6 +403,7 @@ impl RenderOnce for TitleBar {
                     .items_center()
                     .gap(px(4.))
                     .pl(px(5.))
+                    .when_some(self.update_badge, |d, b| d.child(update_badge(b, p, s)))
                     .child(button(IconButton::chevron_down("all-tabs").compact(), self.on_all_tabs))
                     .child(button(
                         if chrome.is_mac() { IconButton::glyph("shortcuts", "⌘") } else { IconButton::icon("shortcuts", IconName::Keyboard) }.compact(),

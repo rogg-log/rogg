@@ -163,3 +163,29 @@ fn no_matches_lists_recent_filters_and_reports_a_pick(cx: &mut TestAppContext) {
     let empty = common::open(cx, 600., 400., |_, _| no_matches_with_recent("empty-results", vec![], Rc::new(|_, _, _| {})).into_any_element());
     assert!(common::exists(cx, empty, "empty-results") && !common::exists(cx, empty, "recent-filters"), "no list without history");
 }
+
+#[gpui_kit::test]
+fn the_update_dialog_renders_lines_progress_and_buttons(cx: &mut TestAppContext) {
+    use rogg_ui::dialogs::{UpdateButton, UpdateView, update};
+    common::setup(cx);
+    let fired = Rc::new(Cell::new(0));
+    let f = fired.clone();
+    let w = common::open(cx, 1440., 900., move |_, _| {
+        let f = f.clone();
+        let view = UpdateView {
+            title: "Software update".into(),
+            lines: vec!["rogg 1.0.0 · build 5".into(), "You have build 4.".into()],
+            progress: Some((0.5, "15 of 30 MB".into())),
+            buttons: vec![
+                UpdateButton { id: "update-now", label: "Update".into(), primary: true, on_click: Rc::new(move |_, _| f.set(f.get() + 1)) },
+                UpdateButton { id: "update-later", label: "Later".into(), primary: false, on_click: Rc::new(|_, _| {}) },
+            ],
+        };
+        ModalLayer::new(update(view)).into_any_element()
+    });
+    assert!(common::exists(cx, w, "update-progress"));
+    assert!(common::exists(cx, w, "update-now"));
+    assert!(common::exists(cx, w, "update-later"));
+    common::click(cx, w, "update-now");
+    assert_eq!(fired.get(), 1);
+}

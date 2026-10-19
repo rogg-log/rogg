@@ -287,3 +287,23 @@ fn right_click_builds_the_menu_for_that_tab_without_selecting_it(cx: &mut TestAp
     assert_eq!(built.borrow().last(), Some(&1), "the menu is built for the right-clicked tab");
     assert!(selected.borrow().is_empty(), "a right-click does not switch tabs");
 }
+
+#[gpui_kit::test]
+fn the_update_badge_sits_first_in_the_actions_and_reports_clicks(cx: &mut TestAppContext) {
+    common::setup(cx);
+    let clicks = Rc::new(RefCell::new(0));
+    let c = clicks.clone();
+    let w = common::open(cx, 1440., 200., move |_, _| {
+        let c = c.clone();
+        TitleBar::new(tabs(2)).update_badge("Update", "rogg 1.0.0 build 5 is available", move |_, _| *c.borrow_mut() += 1).into_any_element()
+    });
+    let badge = common::bounds(cx, w, "update-badge");
+    let all_tabs = common::bounds(cx, w, "all-tabs");
+    assert!(badge.left() < all_tabs.left(), "badge first: {badge:?} vs {all_tabs:?}");
+    assert_eq!(badge.size.height, all_tabs.size.height);
+    common::click(cx, w, "update-badge");
+    assert_eq!(*clicks.borrow(), 1);
+
+    let w = common::open(cx, 1440., 200., |_, _| TitleBar::new(tabs(2)).into_any_element());
+    assert!(!common::exists(cx, w, "update-badge"));
+}
