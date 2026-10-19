@@ -123,7 +123,15 @@ pub fn stage(archive: &Path, dir: &Path, install: &Install) -> Result<PathBuf, U
         unpack_tar_gz(archive, dir)?;
     }
     let staged = dir.join(item);
-    if fs::symlink_metadata(&staged).is_err() {
+    // A link would be followed once the item is moved beside the target, so only real files and folders count.
+    let is_real = |p: &Path, dir: bool| {
+        fs::symlink_metadata(p).is_ok_and(|m| if dir { m.file_type().is_dir() } else { m.file_type().is_file() })
+    };
+    let ok = match install {
+        Install::App { .. } => is_real(&staged, true) && is_real(&staged.join("Contents/MacOS/rogg"), false),
+        _ => is_real(&staged, false),
+    };
+    if !ok {
         return Err(UpdateError::MissingItem(item));
     }
     Ok(staged)
@@ -153,12 +161,32 @@ pub enum Fault {
     SwapIn,
 }
 
-/// Only rogg itself may be replaced: a bare binary or an app bundle named like it.
+fn is_app_name(target: &Path) -> bool {
+    target.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))
+}
+
+fn rogg_name(target: &Path) -> bool {
+    let Some(name) = target.file_name().and_then(|n| n.to_str()) else { return false };
+    name.eq_ignore_ascii_case("rogg") || name.eq_ignore_ascii_case("rogg.exe") || is_app_name(target)
+}
+
+/// Only rogg itself may be replaced: a binary named `rogg` / `rogg.exe`, or an app bundle (any `<name>.app`, e.g.
+/// Finder's `rogg 2.app`) that holds `Contents/MacOS/rogg`.
 pub fn is_rogg_target(target: &Path) -> bool {
-    target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| ["rogg", "rogg.exe", "rogg.app"].iter().any(|ok| n.eq_ignore_ascii_case(ok)))
+    if !rogg_name(target) {
+        return false;
+    }
+    !is_app_name(target)
+        || fs::symlink_metadata(target.join("Contents/MacOS/rogg")).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// A failed update can leave the only copy at `<target>.rogg-old` with the target gone; put it back.
+fn restore_old(target: &Path) -> Result<(), UpdateError> {
+    let old = beside(target, OLD_SUFFIX);
+    if fs::symlink_metadata(target).is_err() && fs::symlink_metadata(&old).is_ok() {
+        fs::rename(&old, target).map_err(io_err(&old))?;
+    }
+    Ok(())
 }
 
 pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle) -> Result<(), UpdateError> {
@@ -168,7 +196,11 @@ pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle) -> Result<(), Up
 #[cfg(unix)]
 fn make_executable(item: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let binary = if item.is_dir() { item.join("Contents/MacOS/rogg") } else { item.to_path_buf() };
+    let binary = if fs::symlink_metadata(item)?.is_dir() { item.join("Contents/MacOS/rogg") } else { item.to_path_buf() };
+    // Never chmod through a link: it could point anywhere.
+    if !fs::symlink_metadata(&binary)?.file_type().is_file() {
+        return Err(io::Error::other("the new version is not a regular file"));
+    }
     fs::set_permissions(binary, fs::Permissions::from_mode(0o755))
 }
 
@@ -181,12 +213,16 @@ fn make_executable(_item: &Path) -> io::Result<()> {
 /// can't be moved in, so a failure leaves the previous version in place.
 #[doc(hidden)]
 pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault: Fault) -> Result<(), UpdateError> {
+    if !rogg_name(target) {
+        return Err(UpdateError::NotRogg(target.to_path_buf()));
+    }
+    restore_old(target)?;
     if !is_rogg_target(target) {
         return Err(UpdateError::NotRogg(target.to_path_buf()));
     }
     let new = beside(target, NEW_SUFFIX);
     let old = beside(target, OLD_SUFFIX);
-    // Leftovers of an earlier attempt would make the renames below fail.
+    // Leftovers of an earlier attempt would make the renames below fail. The target exists here, so `old` is stale.
     remove_any(&new).map_err(io_err(&new))?;
     remove_any(&old).map_err(io_err(&old))?;
 
@@ -196,7 +232,7 @@ pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault
     }
     if let Err(source) = fs::rename(target, &old) {
         let _ = remove_any(&new);
-        return Err(UpdateError::Replace { rolled_back: true, old, source });
+        return Err(UpdateError::Replace { rolled_back: true, old: target.to_path_buf(), source });
     }
     let swap = match fault {
         Fault::SwapIn => Err(io::Error::other("injected failure")),
@@ -207,6 +243,8 @@ pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault
         if rolled_back {
             let _ = remove_any(&new);
         }
+        // Where the previous version is now.
+        let old = if rolled_back { target.to_path_buf() } else { old };
         return Err(UpdateError::Replace { rolled_back, old, source });
     }
     // The new version is live; failing to tidy up the old one is not a failure (sweep gets it next start).
@@ -265,6 +303,8 @@ pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
 /// Removes what an update leaves behind (best effort): the names beside the target and the staging folder.
 pub fn sweep(target: Option<&Path>, update_dir: &Path) {
     if let Some(target) = target {
+        // With the target gone, `.rogg-old` is the only copy of the program: restore it rather than delete it.
+        let _ = restore_old(target);
         for suffix in [NEW_SUFFIX, OLD_SUFFIX, WINDOWS_OLD_SUFFIX] {
             let _ = remove_any(&beside(target, suffix));
         }

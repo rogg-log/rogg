@@ -100,6 +100,90 @@ fn leftovers(dir: &Path, stem: &str) -> Vec<String> {
 }
 
 #[test]
+fn apply_restores_a_stranded_old_copy_instead_of_deleting_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("bin/rogg");
+    let staged = tmp.path().join("stage/rogg");
+    // A failed apply left the only copy at `.rogg-old` and no target.
+    write(&tmp.path().join("bin/rogg.rogg-old"), b"precious");
+    write(&staged, b"new");
+    // The fault makes the swap fail again after the restore; the old bytes must survive either way.
+    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Fault::SwapIn);
+    assert!(matches!(r, Err(UpdateError::Replace { rolled_back: true, .. })), "{r:?}");
+    assert_eq!(read(&target), b"precious");
+
+    fs::remove_file(&target).unwrap();
+    write(&tmp.path().join("bin/rogg.rogg-old"), b"precious");
+    write(&staged, b"new");
+    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    assert_eq!(read(&target), b"new");
+}
+
+#[test]
+fn sweep_restores_a_stranded_old_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("rogg");
+    write(&tmp.path().join("rogg.rogg-old"), b"precious");
+    write(&tmp.path().join("rogg.rogg-new"), b"n");
+    sweep(Some(&target), &tmp.path().join("cache"));
+    assert_eq!(read(&target), b"precious");
+    assert!(leftovers(tmp.path(), "rogg").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_rejects_a_symlinked_item_and_never_chmods_through_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let victim = tmp.path().join("victim");
+    fs::write(&victim, b"v").unwrap();
+    fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Symlink);
+    header.set_size(0);
+    header.set_mode(0o777);
+    header.set_link_name("victim").unwrap();
+    header.set_cksum();
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast()));
+    builder.append_data(&mut header, "rogg", std::io::empty()).unwrap();
+    let archive = tmp.path().join("link.tar.gz");
+    fs::write(&archive, builder.into_inner().unwrap().finish().unwrap()).unwrap();
+
+    let dir = tmp.path().join("stage");
+    let r = stage(&archive, &dir, &binary(Path::new("/x/rogg")));
+    assert!(matches!(r, Err(UpdateError::MissingItem(_))), "{r:?}");
+
+    // apply on a hand-made link must fail too and leave the link target's mode alone.
+    let target = tmp.path().join("bin/rogg");
+    write(&target, b"old");
+    let link = tmp.path().join("stage2-rogg");
+    std::os::unix::fs::symlink(&victim, &link).unwrap();
+    assert!(apply(&link, &target, ReplaceStyle::Unix).is_err());
+    assert_eq!(fs::metadata(&victim).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(read(&target), b"old");
+}
+
+#[test]
+fn any_app_bundle_with_the_rogg_binary_is_a_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("apps/rogg 2.app");
+    write(&target.join("Contents/MacOS/rogg"), b"old");
+    let staged = tmp.path().join("stage/rogg.app");
+    write(&staged.join("Contents/MacOS/rogg"), b"new");
+    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    assert_eq!(read(&target.join("Contents/MacOS/rogg")), b"new");
+
+    let hollow = tmp.path().join("apps/rogg.app");
+    write(&hollow.join("Contents/other"), b"x");
+    let staged = tmp.path().join("stage2/rogg.app");
+    write(&staged.join("Contents/MacOS/rogg"), b"new");
+    let r = apply(&staged, &hollow, ReplaceStyle::Unix);
+    assert!(matches!(r, Err(UpdateError::NotRogg(_))), "{r:?}");
+    assert_eq!(read(&hollow.join("Contents/other")), b"x");
+}
+
+#[test]
 fn apply_replaces_a_binary() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("bin/rogg");
@@ -160,7 +244,10 @@ fn apply_rolls_back_when_the_swap_fails() {
     write(&target, b"old");
     write(&staged, b"new");
     let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Fault::SwapIn);
-    assert!(matches!(r, Err(UpdateError::Replace { rolled_back: true, .. })), "{r:?}");
+    match r {
+        Err(UpdateError::Replace { rolled_back: true, old, .. }) => assert_eq!(old, target),
+        other => panic!("{other:?}"),
+    }
     assert_eq!(read(&target), b"old");
     assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
 }
