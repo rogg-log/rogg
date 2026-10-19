@@ -1,9 +1,11 @@
 //! Verifying, staging and replacing for self-update (spec §4.1).
 
 use rogg_core::update::apply::{
-    ArchiveKind, Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_archive, apply_with_fault, copy_tree, move_into, stage,
-    stage_from, sweep, sweep_at, verify, verify_reader,
+    ArchiveKind, FolderOwner, MAC_ADMIN_GID, MAX_ARCHIVE, Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_archive,
+    apply_archive_capped, apply_with_fault, copy_tree, move_into, stage, stage_from, sweep, sweep_at, trusted_folder,
+    verify, verify_reader,
 };
+use rogg_core::platform::Os;
 use rogg_core::update::{Install, UpdateError};
 use rogg_genlog::bundle::{BundleKind, write_archive};
 use std::fs;
@@ -781,4 +783,148 @@ fn sweep_removes_stale_stage_folders() {
     sweep_at(Some(&target), &tmp.path().join("cache"), SystemTime::now() + SWEEP_IN_USE + Duration::from_secs(1));
     assert!(stage_dirs(tmp.path(), "rogg.exe").is_empty());
     assert_eq!(read(&target), b"cur");
+}
+
+#[test]
+fn the_archive_cap_is_512_mib() {
+    assert_eq!(MAX_ARCHIVE, 512 * 1024 * 1024);
+}
+
+/// The helper holds the whole download in memory, so a bigger one is refused rather than read.
+#[test]
+fn apply_archive_refuses_an_archive_over_the_cap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path().join("rogg-linux-x86_64.tar.gz");
+    write_archive(&archive, BundleKind::TarGz, &[("rogg", b"new")]).unwrap();
+    let size = fs::metadata(&archive).unwrap().len();
+    let sha = sha256_hex(&read(&archive));
+    let target = tmp.path().join("bin/rogg");
+    write(&target, b"old");
+    let r = apply_archive_capped(&archive, &sha, &target, ReplaceStyle::Unix, size - 1);
+    assert!(matches!(r, Err(UpdateError::TooLarge { limit }) if limit == size - 1), "{r:?}");
+    assert!(r.unwrap_err().to_string().contains(&format!("{}", size - 1)));
+    assert_eq!(read(&target), b"old");
+    assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
+    // Exactly at the cap is fine.
+    apply_archive_capped(&archive, &sha, &target, ReplaceStyle::Unix, size).unwrap();
+    assert_eq!(read(&target), b"new");
+}
+
+/// Nothing the helper opened reaches the disk before its checksum is known: with a wrong checksum the stage folder
+/// isn't even created (the squatted one would otherwise fail the run first, with an I/O error).
+#[test]
+fn apply_archive_checks_the_checksum_before_writing_anything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path().join("rogg-linux-x86_64.tar.gz");
+    write_archive(&archive, BundleKind::TarGz, &[("rogg", b"new")]).unwrap();
+    let target = tmp.path().join("bin/rogg");
+    write(&target, b"old");
+    let squatted = tmp.path().join(format!("bin/rogg.rogg-stage-{}", std::process::id()));
+    write(&squatted.join("staged/rogg"), b"planted");
+    let r = apply_archive(&archive, &"0".repeat(64), &target, ReplaceStyle::Unix);
+    assert!(matches!(r, Err(UpdateError::Checksum)), "{r:?}");
+    let mut names: Vec<_> = fs::read_dir(&squatted).unwrap().map(|e| e.unwrap().file_name()).collect();
+    names.sort();
+    assert_eq!(names, ["staged"], "no copy of the archive");
+    fs::remove_dir_all(&squatted).unwrap();
+
+    // A good run leaves nothing either, and never wrote the archive anywhere beside the target.
+    apply_archive(&archive, &sha256_hex(&read(&archive)), &target, ReplaceStyle::Unix).unwrap();
+    assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
+}
+
+/// Every regular file under `dir` whose bytes are `bytes`.
+#[cfg(unix)]
+fn files_holding(dir: &Path, bytes: &[u8]) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        if meta.is_dir() {
+            found.extend(files_holding(&path, bytes));
+        } else if meta.is_file() && fs::read(&path).unwrap() == bytes {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// `O_NOFOLLOW` doesn't stop a hard link: the user can link a file only root reads under the archive's name. Its
+/// bytes fail the checksum and are never written anywhere a user could read them.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_secret_is_refused_and_never_copied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let secret = tmp.path().join("secret/shadow");
+    write(&secret, b"root-only secret");
+    let release = tmp.path().join("release.tar.gz");
+    write_archive(&release, BundleKind::TarGz, &[("rogg", b"new")]).unwrap();
+    let archive = tmp.path().join("cache/rogg-linux-x86_64.tar.gz");
+    fs::create_dir_all(archive.parent().unwrap()).unwrap();
+    fs::hard_link(&secret, &archive).unwrap();
+    let target = tmp.path().join("bin/rogg");
+    write(&target, b"old");
+    let r = apply_archive(&archive, &sha256_hex(&read(&release)), &target, ReplaceStyle::Unix);
+    assert!(matches!(r, Err(UpdateError::Checksum)), "{r:?}");
+    assert_eq!(read(&target), b"old");
+    assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
+    let mut holding = files_holding(tmp.path(), b"root-only secret");
+    holding.sort();
+    assert_eq!(holding, [archive, secret]);
+}
+
+const ROOT: u32 = 0;
+const USER: u32 = 501;
+
+fn folder(uid: u32, gid: u32, mode: u32) -> FolderOwner {
+    FolderOwner { uid, gid, mode: 0o040000 | mode }
+}
+
+/// R17: the elevated helper only installs where every folder up to `/` is root's and only root can change it, or a
+/// user could race its chmod of the new binary onto any file.
+#[test]
+fn only_root_controlled_folders_are_trusted() {
+    for os in [Os::Mac, Os::Linux] {
+        assert!(trusted_folder(folder(ROOT, 0, 0o755), ROOT, os), "root 0755");
+        assert!(trusted_folder(folder(ROOT, 0, 0o555), ROOT, os));
+        assert!(!trusted_folder(folder(USER, 20, 0o755), ROOT, os), "a user's folder");
+        assert!(!trusted_folder(folder(ROOT, 0, 0o777), ROOT, os), "world-writable");
+        assert!(!trusted_folder(folder(ROOT, 0, 0o1777), ROOT, os), "sticky doesn't help");
+        assert!(!trusted_folder(folder(ROOT, 0, 0o757), ROOT, os), "other-writable");
+        assert!(!trusted_folder(folder(ROOT, 0, 0o775), ROOT, os), "group-writable by wheel/root");
+        assert!(!trusted_folder(folder(ROOT, MAC_ADMIN_GID, 0o777), ROOT, os), "admin group, but world-writable");
+        let link = FolderOwner { uid: ROOT, gid: 0, mode: 0o120755 };
+        assert!(!trusted_folder(link, ROOT, os), "a link, not a folder");
+    }
+    assert_eq!(MAC_ADMIN_GID, 80);
+    // `/Applications` is root:admin 0775.
+    assert!(trusted_folder(folder(ROOT, MAC_ADMIN_GID, 0o775), ROOT, Os::Mac));
+    assert!(!trusted_folder(folder(ROOT, MAC_ADMIN_GID, 0o775), ROOT, Os::Linux), "gid 80 is nobody special on Linux");
+    // Run without admin rights (the tests), the helper can only do what its user can anyway: its own folders count.
+    assert!(trusted_folder(folder(USER, 20, 0o755), USER, Os::Mac));
+    assert!(!trusted_folder(folder(USER, 20, 0o775), USER, Os::Mac));
+    assert!(!trusted_folder(folder(USER + 1, 20, 0o755), USER, Os::Linux));
+}
+
+#[cfg(unix)]
+#[test]
+fn trusted_location_checks_every_folder_up_to_the_root() {
+    use rogg_core::update::apply::trusted_location;
+    use std::os::unix::fs::PermissionsExt;
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).canonicalize().unwrap();
+    let tmp = tempfile::tempdir_in(&base).unwrap();
+    let bin = tmp.path().join("a/bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(trusted_location(&bin.join("rogg")), Ok(()));
+
+    let a = tmp.path().join("a");
+    fs::set_permissions(&a, fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(trusted_location(&bin.join("rogg")), Err(a.clone()), "an ancestor, not just the parent");
+    fs::set_permissions(&a, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A link on the way could be re-pointed; the updater passes canonical paths.
+    std::os::unix::fs::symlink(&bin, tmp.path().join("link")).unwrap();
+    assert_eq!(trusted_location(&tmp.path().join("link/rogg")), Err(tmp.path().join("link")));
+    assert!(trusted_location(Path::new("rogg")).is_err(), "relative");
 }

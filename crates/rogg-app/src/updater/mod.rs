@@ -24,11 +24,18 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 ///
 /// The archive is in the user's cache, so the helper trusts nothing the user's process made from it: it checks the
 /// archive's checksum and unpacks it itself, beside the target, and the installed files are its own (admin-owned,
-/// with the destination's inherited permissions).
+/// with the destination's inherited permissions). On Unix it refuses (2) a target in a folder that a user other than
+/// root could change, here or above.
 pub fn run_apply_update(request: &ApplyUpdate) -> i32 {
     let target = &request.target;
     if !is_rogg_target(target) {
         eprintln!("rogg: refusing to update {}: not a rogg install", target.display());
+        return 2;
+    }
+    // Only where no other user can change a folder: one who could might race the swap's chmod onto any file.
+    #[cfg(unix)]
+    if let Err(folder) = rogg_core::update::apply::trusted_location(target) {
+        eprintln!("rogg: refusing to update {}: {} could be changed by another user", target.display(), folder.display());
         return 2;
     }
     match apply_archive(&request.archive, &request.sha256, target, ReplaceStyle::current()) {

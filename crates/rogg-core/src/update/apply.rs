@@ -2,10 +2,11 @@
 //! Nothing here touches the network.
 
 use super::{Install, UpdateError};
+use crate::platform::Os;
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -377,15 +378,32 @@ pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault
     Ok(())
 }
 
+/// The largest download the elevated helper accepts; it holds the whole archive in memory.
+pub const MAX_ARCHIVE: u64 = 512 * 1024 * 1024;
+
 /// The elevated helper's install: checks the archive at `archive` against `sha256_hex`, unpacks it into a folder of
 /// its own beside the target (`<target>.rogg-stage-<pid>`, which must not exist yet) and moves the item into place
 /// with [`apply`]. The folder is removed afterwards, whatever happened.
 ///
-/// The download sits in the user's cache, where the user can change it at any time, so it is opened once (refusing a
-/// link or anything but a regular file) and read once: its bytes are hashed as they are copied into the stage
-/// folder, and only that copy, which the user can't touch, is unpacked. Everything installed is created by this
-/// process, so with admin rights it gets the admin owner and the destination's inherited permissions.
+/// The download sits in the user's cache, where the user can change it at any time, and the name could even be a
+/// hard link to a file only root may read. So it is opened once (refusing a link or anything but a regular file) and
+/// read once into memory (at most [`MAX_ARCHIVE`]); those bytes are hashed, and only once they match is anything
+/// written: the archive is unpacked from memory. No byte of an unverified file ever reaches the disk. Everything
+/// installed is created by this process, so with admin rights it gets the admin owner and the destination's
+/// inherited permissions.
 pub fn apply_archive(archive: &Path, sha256_hex: &str, target: &Path, style: ReplaceStyle) -> Result<(), UpdateError> {
+    apply_archive_capped(archive, sha256_hex, target, style, MAX_ARCHIVE)
+}
+
+/// [`apply_archive`] with `cap` in place of [`MAX_ARCHIVE`] (tests).
+#[doc(hidden)]
+pub fn apply_archive_capped(
+    archive: &Path,
+    sha256_hex: &str,
+    target: &Path,
+    style: ReplaceStyle,
+    cap: u64,
+) -> Result<(), UpdateError> {
     if !rogg_name(target) {
         return Err(UpdateError::NotRogg(target.to_path_buf()));
     }
@@ -397,49 +415,76 @@ pub fn apply_archive(archive: &Path, sha256_hex: &str, target: &Path, style: Rep
         Install::Binary { path: target.to_path_buf() }
     };
     let source = open_regular(archive).map_err(io_err(archive))?;
+    let bytes = read_capped(source, cap)?;
+    verify_reader(&bytes[..], sha256_hex)?;
     let dir = beside(target, &format!("{STAGE_SUFFIX}-{}", std::process::id()));
     // `create_dir`, not `create_dir_all`: a folder already there isn't this run's, so it is neither used nor removed.
     fs::create_dir(&dir).map_err(io_err(&dir))?;
-    let result = install_from(source, sha256_hex, kind, &dir, &install, target, style);
+    let result = stage_from(io::Cursor::new(bytes), kind, &dir.join("staged"), &install)
+        .and_then(|staged| apply(&staged, target, style));
     let _ = remove_any(&dir);
     result
 }
 
-/// [`apply_archive`] once its stage folder `dir` exists.
-fn install_from(
-    source: File,
-    sha256_hex: &str,
-    kind: ArchiveKind,
-    dir: &Path,
-    install: &Install,
-    target: &Path,
-    style: ReplaceStyle,
-) -> Result<(), UpdateError> {
-    let copy_path = dir.join("download");
-    let mut copy = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&copy_path)
-        .map_err(io_err(&copy_path))?;
-    verify_reader(Tee { inner: source, copy: &mut copy }, sha256_hex)?;
-    copy.seek(SeekFrom::Start(0)).map_err(io_err(&copy_path))?;
-    let staged = stage_from(copy, kind, &dir.join("staged"), install)?;
-    apply(&staged, target, style)
-}
-
-/// Reads `inner` and writes everything it reads to `copy`.
-struct Tee<R, W> {
-    inner: R,
-    copy: W,
-}
-
-impl<R: Read, W: Write> Read for Tee<R, W> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.copy.write_all(&buf[..n])?;
-        Ok(n)
+/// All of `file`, refused without being read when it is (or grows) larger than `cap` bytes.
+fn read_capped(file: File, cap: u64) -> Result<Vec<u8>, UpdateError> {
+    let len = file.metadata().map_err(UpdateError::Read)?.len();
+    if len > cap {
+        return Err(UpdateError::TooLarge { limit: cap });
     }
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.take(cap + 1).read_to_end(&mut bytes).map_err(UpdateError::Read)?;
+    if bytes.len() as u64 > cap {
+        return Err(UpdateError::TooLarge { limit: cap });
+    }
+    Ok(bytes)
+}
+
+/// macOS's `admin` group, which owns `/Applications` (root:admin 0775).
+pub const MAC_ADMIN_GID: u32 = 80;
+
+/// A folder's owner and mode (`st_mode`, file type included), as `lstat` reports them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderOwner {
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u32,
+}
+
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+
+/// Whether a folder on the way to the target is out of other users' reach, for a helper running as `helper_uid`:
+/// a real folder (not a link) owned by root or by the helper itself, writable by no group or others. On macOS a
+/// folder of the `admin` group may be group-writable (`/Applications`): its members can get admin rights anyway.
+///
+/// Elevated, `helper_uid` is 0, so only root's folders pass. Otherwise a user who could change a folder could race
+/// the helper's check-then-chmod of the new binary into a root `chmod` of any file.
+pub fn trusted_folder(folder: FolderOwner, helper_uid: u32, os: Os) -> bool {
+    let group_ok = folder.mode & 0o020 == 0 || (os == Os::Mac && folder.gid == MAC_ADMIN_GID);
+    folder.mode & S_IFMT == S_IFDIR
+        && (folder.uid == 0 || folder.uid == helper_uid)
+        && folder.mode & 0o002 == 0
+        && group_ok
+}
+
+/// Checks [`trusted_folder`] for the target's folder and every folder above it, up to `/`, for this process; the
+/// first one that fails is the error. The target must be absolute; the updater passes a canonical path, so a link
+/// on the way fails too.
+#[cfg(unix)]
+pub fn trusted_location(target: &Path) -> Result<(), PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let parent = target.parent().filter(|p| p.is_absolute()).ok_or_else(|| target.to_path_buf())?;
+    // SAFETY: `geteuid` has no preconditions and can't fail.
+    let helper_uid = unsafe { libc::geteuid() };
+    for dir in parent.ancestors() {
+        let meta = fs::symlink_metadata(dir).map_err(|_| dir.to_path_buf())?;
+        let folder = FolderOwner { uid: meta.uid(), gid: meta.gid(), mode: meta.mode() };
+        if !trusted_folder(folder, helper_uid, Os::current()) {
+            return Err(dir.to_path_buf());
+        }
+    }
+    Ok(())
 }
 
 /// Opens `path` for reading only if it is a regular file itself: a link is refused, not followed, and a FIFO or a
