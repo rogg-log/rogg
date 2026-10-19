@@ -2,8 +2,9 @@
 
 ## The admin prompts, each approved and each cancelled
 
-- [ ] macOS: `/Applications/rogg.app` as a standard user. Approving updates the app; cancelling the password prompt shows
-  "Admin rights were declined." (osascript's `-128`) and changes nothing.
+- [ ] macOS: `/Applications/rogg.app` as a standard user. Approving updates the app (the helper accepts the root:admin
+  0775 `/Applications`); cancelling the password prompt shows "Admin rights were declined." (osascript's `-128`) and
+  changes nothing.
 - [ ] Linux: `/usr/local/bin/rogg` via `pkexec`. Approving updates the binary; cancelling shows "Admin rights were declined."
 - [ ] Windows: `C:\Program Files\rogg\rogg.exe` via UAC. Approving updates the exe; cancelling shows "Admin rights were declined."
 - [ ] Windows: the UAC prompt appears in front of rogg (the launcher passes no parent window), and the update works
