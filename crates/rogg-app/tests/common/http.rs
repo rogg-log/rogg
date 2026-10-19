@@ -13,6 +13,8 @@ pub enum Route {
     Bytes(u16, Vec<u8>),
     /// Accept the connection and send nothing.
     Stall,
+    /// Send the headers (with the full length) and the first `n` body bytes, then stall.
+    StallAfter(u16, Vec<u8>, usize),
 }
 
 pub struct TestServer {
@@ -70,6 +72,11 @@ fn serve(stream: TcpStream, routes: &HashMap<&'static str, Route>, hits: &Mutex<
         Some(Route::Bytes(status, body)) => {
             let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
             let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(body));
+        }
+        Some(Route::StallAfter(status, body, n)) => {
+            let head = format!("HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reason(*status), body.len());
+            let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(&body[..*n])).and_then(|()| stream.flush());
+            thread::sleep(Duration::from_secs(60));
         }
         Some(Route::Stall) => thread::sleep(Duration::from_secs(60)),
         None => {

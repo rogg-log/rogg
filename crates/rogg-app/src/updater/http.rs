@@ -131,18 +131,37 @@ fn part_path(dest: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// What the helper thread reports: the response head, then body chunks.
+enum Msg {
+    Head(Option<u64>),
+    Chunk(Vec<u8>),
+}
+
+/// How often the caller looks at the cancel token while waiting for the helper.
+const POLL: Duration = Duration::from_millis(100);
+
 fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>), cancel: &CancelToken, idle: Duration) -> Result<(), NetError> {
     if cancel.is_cancelled() {
         return Err(NetError::Cancelled);
     }
-    let agent = agent(|b| b.timeout_connect(Some(MANIFEST_TIMEOUT)).timeout_recv_response(Some(idle)));
-    let response = agent.get(url).call().map_err(|e| map_ureq(&e))?;
-    let body = response.into_body();
-    let total = body.content_length();
-    let mut file = File::create(part).map_err(|e| NetError::Io(e.to_string()))?;
-
-    let (tx, rx) = mpsc::sync_channel::<Result<Vec<u8>, NetError>>(4);
+    // The request and the body read both block, so they run on a helper thread; the caller polls in short slices
+    // so a cancel takes effect quickly in either phase. If the caller gives up, the helper ends when its next send
+    // fails or its read returns.
+    let (tx, rx) = mpsc::sync_channel::<Result<Msg, NetError>>(4);
+    let url = url.to_string();
     thread::spawn(move || {
+        let agent = agent(|b| b.timeout_connect(Some(MANIFEST_TIMEOUT)).timeout_recv_response(Some(idle)));
+        let response = match agent.get(&url).call() {
+            Ok(response) => response,
+            Err(e) => {
+                let _ = tx.send(Err(map_ureq(&e)));
+                return;
+            }
+        };
+        let body = response.into_body();
+        if tx.send(Ok(Msg::Head(body.content_length()))).is_err() {
+            return;
+        }
         let mut reader = body.into_reader();
         loop {
             let mut buf = vec![0u8; CHUNK];
@@ -150,7 +169,7 @@ fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>
                 Ok(0) => break,
                 Ok(n) => {
                     buf.truncate(n);
-                    if tx.send(Ok(buf)).is_err() {
+                    if tx.send(Ok(Msg::Chunk(buf))).is_err() {
                         return;
                     }
                 }
@@ -162,14 +181,24 @@ fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>
         }
     });
 
+    let mut file: Option<File> = None;
+    let mut total = None;
     let mut done = 0u64;
     let mut reported = 0u64;
+    let mut waited = Duration::ZERO;
     loop {
         if cancel.is_cancelled() {
             return Err(NetError::Cancelled);
         }
-        match rx.recv_timeout(idle) {
-            Ok(Ok(chunk)) => {
+        match rx.recv_timeout(POLL) {
+            Ok(Ok(Msg::Head(length))) => {
+                waited = Duration::ZERO;
+                total = length;
+                file = Some(File::create(part).map_err(|e| NetError::Io(e.to_string()))?);
+            }
+            Ok(Ok(Msg::Chunk(chunk))) => {
+                waited = Duration::ZERO;
+                let Some(file) = file.as_mut() else { return Err(NetError::Io("no response head".into())) };
                 file.write_all(&chunk).map_err(|e| NetError::Io(e.to_string()))?;
                 done += chunk.len() as u64;
                 if done - reported >= PROGRESS_STEP {
@@ -178,10 +207,16 @@ fn fetch_to(url: &str, part: &Path, on_progress: &mut dyn FnMut(u64, Option<u64>
                 }
             }
             Ok(Err(e)) => return Err(e),
-            Err(mpsc::RecvTimeoutError::Timeout) => return Err(NetError::TimedOut),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                waited += POLL;
+                if waited >= idle {
+                    return Err(NetError::TimedOut);
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    let Some(mut file) = file else { return Err(NetError::Io("no response".into())) };
     if let Some(total) = total
         && done != total
     {

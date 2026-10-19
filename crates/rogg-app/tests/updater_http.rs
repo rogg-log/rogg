@@ -78,3 +78,57 @@ fn a_stalled_server_times_out() {
 fn offline_is_reported() {
     assert!(matches!(fetch_manifest("http://127.0.0.1:1"), Err(NetError::Offline)));
 }
+
+fn assert_cancelled_quickly(result: Result<(), NetError>, started: std::time::Instant, dir: &std::path::Path) {
+    assert!(matches!(result, Err(NetError::Cancelled)), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(!dir.join("a.bin").exists());
+    assert!(!dir.join("a.bin.part").exists());
+}
+
+#[test]
+fn cancel_during_the_header_wait_returns_promptly() {
+    let server = TestServer::start(vec![("/a.bin", Route::Stall)]);
+    let dir = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        token.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = download_with_timeout(&format!("{}/a.bin", server.base()), &dir.path().join("a.bin"), &mut |_, _| {}, &cancel, Duration::from_secs(30));
+    assert_cancelled_quickly(result, started, dir.path());
+}
+
+#[test]
+fn cancel_during_a_mid_body_stall_returns_promptly() {
+    let server = TestServer::start(vec![("/a.bin", Route::StallAfter(200, body(300_000), 100_000))]);
+    let dir = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    let started = std::time::Instant::now();
+    let result = download_with_timeout(
+        &format!("{}/a.bin", server.base()),
+        &dir.path().join("a.bin"),
+        &mut |_, _| token.cancel(),
+        &cancel,
+        Duration::from_secs(30),
+    );
+    assert_cancelled_quickly(result, started, dir.path());
+}
+
+#[test]
+fn a_mid_body_stall_times_out() {
+    let server = TestServer::start(vec![("/a.bin", Route::StallAfter(200, body(300_000), 100_000))]);
+    let dir = tempfile::tempdir().unwrap();
+    let result = download_with_timeout(
+        &format!("{}/a.bin", server.base()),
+        &dir.path().join("a.bin"),
+        &mut |_, _| {},
+        &CancelToken::new(),
+        Duration::from_millis(300),
+    );
+    assert!(matches!(result, Err(NetError::TimedOut)), "{result:?}");
+    assert!(!dir.path().join("a.bin.part").exists());
+}
