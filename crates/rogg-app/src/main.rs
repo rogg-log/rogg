@@ -5,6 +5,9 @@
 fn main() {
     match rogg_app::args::Args::parse(std::env::args_os().skip(1)) {
         Ok(mut args) => {
+            if let Some((staged, target)) = &args.apply_update {
+                std::process::exit(rogg_app::updater::run_apply_update(staged, target));
+            }
             if args.version {
                 println!("{}", rogg_app::about::version_line(&rogg_app::about::build_info()));
                 return;

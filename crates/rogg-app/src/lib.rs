@@ -30,6 +30,7 @@ pub mod sidebar_model;
 pub mod sources;
 pub mod tab;
 pub mod tab_view;
+pub mod updater;
 pub mod window;
 pub mod workspace;
 

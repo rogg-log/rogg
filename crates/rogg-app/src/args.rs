@@ -12,6 +12,8 @@ pub struct Args {
     /// Print the version and build, then exit (install.sh reads it).
     pub version: bool,
     pub paths: Vec<PathBuf>,
+    /// Hidden: `--apply-update <staged> <target>`, the elevated helper's mode. Not in `USAGE`.
+    pub apply_update: Option<(PathBuf, PathBuf)>,
 }
 
 impl Args {
@@ -19,10 +21,15 @@ impl Args {
     /// Paths may be any bytes (`args_os`); only flags need to be UTF-8.
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let mut out = Args::default();
-        for arg in args {
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--demo") => out.demo = true,
                 Some("-V" | "--version") => out.version = true,
+                Some("--apply-update") => match (args.next(), args.next()) {
+                    (Some(staged), Some(target)) => out.apply_update = Some((staged.into(), target.into())),
+                    _ => return Err(format!("--apply-update needs <staged> <target>\n{USAGE}")),
+                },
                 Some("-h" | "--help") => return Err(USAGE.to_string()),
                 Some("-") => out.paths.push(PathBuf::from("-")),
                 Some(flag) if flag.starts_with('-') => return Err(format!("unknown option `{flag}`\n{USAGE}")),
@@ -71,6 +78,13 @@ mod tests {
         assert!(parse("-V").unwrap().version);
         assert!(!parse("a.log").unwrap().version);
         assert!(USAGE.contains("--version"));
+    }
+
+    #[test]
+    fn apply_update_takes_two_paths() {
+        assert_eq!(parse("--apply-update /a/s /b/rogg").unwrap().apply_update, Some(("/a/s".into(), "/b/rogg".into())));
+        assert!(parse("--apply-update /a").unwrap_err().contains(USAGE));
+        assert!(parse("--apply-update").is_err());
     }
 
     #[test]
