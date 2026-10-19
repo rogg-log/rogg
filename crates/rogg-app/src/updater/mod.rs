@@ -372,8 +372,8 @@ mod tests {
         let cache = Path::new("/var/cache/rogg");
         let config = UpdaterConfig::from_env(cache);
         assert_eq!(config.work_dir, cache.join("update"));
-        // Tests are built without ROGG_BUILD_NUMBER.
-        assert_eq!(config.running_build, None);
+        // CI builds the tests with ROGG_BUILD_NUMBER, local runs without it.
+        assert_eq!(config.running_build, crate::about::build_info().number.map(|n| n.parse::<u64>().unwrap()));
         assert_eq!(config.os, Os::current());
         assert_eq!(config.arch, std::env::consts::ARCH);
         assert_eq!(config.base, http::base_url());
