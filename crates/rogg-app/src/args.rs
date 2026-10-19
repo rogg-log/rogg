@@ -12,8 +12,16 @@ pub struct Args {
     /// Print the version and build, then exit (install.sh reads it).
     pub version: bool,
     pub paths: Vec<PathBuf>,
-    /// Hidden: `--apply-update <staged> <target>`, the elevated helper's mode. Not in `USAGE`.
-    pub apply_update: Option<(PathBuf, PathBuf)>,
+    /// Hidden: `--apply-update <archive> <sha256> <target>`, the elevated helper's mode. Not in `USAGE`.
+    pub apply_update: Option<ApplyUpdate>,
+}
+
+/// What the elevated helper installs: the downloaded release `archive`, which must hash to `sha256`, over `target`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplyUpdate {
+    pub archive: PathBuf,
+    pub sha256: String,
+    pub target: PathBuf,
 }
 
 impl Args {
@@ -26,9 +34,11 @@ impl Args {
             match arg.to_str() {
                 Some("--demo") => out.demo = true,
                 Some("-V" | "--version") => out.version = true,
-                Some("--apply-update") => match (args.next(), args.next()) {
-                    (Some(staged), Some(target)) => out.apply_update = Some((staged.into(), target.into())),
-                    _ => return Err(format!("--apply-update needs <staged> <target>\n{USAGE}")),
+                Some("--apply-update") => match (args.next(), args.next().map(OsString::into_string), args.next()) {
+                    (Some(archive), Some(Ok(sha256)), Some(target)) => {
+                        out.apply_update = Some(ApplyUpdate { archive: archive.into(), sha256, target: target.into() })
+                    }
+                    _ => return Err(format!("--apply-update needs <archive> <sha256> <target>\n{USAGE}")),
                 },
                 Some("-h" | "--help") => return Err(USAGE.to_string()),
                 Some("-") => out.paths.push(PathBuf::from("-")),
@@ -81,10 +91,28 @@ mod tests {
     }
 
     #[test]
-    fn apply_update_takes_two_paths() {
-        assert_eq!(parse("--apply-update /a/s /b/rogg").unwrap().apply_update, Some(("/a/s".into(), "/b/rogg".into())));
-        assert!(parse("--apply-update /a").unwrap_err().contains(USAGE));
+    fn apply_update_takes_an_archive_its_checksum_and_a_target() {
+        assert_eq!(
+            parse("--apply-update /c/a.tar.gz 0a1b /b/rogg").unwrap().apply_update,
+            Some(ApplyUpdate { archive: "/c/a.tar.gz".into(), sha256: "0a1b".into(), target: "/b/rogg".into() })
+        );
+        assert!(parse("--apply-update /c/a.tar.gz 0a1b").unwrap_err().contains(USAGE));
+        assert!(parse("--apply-update /c/a.tar.gz").is_err());
         assert!(parse("--apply-update").is_err());
+        assert!(!USAGE.contains("apply-update"), "hidden");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_update_needs_a_text_checksum() {
+        use std::os::unix::ffi::OsStringExt;
+        let args = [
+            OsString::from("--apply-update"),
+            OsString::from("/c/a.tar.gz"),
+            OsString::from_vec(b"\xff".to_vec()),
+            OsString::from("/b/rogg"),
+        ];
+        assert!(Args::parse(args).is_err());
     }
 
     #[test]

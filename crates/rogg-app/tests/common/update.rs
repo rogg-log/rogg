@@ -2,7 +2,7 @@
 //! release archives and manifests, a `TestServer` publishing them, and helpers that poll an `Updater` until it settles.
 use super::http::{Route, TestServer};
 use gpui_kit::SharedString;
-use rogg_app::updater::{Elevator, Failure, UpdateState, Updater, UpdaterConfig};
+use rogg_app::updater::{ApplyUpdate, Elevator, Failure, UpdateState, Updater, UpdaterConfig};
 use rogg_core::platform::Os;
 use rogg_core::update::Install;
 use rogg_genlog::bundle::{BundleKind, write_archive};
@@ -17,14 +17,23 @@ pub const ASSET: &str = "rogg-linux-x86_64.tar.gz";
 pub const ASSET_PATH: &str = "/rogg-linux-x86_64.tar.gz";
 pub const NEW: &[u8] = b"new rogg build 14";
 
-pub type Calls = Arc<Mutex<Vec<(PathBuf, PathBuf)>>>;
+/// One call of the fake elevator: what it was asked, the archive's bytes at that moment (`None` if missing), and
+/// whether anything had been unpacked into the work dir by then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Elevated {
+    pub request: ApplyUpdate,
+    pub archive: Option<Vec<u8>>,
+    pub staged: bool,
+}
+
+pub type Calls = Arc<Mutex<Vec<Elevated>>>;
 
 /// An updater that can never reach the network or install anything: a local build (no check ever fetches), an
 /// unsupported install, an unroutable base, and an elevator that fails the test if it is called. `common::init`
 /// installs it before the app's globals, so no test talks to GitHub (R10: CI builds the tests with a build number).
 pub fn offline_config(work_dir: PathBuf) -> UpdaterConfig {
     UpdaterConfig {
-        elevator: Arc::new(|_: &Path, _: &Path| panic!("the offline test updater never elevates")),
+        elevator: Arc::new(|_: &ApplyUpdate| panic!("the offline test updater never elevates")),
         ..UpdaterConfig::disabled(work_dir)
     }
 }
@@ -54,8 +63,11 @@ impl Fixture {
     /// A config whose elevator records its calls and returns `result`.
     pub fn config_with(&self, server: &TestServer, running: Option<u64>, result: Result<(), Failure>) -> UpdaterConfig {
         let calls = self.calls.clone();
-        let elevator: Elevator = Arc::new(move |staged: &Path, target: &Path| {
-            calls.lock().unwrap().push((staged.to_path_buf(), target.to_path_buf()));
+        let work_dir = self.work_dir();
+        let elevator: Elevator = Arc::new(move |request: &ApplyUpdate| {
+            let staged = walk(&work_dir).iter().any(|p| p.file_name().is_some_and(|n| n == "rogg" || n == "staged"));
+            let archive = fs::read(&request.archive).ok();
+            calls.lock().unwrap().push(Elevated { request: request.clone(), archive, staged });
             result.clone()
         });
         UpdaterConfig {
@@ -76,6 +88,17 @@ impl Fixture {
     pub fn work_dir_is_empty(&self) -> bool {
         fs::read_dir(self.work_dir()).map(|mut d| d.next().is_none()).unwrap_or(true)
     }
+}
+
+/// Every path under `dir`.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        found.extend(walk(&path));
+        found.push(path);
+    }
+    found
 }
 
 /// A `.tar.gz` with `rogg` holding `bytes`.

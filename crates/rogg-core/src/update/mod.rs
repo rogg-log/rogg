@@ -14,6 +14,8 @@ pub enum UpdateError {
     BadManifest(String),
     #[error("checksum mismatch")]
     Checksum,
+    #[error("the download couldn't be read: {0}")]
+    Read(#[source] io::Error),
     #[error("the download couldn't be unpacked: {0}")]
     Unpack(String),
     #[error("the archive has no {0}")]

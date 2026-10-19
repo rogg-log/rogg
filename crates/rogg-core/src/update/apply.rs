@@ -5,13 +5,15 @@ use super::{Install, UpdateError};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 const NEW_SUFFIX: &str = ".rogg-new";
 const OLD_SUFFIX: &str = ".rogg-old";
 const WINDOWS_OLD_SUFFIX: &str = ".old";
+/// The elevated helper's own folder beside the target: `<target>.rogg-stage-<pid>`.
+const STAGE_SUFFIX: &str = ".rogg-stage";
 
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> UpdateError + '_ {
     move |source| UpdateError::Io { path: path.to_path_buf(), source }
@@ -36,14 +38,24 @@ fn remove_any(path: &Path) -> io::Result<()> {
 
 /// Checks the SHA-256 of `file` against `sha256_hex` (case-insensitive).
 pub fn verify(file: &Path, sha256_hex: &str) -> Result<(), UpdateError> {
-    let mut f = File::open(file).map_err(io_err(file))?;
+    let f = File::open(file).map_err(io_err(file))?;
+    verify_reader(f, sha256_hex).map_err(|e| match e {
+        UpdateError::Read(source) => UpdateError::Io { path: file.to_path_buf(), source },
+        e => e,
+    })
+}
+
+/// Checks the SHA-256 of everything `reader` yields against `sha256_hex` (case-insensitive).
+pub fn verify_reader(mut reader: impl Read, sha256_hex: &str) -> Result<(), UpdateError> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = f.read(&mut buf).map_err(io_err(file))?;
-        if n == 0 {
-            break;
-        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(UpdateError::Read(e)),
+        };
         hasher.update(&buf[..n]);
     }
     let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
@@ -58,9 +70,13 @@ fn unpack_err(e: impl std::fmt::Display) -> UpdateError {
     UpdateError::Unpack(e.to_string())
 }
 
-fn unpack_tar_gz(archive: &Path, dir: &Path) -> Result<(), UpdateError> {
-    let file = File::open(archive).map_err(io_err(archive))?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+/// Permission bits an unpacked file never gets: set-id, sticky, and write for group and others.
+const MODE_MASK: u32 = 0o7022;
+
+fn unpack_tar_gz(archive: impl Read, dir: &Path) -> Result<(), UpdateError> {
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+    // Set-id and sticky bits are dropped anyway (permissions aren't preserved); this drops group/other write too.
+    tar.set_mask(MODE_MASK);
     for entry in tar.entries().map_err(unpack_err)? {
         let mut entry = entry.map_err(unpack_err)?;
         let path = entry.path().map_err(unpack_err)?.into_owned();
@@ -81,9 +97,8 @@ fn unpack_tar_gz(archive: &Path, dir: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
-fn unpack_zip(archive: &Path, dir: &Path) -> Result<(), UpdateError> {
-    let file = File::open(archive).map_err(io_err(archive))?;
-    let mut zip = zip::ZipArchive::new(file).map_err(unpack_err)?;
+fn unpack_zip(archive: impl Read + Seek, dir: &Path) -> Result<(), UpdateError> {
+    let mut zip = zip::ZipArchive::new(archive).map_err(unpack_err)?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(unpack_err)?;
         let Some(rel) = entry.enclosed_name() else {
@@ -102,15 +117,49 @@ fn unpack_zip(archive: &Path, dir: &Path) -> Result<(), UpdateError> {
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&out, fs::Permissions::from_mode(mode & 0o777)).map_err(unpack_err)?;
+            fs::set_permissions(&out, fs::Permissions::from_mode(mode & 0o777 & !MODE_MASK)).map_err(unpack_err)?;
         }
     }
     Ok(())
 }
 
-/// Unpacks `archive` (`.zip`, otherwise `.tar.gz`) into `dir` and returns the item to install: `rogg`, `rogg.exe` or
-/// `rogg.app` at the archive root, according to `install`. Entries that would land outside `dir` fail the unpack.
+/// The format of a release archive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveKind {
+    TarGz,
+    Zip,
+}
+
+impl ArchiveKind {
+    /// From the file name: `.tar.gz` or `.zip` (any case); anything else is `None`.
+    pub fn of(path: &Path) -> Option<ArchiveKind> {
+        let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+        if name.ends_with(".tar.gz") {
+            Some(ArchiveKind::TarGz)
+        } else if name.ends_with(".zip") {
+            Some(ArchiveKind::Zip)
+        } else {
+            None
+        }
+    }
+}
+
+/// Unpacks `archive` (`.zip`, otherwise `.tar.gz`) into `dir` and returns the item to install; see [`stage_from`].
 pub fn stage(archive: &Path, dir: &Path, install: &Install) -> Result<PathBuf, UpdateError> {
+    let kind = ArchiveKind::of(archive).unwrap_or(ArchiveKind::TarGz);
+    let file = File::open(archive).map_err(io_err(archive))?;
+    stage_from(file, kind, dir, install)
+}
+
+/// Unpacks the `kind` archive read from `archive` into `dir` and returns the item to install: `rogg`, `rogg.exe` or
+/// `rogg.app` at the archive root, according to `install`. Entries that would land outside `dir` fail the unpack;
+/// unpacked files never get set-id bits or group/other write.
+pub fn stage_from(
+    archive: impl Read + Seek,
+    kind: ArchiveKind,
+    dir: &Path,
+    install: &Install,
+) -> Result<PathBuf, UpdateError> {
     let item: &'static str = match install {
         Install::App { .. } => "rogg.app",
         Install::Binary { path } if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) => "rogg.exe",
@@ -118,10 +167,9 @@ pub fn stage(archive: &Path, dir: &Path, install: &Install) -> Result<PathBuf, U
         Install::Unsupported => return Err(UpdateError::Unpack("this install can't be updated".into())),
     };
     fs::create_dir_all(dir).map_err(io_err(dir))?;
-    if archive.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
-        unpack_zip(archive, dir)?;
-    } else {
-        unpack_tar_gz(archive, dir)?;
+    match kind {
+        ArchiveKind::Zip => unpack_zip(archive, dir)?,
+        ArchiveKind::TarGz => unpack_tar_gz(archive, dir)?,
     }
     let staged = dir.join(item);
     // A link would be followed once the item is moved beside the target, so only real files and folders count.
@@ -218,9 +266,19 @@ fn old_aside(target: &Path, fault: Fault) -> Result<PathBuf, UpdateError> {
 
 /// `<target>.rogg-old-*`: old versions put aside under a name of their own by [`old_aside`].
 fn unique_olds(target: &Path) -> Vec<PathBuf> {
+    numbered_siblings(target, OLD_SUFFIX)
+}
+
+/// `<target>.rogg-stage-*`: the elevated helpers' folders ([`apply_archive`]).
+fn stage_dirs(target: &Path) -> Vec<PathBuf> {
+    numbered_siblings(target, STAGE_SUFFIX)
+}
+
+/// `<target><suffix>-*`, sorted.
+fn numbered_siblings(target: &Path, suffix: &str) -> Vec<PathBuf> {
     let Some(name) = target.file_name() else { return Vec::new() };
     let mut prefix = name.to_os_string();
-    prefix.push(OLD_SUFFIX);
+    prefix.push(suffix);
     prefix.push("-");
     let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let mut found: Vec<PathBuf> = fs::read_dir(dir)
@@ -247,20 +305,11 @@ fn restore_old(target: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
-/// How the new version gets beside the target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transfer {
-    /// A rename (a copy across volumes); the staged item is consumed. The moved files keep their owner, so this is
-    /// only for an update that runs as the user who owns the install.
-    Move,
-    /// A fresh copy; the staged item is left in place. The elevated helper copies, so the installed files are
-    /// created by the admin process and get the destination's owner and inherited permissions, not those of the
-    /// user's cache.
-    Copy,
-}
-
-pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle, transfer: Transfer) -> Result<(), UpdateError> {
-    apply_with_fault(staged, target, style, transfer, Fault::None)
+/// Replaces `target` with `staged`, which is moved into place (renamed, or copied across volumes) and so consumed.
+/// The moved files keep their owner: the in-process update stages into the user's cache because the user owns the
+/// install, and the elevated helper stages into a folder of its own ([`apply_archive`]).
+pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle) -> Result<(), UpdateError> {
+    apply_with_fault(staged, target, style, Fault::None)
 }
 
 #[cfg(unix)]
@@ -279,17 +328,10 @@ fn make_executable(_item: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Replaces `target` with `staged` (consumed by [`Transfer::Move`], left in place by [`Transfer::Copy`]). The old
-/// version is renamed aside first and put back if the new one can't be moved in, so a failure leaves the previous
-/// version in place.
+/// [`apply`] with injected faults. The old version is renamed aside first and put back if the new one can't be moved
+/// in, so a failure leaves the previous version in place.
 #[doc(hidden)]
-pub fn apply_with_fault(
-    staged: &Path,
-    target: &Path,
-    style: ReplaceStyle,
-    transfer: Transfer,
-    fault: Fault,
-) -> Result<(), UpdateError> {
+pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault: Fault) -> Result<(), UpdateError> {
     if !rogg_name(target) {
         return Err(UpdateError::NotRogg(target.to_path_buf()));
     }
@@ -303,11 +345,7 @@ pub fn apply_with_fault(
     remove_any(&new).map_err(io_err(&new))?;
     let old = old_aside(target, fault)?;
 
-    let placed = match transfer {
-        Transfer::Move => move_into(staged, &new),
-        Transfer::Copy => copy_tree(staged, &new),
-    };
-    if let Err(e) = placed.and_then(|()| make_executable(&new)) {
+    if let Err(e) = move_into(staged, &new).and_then(|()| make_executable(&new)) {
         let _ = remove_any(&new);
         return Err(UpdateError::Io { path: new, source: e });
     }
@@ -339,6 +377,110 @@ pub fn apply_with_fault(
     Ok(())
 }
 
+/// The elevated helper's install: checks the archive at `archive` against `sha256_hex`, unpacks it into a folder of
+/// its own beside the target (`<target>.rogg-stage-<pid>`, which must not exist yet) and moves the item into place
+/// with [`apply`]. The folder is removed afterwards, whatever happened.
+///
+/// The download sits in the user's cache, where the user can change it at any time, so it is opened once (refusing a
+/// link or anything but a regular file) and read once: its bytes are hashed as they are copied into the stage
+/// folder, and only that copy, which the user can't touch, is unpacked. Everything installed is created by this
+/// process, so with admin rights it gets the admin owner and the destination's inherited permissions.
+pub fn apply_archive(archive: &Path, sha256_hex: &str, target: &Path, style: ReplaceStyle) -> Result<(), UpdateError> {
+    if !rogg_name(target) {
+        return Err(UpdateError::NotRogg(target.to_path_buf()));
+    }
+    let kind = ArchiveKind::of(archive)
+        .ok_or_else(|| UpdateError::Unpack(format!("{} is not a .tar.gz or .zip", archive.display())))?;
+    let install = if is_app_name(target) {
+        Install::App { bundle: target.to_path_buf() }
+    } else {
+        Install::Binary { path: target.to_path_buf() }
+    };
+    let source = open_regular(archive).map_err(io_err(archive))?;
+    let dir = beside(target, &format!("{STAGE_SUFFIX}-{}", std::process::id()));
+    // `create_dir`, not `create_dir_all`: a folder already there isn't this run's, so it is neither used nor removed.
+    fs::create_dir(&dir).map_err(io_err(&dir))?;
+    let result = install_from(source, sha256_hex, kind, &dir, &install, target, style);
+    let _ = remove_any(&dir);
+    result
+}
+
+/// [`apply_archive`] once its stage folder `dir` exists.
+fn install_from(
+    source: File,
+    sha256_hex: &str,
+    kind: ArchiveKind,
+    dir: &Path,
+    install: &Install,
+    target: &Path,
+    style: ReplaceStyle,
+) -> Result<(), UpdateError> {
+    let copy_path = dir.join("download");
+    let mut copy = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&copy_path)
+        .map_err(io_err(&copy_path))?;
+    verify_reader(Tee { inner: source, copy: &mut copy }, sha256_hex)?;
+    copy.seek(SeekFrom::Start(0)).map_err(io_err(&copy_path))?;
+    let staged = stage_from(copy, kind, &dir.join("staged"), install)?;
+    apply(&staged, target, style)
+}
+
+/// Reads `inner` and writes everything it reads to `copy`.
+struct Tee<R, W> {
+    inner: R,
+    copy: W,
+}
+
+impl<R: Read, W: Write> Read for Tee<R, W> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.copy.write_all(&buf[..n])?;
+        Ok(n)
+    }
+}
+
+/// Opens `path` for reading only if it is a regular file itself: a link is refused, not followed, and a FIFO or a
+/// device fails at once instead of blocking. The check is made on the opened handle, so nothing can be swapped in
+/// after it.
+#[cfg(unix)]
+fn open_regular(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
+/// Opens `path` for reading only if it is a regular file itself. A symlink or other reparse point is opened as itself
+/// (`FILE_FLAG_OPEN_REPARSE_POINT`), not followed, and refused; the check is made on the opened handle.
+#[cfg(windows)]
+fn open_regular(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT};
+    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::other("a link, not a regular file"));
+    }
+    let file = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_regular(path: &Path) -> io::Result<File> {
+    let file = File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
 /// Moves a file or tree: a rename, or a copy and delete when `dst` is on another volume.
 pub fn move_into(src: &Path, dst: &Path) -> io::Result<()> {
     match fs::rename(src, dst) {
@@ -354,10 +496,9 @@ pub fn move_into(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// Copies a file or a whole tree into newly created files and folders, so they belong to whoever runs this, with the
+/// Copies a file or a whole tree into newly created files and folders ([`move_into`] across volumes), with the
 /// permissions kept minus any set-id or sticky bits. Links are recreated on Unix, never followed; elsewhere a link
-/// fails the copy. Files are not copied with `fs::copy`: on macOS it clones the file, and a clone made as root keeps
-/// the source's owner.
+/// fails the copy, as does anything that isn't a file, a folder or a link.
 pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if meta.is_dir() {
@@ -376,28 +517,15 @@ pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
         {
             Err(io::Error::other(format!("{} is a link", src.display())))
         }
+    } else if meta.is_file() {
+        let mut from = File::open(src)?;
+        let mut to = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
+        io::copy(&mut from, &mut to)?;
+        drop(to);
+        fs::set_permissions(dst, plain_permissions(&meta))
     } else {
-        copy_file(src, dst, &meta)
+        Err(io::Error::other(format!("{} is not a file, a folder or a link", src.display())))
     }
-}
-
-/// Copies the regular file `src` (whose `symlink_metadata` is `meta`) into the new file `dst`.
-fn copy_file(src: &Path, dst: &Path, meta: &fs::Metadata) -> io::Result<()> {
-    let mut from = File::open(src)?;
-    // `src` was a regular file when `meta` was read; make sure the file opened is still that one and not a link
-    // swapped in since, which `open` would have followed.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let opened = from.metadata()?;
-        if !opened.is_file() || (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
-            return Err(io::Error::other(format!("{} changed while it was copied", src.display())));
-        }
-    }
-    let mut to = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
-    io::copy(&mut from, &mut to)?;
-    drop(to);
-    fs::set_permissions(dst, plain_permissions(meta))
 }
 
 /// `meta`'s permissions without set-user-id, set-group-id or sticky bits.
@@ -413,8 +541,9 @@ fn plain_permissions(meta: &fs::Metadata) -> fs::Permissions {
     }
 }
 
-/// A build folder under the work dir with anything modified this recently belongs to an update in progress, maybe in
-/// another rogg process (there is no single-instance lock): `sweep` leaves it, and the names beside the target, alone.
+/// A build folder under the work dir, or an elevated helper's stage folder beside the target, with anything modified
+/// this recently belongs to an update in progress, maybe in another rogg process (there is no single-instance lock):
+/// `sweep` leaves it, and the names beside the target, alone.
 pub const SWEEP_IN_USE: Duration = Duration::from_secs(10 * 60);
 
 /// Removes what an update leaves behind (best effort): stale build folders in `work_dir` (`<cache>/update`), and, when
@@ -425,23 +554,29 @@ pub fn sweep(target: Option<&Path>, work_dir: &Path) {
 
 /// `sweep` as of `now`.
 pub fn sweep_at(target: Option<&Path>, work_dir: &Path, now: SystemTime) {
+    // A modification time in the future (a changed clock) counts as fresh. Freshness relies on what the job writes
+    // itself: the download (`.part`, then the archive) and the folders it creates. Unpacked files may keep the
+    // archive's old times, so staging must never backdate the folders it makes.
+    let fresh =
+        |path: &Path| newest_change(path).is_some_and(|t| now.duration_since(t).map_or(true, |age| age < SWEEP_IN_USE));
     let mut in_use = false;
     for entry in fs::read_dir(work_dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        // A modification time in the future (a changed clock) counts as fresh. Freshness relies on what the job
-        // writes itself: the download (`.part`, then the archive) and the folders it creates. Unpacked files may
-        // keep the archive's old times, so `stage` must never backdate the folders it makes.
-        let fresh = newest_change(&path).is_some_and(|t| now.duration_since(t).map_or(true, |age| age < SWEEP_IN_USE));
-        if fresh {
+        if fresh(&path) {
             in_use = true;
         } else {
             let _ = remove_any(&path);
         }
     }
-    if in_use {
+    // An elevated helper works beside the target, not in the work dir.
+    let stages = target.map(stage_dirs).unwrap_or_default();
+    if in_use || stages.iter().any(|dir| fresh(dir)) {
         return;
     }
     if let Some(target) = target {
+        for dir in &stages {
+            let _ = remove_any(dir);
+        }
         // With the target gone, an old copy is the only copy of the program: restore it rather than delete it.
         let _ = restore_old(target);
         for suffix in [NEW_SUFFIX, WINDOWS_OLD_SUFFIX] {

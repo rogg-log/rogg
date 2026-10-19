@@ -1,12 +1,15 @@
+// The elevation tests need a read-only folder, so they are Unix-only and some imports go unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 mod common;
 
 use common::http::{Gate, Route, TestServer};
 use common::update::*;
-use rogg_app::updater::{Failure, UpdateState, Updater};
+use rogg_app::updater::{ApplyUpdate, Failure, UpdateState, Updater};
 use rogg_core::update::Install;
 use rogg_genlog::bundle::{BundleKind, write_archive};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -244,8 +247,33 @@ fn an_unwritable_folder_uses_the_elevator() {
     run(&mut updater);
     read_only(&bin, false);
     assert!(matches!(updater.state(), UpdateState::Installed(_)), "{:?}", updater.state());
-    let staged = fixture.work_dir().join("14/staged/rogg");
-    assert_eq!(*fixture.calls.lock().unwrap(), vec![(staged, fixture.target())]);
+    // The helper gets the verified download and its checksum, never a tree unpacked by this (user-owned) process.
+    let expected = Elevated {
+        request: ApplyUpdate { archive: fixture.work_dir().join("14").join(ASSET), sha256: sha256(&data), target: fixture.target() },
+        archive: Some(data.clone()),
+        staged: false,
+    };
+    assert_eq!(*fixture.calls.lock().unwrap(), vec![expected]);
+    assert!(fixture.work_dir_is_empty());
+}
+
+/// A download that doesn't match its checksum is refused before any admin prompt.
+#[cfg(unix)]
+#[test]
+fn a_bad_checksum_never_elevates() {
+    let fixture = Fixture::new();
+    let data = archive(NEW);
+    let json = manifest(14, Some((ASSET, &"0".repeat(64), data.len())));
+    let server = TestServer::start(vec![("/manifest.json", Route::Bytes(200, json)), (ASSET_PATH, Route::Bytes(200, data))]);
+    let mut updater = available(&fixture, &server);
+    let bin = fixture.dir.path().join("bin");
+    read_only(&bin, true);
+    updater.start_update();
+    run(&mut updater);
+    read_only(&bin, false);
+    assert_eq!(failure(updater.state()), Some(&Failure::Checksum));
+    assert!(fixture.calls.lock().unwrap().is_empty());
+    assert_eq!(fs::read(fixture.target()).unwrap(), b"old");
     assert!(fixture.work_dir_is_empty());
 }
 
@@ -259,7 +287,7 @@ fn the_badge_stays_while_installing() {
     // The elevator holds the job in Installing until the test lets it go.
     let (release, held) = std::sync::mpsc::channel::<()>();
     let held = Arc::new(Mutex::new(held));
-    config.elevator = Arc::new(move |_: &Path, _: &Path| {
+    config.elevator = Arc::new(move |_: &ApplyUpdate| {
         let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(10));
         Ok(())
     });

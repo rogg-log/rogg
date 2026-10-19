@@ -1,35 +1,36 @@
-//! Running the hidden `rogg --apply-update <staged> <target>` with admin rights: osascript on macOS, pkexec on
-//! Linux, the UAC prompt (`ShellExecuteExW` "runas") on Windows.
+//! Running the hidden `rogg --apply-update <archive> <sha256> <target>` with admin rights: osascript on macOS, pkexec
+//! on Linux, the UAC prompt (`ShellExecuteExW` "runas") on Windows.
 //!
-//! The helper's paths reach it as separate arguments everywhere. The one string that is parsed (the AppleScript)
-//! escapes each path into a string literal and shell-quotes it with `quoted form of`.
+//! The helper's arguments reach it separately everywhere. The one string that is parsed (the AppleScript) escapes
+//! each argument into a string literal and shell-quotes it with `quoted form of`.
 
-use super::Failure;
+use super::{ApplyUpdate, Failure};
 use rogg_core::platform::Os;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-/// Replaces `target` with `staged` by running this executable's `--apply-update` with admin rights. Blocks until
-/// the prompt is answered and the helper has exited.
-pub fn apply_elevated(staged: &Path, target: &Path) -> Result<(), Failure> {
+/// Installs `request`'s archive by running this executable's `--apply-update` with admin rights. Blocks until the
+/// prompt is answered and the helper has exited.
+pub fn apply_elevated(request: &ApplyUpdate) -> Result<(), Failure> {
     let exe = std::env::current_exe().map_err(|_| Failure::RolledBack)?;
-    imp::run(&exe, staged, target)
+    imp::run(&exe, request)
 }
 
 /// The osascript program that runs the helper with administrator privileges.
-pub fn applescript(exe: &Path, staged: &Path, target: &Path) -> String {
+pub fn applescript(exe: &Path, request: &ApplyUpdate) -> String {
     format!(
-        "do shell script quoted form of {} & \" --apply-update \" & quoted form of {} & \" \" & quoted form of {} with administrator privileges",
-        applescript_string(exe),
-        applescript_string(staged),
-        applescript_string(target),
+        "do shell script quoted form of {} & \" --apply-update \" & quoted form of {} & \" \" & quoted form of {} & \" \" & quoted form of {} with administrator privileges",
+        applescript_string(&exe.to_string_lossy()),
+        applescript_string(&request.archive.to_string_lossy()),
+        applescript_string(&request.sha256),
+        applescript_string(&request.target.to_string_lossy()),
     )
 }
 
-/// `path` as an AppleScript string literal: `\` and `"` are backslash-escaped, so no path can end the literal.
-fn applescript_string(path: &Path) -> String {
+/// `text` as an AppleScript string literal: `\` and `"` are backslash-escaped, so nothing can end the literal.
+fn applescript_string(text: &str) -> String {
     let mut literal = String::from('"');
-    for c in path.to_string_lossy().chars() {
+    for c in text.chars() {
         if matches!(c, '\\' | '"') {
             literal.push('\\');
         }
@@ -39,9 +40,15 @@ fn applescript_string(path: &Path) -> String {
     literal
 }
 
-/// pkexec's arguments: the helper command, one argument per path.
-pub fn pkexec_argv(exe: &Path, staged: &Path, target: &Path) -> Vec<OsString> {
-    vec![exe.into(), "--apply-update".into(), staged.into(), target.into()]
+/// pkexec's arguments: the helper command, each of its arguments separately.
+pub fn pkexec_argv(exe: &Path, request: &ApplyUpdate) -> Vec<OsString> {
+    vec![
+        exe.into(),
+        "--apply-update".into(),
+        request.archive.clone().into(),
+        request.sha256.clone().into(),
+        request.target.clone().into(),
+    ]
 }
 
 /// How the elevated run ended, from the launcher's exit status. Only osascript's own cancel code (-128, in its
@@ -95,13 +102,14 @@ fn is_executable(path: &Path) -> bool {
 const QUOTE: u16 = b'"' as u16;
 const BACKSLASH: u16 = b'\\' as u16;
 
-/// The UAC launch's parameters: `--apply-update "<staged>" "<target>"`, each path quoted for the Windows command
-/// line. The paths are UTF-16 (`OsStrExt::encode_wide`).
-pub fn windows_parameters(staged: &[u16], target: &[u16]) -> Vec<u16> {
-    let mut params: Vec<u16> = "--apply-update ".encode_utf16().collect();
-    quote_windows_arg(staged, &mut params);
-    params.push(b' ' as u16);
-    quote_windows_arg(target, &mut params);
+/// The UAC launch's parameters: `--apply-update "<archive>" "<sha256>" "<target>"`, each quoted for the Windows
+/// command line. The arguments are UTF-16 (`OsStrExt::encode_wide`).
+pub fn windows_parameters(archive: &[u16], sha256: &[u16], target: &[u16]) -> Vec<u16> {
+    let mut params: Vec<u16> = "--apply-update".encode_utf16().collect();
+    for arg in [archive, sha256, target] {
+        params.push(b' ' as u16);
+        quote_windows_arg(arg, &mut params);
+    }
     params
 }
 
@@ -131,9 +139,9 @@ mod imp {
     use super::*;
     use std::process::{Command, Stdio};
 
-    pub fn run(exe: &Path, staged: &Path, target: &Path) -> Result<(), Failure> {
+    pub fn run(exe: &Path, request: &ApplyUpdate) -> Result<(), Failure> {
         let out = Command::new("/usr/bin/osascript")
-            .args(["-e", &applescript(exe, staged, target)])
+            .args(["-e", &applescript(exe, request)])
             .stdin(Stdio::null())
             .output()
             .map_err(|_| Failure::RolledBack)?;
@@ -146,11 +154,11 @@ mod imp {
     use super::*;
     use std::process::{Command, Stdio};
 
-    pub fn run(exe: &Path, staged: &Path, target: &Path) -> Result<(), Failure> {
+    pub fn run(exe: &Path, request: &ApplyUpdate) -> Result<(), Failure> {
         let path = std::env::var_os("PATH");
         let pkexec = find_pkexec(Path::new(PKEXEC), path.as_deref()).ok_or(Failure::NoPkexec)?;
         let out = Command::new(pkexec)
-            .args(pkexec_argv(exe, staged, target))
+            .args(pkexec_argv(exe, request))
             .stdin(Stdio::null())
             .output()
             .map_err(|_| Failure::RolledBack)?;
@@ -176,10 +184,14 @@ mod imp {
         s
     }
 
-    pub fn run(exe: &Path, staged: &Path, target: &Path) -> Result<(), Failure> {
+    pub fn run(exe: &Path, request: &ApplyUpdate) -> Result<(), Failure> {
         let verb = nul_terminated(wide(OsStr::new("runas")));
         let file = nul_terminated(wide(exe.as_os_str()));
-        let params = nul_terminated(windows_parameters(&wide(staged.as_os_str()), &wide(target.as_os_str())));
+        let params = nul_terminated(windows_parameters(
+            &wide(request.archive.as_os_str()),
+            &wide(OsStr::new(&request.sha256)),
+            &wide(request.target.as_os_str()),
+        ));
         let mut info = SHELLEXECUTEINFOW {
             cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
             // NOASYNC: this runs on a worker thread without a message loop.
@@ -219,29 +231,37 @@ mod tests {
         parts.iter().map(OsString::from).collect()
     }
 
+    const SHA: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    fn request(archive: &str, target: &str) -> ApplyUpdate {
+        ApplyUpdate { archive: archive.into(), sha256: SHA.into(), target: target.into() }
+    }
+
     #[test]
-    fn applescript_quotes_every_path() {
+    fn applescript_quotes_every_argument() {
         let script = applescript(
             Path::new("/Apps/r o g g.app/Contents/MacOS/rogg"),
-            Path::new("/tmp/it's/rogg.app"),
-            Path::new("/Apps/r o g g.app"),
+            &request("/Users/me/Library/Caches/it's/rogg-macos-arm64.tar.gz", "/Apps/r o g g.app"),
         );
         assert_eq!(
             script,
-            r#"do shell script quoted form of "/Apps/r o g g.app/Contents/MacOS/rogg" & " --apply-update " & quoted form of "/tmp/it's/rogg.app" & " " & quoted form of "/Apps/r o g g.app" with administrator privileges"#
+            r#"do shell script quoted form of "/Apps/r o g g.app/Contents/MacOS/rogg" & " --apply-update " & quoted form of "/Users/me/Library/Caches/it's/rogg-macos-arm64.tar.gz" & " " & quoted form of "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" & " " & quoted form of "/Apps/r o g g.app" with administrator privileges"#
         );
     }
 
     #[test]
     fn applescript_escapes_backslashes_and_double_quotes() {
-        let script = applescript(Path::new(r#"/a\b"c"#), Path::new("/s"), Path::new("/t"));
+        let script = applescript(Path::new(r#"/a\b"c"#), &request("/s", "/t"));
         assert!(script.starts_with(r#"do shell script quoted form of "/a\\b\"c" & "#), "{script}");
+        let hostile = ApplyUpdate { sha256: r#"x" & "y"#.into(), ..request("/s", "/t") };
+        let script = applescript(Path::new("/e"), &hostile);
+        assert!(script.contains(r#" & quoted form of "x\" & \"y" & "#), "{script}");
     }
 
     #[test]
     fn pkexec_runs_the_hidden_command() {
-        let argv = pkexec_argv(Path::new("/opt/rogg/rogg"), Path::new("/tmp/s p/rogg"), Path::new("/usr/bin/rogg"));
-        assert_eq!(argv, os(&["/opt/rogg/rogg", "--apply-update", "/tmp/s p/rogg", "/usr/bin/rogg"]));
+        let argv = pkexec_argv(Path::new("/opt/rogg/rogg"), &request("/home/me/.cache/s p/a.tar.gz", "/usr/bin/rogg"));
+        assert_eq!(argv, os(&["/opt/rogg/rogg", "--apply-update", "/home/me/.cache/s p/a.tar.gz", SHA, "/usr/bin/rogg"]));
     }
 
     #[test]
@@ -357,12 +377,20 @@ mod tests {
     }
 
     #[test]
-    fn windows_parameters_quote_each_path() {
-        let params = windows_parameters(&wide(r"C:\Users\me\AppData\Local\Temp\rogg.exe"), &wide(r"C:\Program Files\rogg\rogg.exe"));
+    fn windows_parameters_quote_each_argument() {
+        let params = windows_parameters(
+            &wide(r"C:\Users\me\AppData\Local\rogg\update\14\rogg-windows-x86_64.zip"),
+            &wide(SHA),
+            &wide(r"C:\Program Files\rogg\rogg.exe"),
+        );
         assert_eq!(
             String::from_utf16(&params).unwrap(),
-            r#"--apply-update "C:\Users\me\AppData\Local\Temp\rogg.exe" "C:\Program Files\rogg\rogg.exe""#
+            format!(
+                r#"--apply-update "C:\Users\me\AppData\Local\rogg\update\14\rogg-windows-x86_64.zip" "{SHA}" "C:\Program Files\rogg\rogg.exe""#
+            )
         );
+        let tricky = windows_parameters(&wide(r"C:\dir\"), &wide(r#"a"b"#), &wide("t"));
+        assert_eq!(String::from_utf16(&tricky).unwrap(), r#"--apply-update "C:\dir\\" "a\"b" "t""#);
     }
 
     #[test]
@@ -389,9 +417,11 @@ mod tests {
         // Runs the script with `return` in place of `do shell script … with administrator privileges` (no prompt),
         // then hands the shell command it built to a function that prints its arguments.
         let exe = "/Apps/r\"o\\g'g $(echo pwned) `echo pwned`.app/rogg";
-        let staged = "/tmp/a\" & (do shell script \"echo pwned\") & \"b/rogg.app";
+        let archive = "/tmp/a\" & (do shell script \"echo pwned\") & \"b/rogg.tar.gz";
+        let sha256 = "$(echo pwned)'\"`x`";
         let target = "/tmp/new\nline;'\\\"/rogg.app";
-        let script = applescript(Path::new(exe), Path::new(staged), Path::new(target));
+        let request = ApplyUpdate { archive: archive.into(), sha256: sha256.into(), target: target.into() };
+        let script = applescript(Path::new(exe), &request);
         let script = script.strip_prefix("do shell script ").and_then(|s| s.strip_suffix(" with administrator privileges")).unwrap();
         let out = std::process::Command::new("/usr/bin/osascript").args(["-e", &format!("return {script}")]).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -400,6 +430,6 @@ mod tests {
         let shell = format!("f() {{ printf '%s\\0' \"$@\"; }}; f {command}");
         let printed = std::process::Command::new("/bin/sh").args(["-c", &shell]).output().unwrap();
         let args: Vec<&str> = std::str::from_utf8(&printed.stdout).unwrap().split_terminator('\0').collect();
-        assert_eq!(args, [exe, "--apply-update", staged, target]);
+        assert_eq!(args, [exe, "--apply-update", archive, sha256, target]);
     }
 }

@@ -5,29 +5,33 @@ pub mod http;
 pub mod state;
 pub mod view;
 
+pub use crate::args::ApplyUpdate;
 pub use state::{Failure, Release, UpdateState};
 
 use gpui_kit::{Global, SharedString};
 use http::NetError;
 use rogg_core::CancelToken;
 use rogg_core::platform::Os;
-use rogg_core::update::apply::{ReplaceStyle, Transfer, apply, can_write, is_rogg_target, stage, verify};
+use rogg_core::update::apply::{ReplaceStyle, apply, apply_archive, can_write, is_rogg_target, stage, verify};
 use rogg_core::update::{Install, Manifest, UpdateError, asset_name, is_newer};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 
-/// The hidden `--apply-update <staged> <target>` mode, run by the elevated helper: no window.
+/// The hidden `--apply-update <archive> <sha256> <target>` mode, run by the elevated helper: no window.
 /// Returns the exit code: 0 replaced, 1 failed (message on stderr), 2 refused target.
-pub fn run_apply_update(staged: &Path, target: &Path) -> i32 {
+///
+/// The archive is in the user's cache, so the helper trusts nothing the user's process made from it: it checks the
+/// archive's checksum and unpacks it itself, beside the target, and the installed files are its own (admin-owned,
+/// with the destination's inherited permissions).
+pub fn run_apply_update(request: &ApplyUpdate) -> i32 {
+    let target = &request.target;
     if !is_rogg_target(target) {
         eprintln!("rogg: refusing to update {}: not a rogg install", target.display());
         return 2;
     }
-    // A copy, not a move: moved files would keep the user's ownership (and ACL on Windows), leaving a system-wide
-    // rogg writable by that user. The staged copy stays in the user's cache for the update job to remove.
-    match apply(staged, target, ReplaceStyle::current(), Transfer::Copy) {
+    match apply_archive(&request.archive, &request.sha256, target, ReplaceStyle::current()) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("rogg: update failed: {e}");
@@ -36,8 +40,9 @@ pub fn run_apply_update(staged: &Path, target: &Path) -> i32 {
     }
 }
 
-/// Replaces `target` with `staged` with admin rights, when the target's folder isn't writable.
-pub type Elevator = Arc<dyn Fn(&Path, &Path) -> Result<(), Failure> + Send + Sync>;
+/// Installs the verified download over the target with admin rights, when the target's folder isn't writable:
+/// runs [`run_apply_update`] elevated.
+pub type Elevator = Arc<dyn Fn(&ApplyUpdate) -> Result<(), Failure> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct UpdaterConfig {
@@ -80,7 +85,7 @@ impl UpdaterConfig {
             os: Os::current(),
             arch: std::env::consts::ARCH.to_string(),
             work_dir,
-            elevator: Arc::new(|_: &Path, _: &Path| Err(Failure::RolledBack)),
+            elevator: Arc::new(|_: &ApplyUpdate| Err(Failure::RolledBack)),
         }
     }
 }
@@ -374,13 +379,16 @@ impl UpdateJob {
             return Ok(Outcome::Cancelled);
         }
         let _ = tx.send(JobEvent::Installing);
+        // Checked here too, so a bad download fails before any admin prompt.
         verify(&archive, &self.sha256).map_err(staging_failure)?;
-        let staged = stage(&archive, &self.dir.join("staged"), &self.install).map_err(staging_failure)?;
         let target = self.install.target().ok_or(Failure::NoAsset)?;
         if target.parent().is_some_and(can_write) {
-            apply(&staged, target, ReplaceStyle::current(), Transfer::Move).map_err(apply_failure)?;
+            let staged = stage(&archive, &self.dir.join("staged"), &self.install).map_err(staging_failure)?;
+            apply(&staged, target, ReplaceStyle::current()).map_err(apply_failure)?;
         } else {
-            (self.elevator)(&staged, target)?;
+            // The elevated helper verifies and unpacks the download itself; nothing staged here is trusted.
+            let request = ApplyUpdate { archive, sha256: self.sha256.clone(), target: target.to_path_buf() };
+            (self.elevator)(&request)?;
         }
         Ok(Outcome::Installed)
     }

@@ -8,7 +8,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use rogg_app::actions::CheckForUpdates;
 use rogg_app::args::Args;
 use rogg_app::settings::SettingsStore;
-use rogg_app::updater::{Failure, UpdateState, Updater, UpdaterConfig};
+use rogg_app::updater::{UpdateState, Updater, UpdaterConfig};
 use rogg_app::workspace::Workspace;
 use std::fs;
 use std::time::Duration;
@@ -225,7 +225,7 @@ fn copy_install_command_on_missing_pkexec(cx: &mut TestAppContext) {
     let fixture = Fixture::new();
     let data = archive(NEW);
     let server = release_server(&data, Route::Bytes(200, data.clone()));
-    let (_dir, w, ws) = start(cx, fixture.config_with(&server, Some(11), Err(Failure::NoPkexec)), true);
+    let (_dir, w, ws) = start(cx, fixture.config_with(&server, Some(11), Err(rogg_app::updater::Failure::NoPkexec)), true);
     startup_badge(cx, w);
     common::click(cx, w, "update-badge");
     let bin = fixture.dir.path().join("bin");
