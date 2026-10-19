@@ -1,7 +1,7 @@
 //! Verifying, staging and replacing for self-update (spec §4.1).
 
 use rogg_core::update::apply::{
-    Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_with_fault, copy_tree, move_into, stage, sweep, sweep_at, verify,
+    Fault, ReplaceStyle, SWEEP_IN_USE, Transfer, apply, apply_with_fault, copy_tree, move_into, stage, sweep, sweep_at, verify,
 };
 use rogg_core::update::{Install, UpdateError};
 use rogg_genlog::bundle::{BundleKind, write_archive};
@@ -109,14 +109,14 @@ fn apply_restores_a_stranded_old_copy_instead_of_deleting_it() {
     write(&tmp.path().join("bin/rogg.rogg-old"), b"precious");
     write(&staged, b"new");
     // The fault makes the swap fail again after the restore; the old bytes must survive either way.
-    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Fault::SwapIn);
+    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Transfer::Move, Fault::SwapIn);
     assert!(matches!(r, Err(UpdateError::Replace { rolled_back: true, .. })), "{r:?}");
     assert_eq!(read(&target), b"precious");
 
     fs::remove_file(&target).unwrap();
     write(&tmp.path().join("bin/rogg.rogg-old"), b"precious");
     write(&staged, b"new");
-    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move).unwrap();
     assert_eq!(read(&target), b"new");
 }
 
@@ -160,8 +160,11 @@ fn staging_rejects_a_symlinked_item_and_never_chmods_through_it() {
     write(&target, b"old");
     let link = tmp.path().join("stage2-rogg");
     std::os::unix::fs::symlink(&victim, &link).unwrap();
-    assert!(apply(&link, &target, ReplaceStyle::Unix).is_err());
+    assert!(apply(&link, &target, ReplaceStyle::Unix, Transfer::Move).is_err());
     assert_eq!(fs::metadata(&victim).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(apply(&link, &target, ReplaceStyle::Unix, Transfer::Copy).is_err());
+    assert_eq!(fs::metadata(&victim).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
     assert_eq!(read(&target), b"old");
 }
 
@@ -172,14 +175,14 @@ fn any_app_bundle_with_the_rogg_binary_is_a_target() {
     write(&target.join("Contents/MacOS/rogg"), b"old");
     let staged = tmp.path().join("stage/rogg.app");
     write(&staged.join("Contents/MacOS/rogg"), b"new");
-    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move).unwrap();
     assert_eq!(read(&target.join("Contents/MacOS/rogg")), b"new");
 
     let hollow = tmp.path().join("apps/rogg.app");
     write(&hollow.join("Contents/other"), b"x");
     let staged = tmp.path().join("stage2/rogg.app");
     write(&staged.join("Contents/MacOS/rogg"), b"new");
-    let r = apply(&staged, &hollow, ReplaceStyle::Unix);
+    let r = apply(&staged, &hollow, ReplaceStyle::Unix, Transfer::Move);
     assert!(matches!(r, Err(UpdateError::NotRogg(_))), "{r:?}");
     assert_eq!(read(&hollow.join("Contents/other")), b"x");
 }
@@ -191,7 +194,7 @@ fn apply_replaces_a_binary() {
     let staged = tmp.path().join("stage/rogg");
     write(&target, b"old");
     write(&staged, b"new");
-    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move).unwrap();
     assert_eq!(read(&target), b"new");
     #[cfg(unix)]
     {
@@ -211,7 +214,7 @@ fn apply_replaces_an_app_bundle() {
     let staged = tmp.path().join("stage/rogg.app");
     write(&staged.join("Contents/MacOS/rogg"), b"new");
     write(&staged.join("Contents/Info.plist"), b"plist");
-    apply(&staged, &target, ReplaceStyle::Unix).unwrap();
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move).unwrap();
     assert_eq!(read(&target.join("Contents/MacOS/rogg")), b"new");
     assert_eq!(read(&target.join("Contents/Info.plist")), b"plist");
     assert!(!target.join("Contents/only-old.txt").exists());
@@ -224,6 +227,78 @@ fn apply_replaces_an_app_bundle() {
     }
 }
 
+#[cfg(unix)]
+fn inode(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(p).unwrap().ino()
+}
+
+#[cfg(unix)]
+fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::symlink_metadata(p).unwrap().permissions().mode() & 0o7777
+}
+
+/// The elevated helper copies, so the installed files are created by the admin process and take the destination's
+/// owner and inherited permissions; a rename would keep the user's ownership. The owner itself needs root to test.
+#[test]
+fn copy_mode_installs_a_fresh_binary_and_leaves_the_staged_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("bin/rogg");
+    let staged = tmp.path().join("stage/rogg");
+    write(&target, b"old");
+    write(&staged, b"new");
+    #[cfg(unix)]
+    let staged_inode = inode(&staged);
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Copy).unwrap();
+    assert_eq!(read(&target), b"new");
+    assert!(leftovers(&tmp.path().join("bin"), "rogg").is_empty());
+    // Left for the update job's work-dir cleanup.
+    assert_eq!(read(&staged), b"new");
+    #[cfg(unix)]
+    {
+        assert_ne!(inode(&target), staged_inode, "a new file, not the staged one renamed");
+        assert_eq!(mode(&target), 0o755);
+    }
+}
+
+#[test]
+fn copy_mode_installs_a_fresh_app_bundle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("apps/rogg.app");
+    write(&target.join("Contents/MacOS/rogg"), b"old");
+    write(&target.join("Contents/only-old.txt"), b"x");
+    let staged = tmp.path().join("stage/rogg.app");
+    write(&staged.join("Contents/MacOS/rogg"), b"new");
+    write(&staged.join("Contents/Info.plist"), b"plist");
+    write(&staged.join("Contents/MacOS/helper"), b"helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // A set-id bit must not survive into a copy made by an admin process.
+        fs::set_permissions(staged.join("Contents/MacOS/helper"), fs::Permissions::from_mode(0o4755)).unwrap();
+        std::os::unix::fs::symlink("../Info.plist", staged.join("Contents/MacOS/link")).unwrap();
+    }
+    #[cfg(unix)]
+    let staged_inodes = [inode(&staged), inode(&staged.join("Contents/MacOS/rogg"))];
+    apply(&staged, &target, ReplaceStyle::Unix, Transfer::Copy).unwrap();
+    assert_eq!(read(&target.join("Contents/MacOS/rogg")), b"new");
+    assert_eq!(read(&target.join("Contents/Info.plist")), b"plist");
+    assert_eq!(read(&target.join("Contents/MacOS/helper")), b"helper");
+    assert!(!target.join("Contents/only-old.txt").exists());
+    assert!(leftovers(&tmp.path().join("apps"), "rogg.app").is_empty());
+    assert_eq!(read(&staged.join("Contents/MacOS/rogg")), b"new");
+    #[cfg(unix)]
+    {
+        assert_ne!(inode(&target), staged_inodes[0]);
+        assert_ne!(inode(&target.join("Contents/MacOS/rogg")), staged_inodes[1]);
+        assert_eq!(mode(&target.join("Contents/MacOS/rogg")), 0o755);
+        assert_eq!(mode(&target.join("Contents/MacOS/helper")), 0o755);
+        // The link is recreated, not followed.
+        assert_eq!(fs::read_link(target.join("Contents/MacOS/link")).unwrap(), Path::new("../Info.plist"));
+    }
+}
+
 #[test]
 fn apply_refuses_a_target_that_is_not_rogg() {
     let tmp = tempfile::tempdir().unwrap();
@@ -231,7 +306,7 @@ fn apply_refuses_a_target_that_is_not_rogg() {
     let staged = tmp.path().join("stage/rogg");
     write(&target, b"old");
     write(&staged, b"new");
-    let r = apply(&staged, &target, ReplaceStyle::Unix);
+    let r = apply(&staged, &target, ReplaceStyle::Unix, Transfer::Move);
     assert!(matches!(r, Err(UpdateError::NotRogg(_))), "{r:?}");
     assert_eq!(read(&target), b"old");
     assert!(staged.exists());
@@ -244,7 +319,7 @@ fn apply_rolls_back_when_the_swap_fails() {
     let staged = tmp.path().join("stage/rogg");
     write(&target, b"old");
     write(&staged, b"new");
-    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Fault::SwapIn);
+    let r = apply_with_fault(&staged, &target, ReplaceStyle::Unix, Transfer::Move, Fault::SwapIn);
     match r {
         Err(UpdateError::Replace { rolled_back: true, old, .. }) => assert_eq!(old, target),
         other => panic!("{other:?}"),
@@ -260,7 +335,7 @@ fn windows_style_keeps_the_old_exe_aside() {
     let staged = tmp.path().join("stage/rogg.exe");
     write(&target, b"old");
     write(&staged, b"new");
-    apply(&staged, &target, ReplaceStyle::Windows).unwrap();
+    apply(&staged, &target, ReplaceStyle::Windows, Transfer::Move).unwrap();
     assert_eq!(read(&target), b"new");
     assert_eq!(read(&tmp.path().join("rogg.exe.old")), b"old");
     assert!(!tmp.path().join("rogg.exe.rogg-old").exists());

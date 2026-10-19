@@ -190,8 +190,20 @@ fn restore_old(target: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
-pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle) -> Result<(), UpdateError> {
-    apply_with_fault(staged, target, style, Fault::None)
+/// How the new version gets beside the target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transfer {
+    /// A rename (a copy across volumes); the staged item is consumed. The moved files keep their owner, so this is
+    /// only for an update that runs as the user who owns the install.
+    Move,
+    /// A fresh copy; the staged item is left in place. The elevated helper copies, so the installed files are
+    /// created by the admin process and get the destination's owner and inherited permissions, not those of the
+    /// user's cache.
+    Copy,
+}
+
+pub fn apply(staged: &Path, target: &Path, style: ReplaceStyle, transfer: Transfer) -> Result<(), UpdateError> {
+    apply_with_fault(staged, target, style, transfer, Fault::None)
 }
 
 #[cfg(unix)]
@@ -210,10 +222,17 @@ fn make_executable(_item: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Replaces `target` with `staged` (consumed). The old version is renamed aside first and put back if the new one
-/// can't be moved in, so a failure leaves the previous version in place.
+/// Replaces `target` with `staged` (consumed by [`Transfer::Move`], left in place by [`Transfer::Copy`]). The old
+/// version is renamed aside first and put back if the new one can't be moved in, so a failure leaves the previous
+/// version in place.
 #[doc(hidden)]
-pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault: Fault) -> Result<(), UpdateError> {
+pub fn apply_with_fault(
+    staged: &Path,
+    target: &Path,
+    style: ReplaceStyle,
+    transfer: Transfer,
+    fault: Fault,
+) -> Result<(), UpdateError> {
     if !rogg_name(target) {
         return Err(UpdateError::NotRogg(target.to_path_buf()));
     }
@@ -227,7 +246,11 @@ pub fn apply_with_fault(staged: &Path, target: &Path, style: ReplaceStyle, fault
     remove_any(&new).map_err(io_err(&new))?;
     remove_any(&old).map_err(io_err(&old))?;
 
-    if let Err(e) = move_into(staged, &new).and_then(|()| make_executable(&new)) {
+    let placed = match transfer {
+        Transfer::Move => move_into(staged, &new),
+        Transfer::Copy => copy_tree(staged, &new),
+    };
+    if let Err(e) = placed.and_then(|()| make_executable(&new)) {
         let _ = remove_any(&new);
         return Err(UpdateError::Io { path: new, source: e });
     }
@@ -277,16 +300,19 @@ pub fn move_into(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// Copies a file or a whole tree (permissions kept, symlinks recreated on Unix).
+/// Copies a file or a whole tree into newly created files and folders, so they belong to whoever runs this, with the
+/// permissions kept minus any set-id or sticky bits. Links are recreated on Unix, never followed; elsewhere a link
+/// fails the copy. Files are not copied with `fs::copy`: on macOS it clones the file, and a clone made as root keeps
+/// the source's owner.
 pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if meta.is_dir() {
-        fs::create_dir_all(dst)?;
+        fs::create_dir(dst)?;
         for entry in fs::read_dir(src)? {
             let entry = entry?;
             copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
         }
-        fs::set_permissions(dst, meta.permissions())
+        fs::set_permissions(dst, plain_permissions(&meta))
     } else if meta.is_symlink() {
         #[cfg(unix)]
         {
@@ -294,10 +320,42 @@ pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
         }
         #[cfg(not(unix))]
         {
-            fs::copy(src, dst).map(|_| ())
+            Err(io::Error::other(format!("{} is a link", src.display())))
         }
     } else {
-        fs::copy(src, dst).map(|_| ())
+        copy_file(src, dst, &meta)
+    }
+}
+
+/// Copies the regular file `src` (whose `symlink_metadata` is `meta`) into the new file `dst`.
+fn copy_file(src: &Path, dst: &Path, meta: &fs::Metadata) -> io::Result<()> {
+    let mut from = File::open(src)?;
+    // `src` was a regular file when `meta` was read; make sure the file opened is still that one and not a link
+    // swapped in since, which `open` would have followed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = from.metadata()?;
+        if !opened.is_file() || (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
+            return Err(io::Error::other(format!("{} changed while it was copied", src.display())));
+        }
+    }
+    let mut to = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
+    io::copy(&mut from, &mut to)?;
+    drop(to);
+    fs::set_permissions(dst, plain_permissions(meta))
+}
+
+/// `meta`'s permissions without set-user-id, set-group-id or sticky bits.
+fn plain_permissions(meta: &fs::Metadata) -> fs::Permissions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::Permissions::from_mode(meta.permissions().mode() & 0o777)
+    }
+    #[cfg(not(unix))]
+    {
+        meta.permissions()
     }
 }
 

@@ -13,9 +13,15 @@ fn replaces_a_rogg_target_and_exits_zero() {
     let target = dir.path().join("rogg");
     std::fs::write(&staged, b"new bytes").unwrap();
     std::fs::write(&target, b"old bytes").unwrap();
+    #[cfg(unix)]
+    let staged_inode = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(&staged).unwrap());
     let out = run(&staged, &target);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(std::fs::read(&target).unwrap(), b"new bytes");
+    // The helper copies (the new files then belong to the admin process) and leaves the staged copy to the job.
+    assert_eq!(std::fs::read(&staged).unwrap(), b"new bytes");
+    #[cfg(unix)]
+    assert_ne!(std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(&target).unwrap()), staged_inode);
 }
 
 #[test]

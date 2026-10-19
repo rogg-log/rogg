@@ -11,7 +11,7 @@ use gpui_kit::{Global, SharedString};
 use http::NetError;
 use rogg_core::CancelToken;
 use rogg_core::platform::Os;
-use rogg_core::update::apply::{ReplaceStyle, apply, can_write, is_rogg_target, stage, verify};
+use rogg_core::update::apply::{ReplaceStyle, Transfer, apply, can_write, is_rogg_target, stage, verify};
 use rogg_core::update::{Install, Manifest, UpdateError, asset_name, is_newer};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,9 @@ pub fn run_apply_update(staged: &Path, target: &Path) -> i32 {
         eprintln!("rogg: refusing to update {}: not a rogg install", target.display());
         return 2;
     }
-    match apply(staged, target, ReplaceStyle::current()) {
+    // A copy, not a move: moved files would keep the user's ownership (and ACL on Windows), leaving a system-wide
+    // rogg writable by that user. The staged copy stays in the user's cache for the update job to remove.
+    match apply(staged, target, ReplaceStyle::current(), Transfer::Copy) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("rogg: update failed: {e}");
@@ -376,7 +378,7 @@ impl UpdateJob {
         let staged = stage(&archive, &self.dir.join("staged"), &self.install).map_err(staging_failure)?;
         let target = self.install.target().ok_or(Failure::NoAsset)?;
         if target.parent().is_some_and(can_write) {
-            apply(&staged, target, ReplaceStyle::current()).map_err(apply_failure)?;
+            apply(&staged, target, ReplaceStyle::current(), Transfer::Move).map_err(apply_failure)?;
         } else {
             (self.elevator)(&staged, target)?;
         }

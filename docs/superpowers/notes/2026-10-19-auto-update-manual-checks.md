@@ -9,6 +9,8 @@
 - [ ] Windows: the UAC prompt appears in front of rogg (the launcher passes no parent window), and the update works
   without COM initialisation.
 - [ ] Linux, on a desktop without a polkit agent: note what `pkexec` does and what the dialog says.
+- [ ] After an elevated update the installed rogg is owned by root/admin, not the user (`ls -l` / `stat`, or
+  Properties → Security on Windows).
 
 ## A real update from one published build to the next
 
