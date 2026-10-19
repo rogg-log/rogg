@@ -107,15 +107,32 @@ fn cancel_during_a_mid_body_stall_returns_promptly() {
     let dir = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
     let token = cancel.clone();
-    let started = std::time::Instant::now();
+    // The first progress call only signals; a second thread cancels once the download is blocked in the stall.
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::channel::<()>();
+    let cancelled_at = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let stamp = cancelled_at.clone();
+    std::thread::spawn(move || {
+        if arrived_rx.recv().is_ok() {
+            std::thread::sleep(Duration::from_millis(250));
+            *stamp.lock().unwrap() = Some(std::time::Instant::now());
+            token.cancel();
+        }
+    });
     let result = download_with_timeout(
         &format!("{}/a.bin", server.base()),
         &dir.path().join("a.bin"),
-        &mut |_, _| token.cancel(),
+        &mut |_, _| {
+            let _ = arrived_tx.send(());
+        },
         &cancel,
         Duration::from_secs(30),
     );
-    assert_cancelled_quickly(result, started, dir.path());
+    let returned = std::time::Instant::now();
+    let cancelled = cancelled_at.lock().unwrap().expect("the cancel thread ran");
+    assert!(returned.duration_since(cancelled) < Duration::from_secs(1), "{:?}", returned.duration_since(cancelled));
+    assert!(matches!(result, Err(NetError::Cancelled)), "{result:?}");
+    assert!(!dir.path().join("a.bin").exists());
+    assert!(!dir.path().join("a.bin.part").exists());
 }
 
 #[test]
