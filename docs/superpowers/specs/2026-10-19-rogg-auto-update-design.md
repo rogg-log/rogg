@@ -135,20 +135,19 @@ Pure logic, unit-tested.
 - **Job steps:**
   1. Download the asset.
   2. `verify`.
-  3. `stage`.
-  4. If `can_write(parent of target)`, run `apply` in-process; otherwise elevate (§4.3).
-  5. Delete the temp folder.
-  6. Set the state to **Installed**.
-- **Hidden CLI mode** (`rogg-app::args`): `rogg --apply-update <staged> <target>` runs `rogg-core::update::apply` and exits with status 0 on success, 1 on failure (the message goes to stderr), and 2 for a refused target. It opens no window and is meant only for the elevated helper.
+  3. If `can_write(parent of target)`, `stage` and run `apply` in-process; otherwise elevate (§4.3) with the downloaded archive and its expected SHA-256, staging nothing.
+  4. Delete the temp folder.
+  5. Set the state to **Installed**.
+- **Hidden CLI mode** (`rogg-app::args`): `rogg --apply-update <archive> <sha256> <target>` runs `rogg-core::update::apply::apply_archive` and exits with status 0 on success, 1 on failure (the message goes to stderr), and 2 for a refused target. It opens no window and is meant only for the elevated helper. The helper opens the archive once (refusing a link or anything but a regular file), hashes it while copying it into its own `<target>.rogg-stage-<pid>` folder beside the target, unpacks only that copy and moves the item into place, so it never reads a file tree the user could swap under it, and everything it installs is created with admin rights.
 
 ### 4.3 Elevation (`rogg-app::updater::elevate`)
 
-The elevated command is always the running executable (`std::env::current_exe()`) with `--apply-update <staged> <target>`.
+The elevated command is always the running executable (`std::env::current_exe()`) with `--apply-update <archive> <sha256> <target>`.
 
 | OS | How | Declined |
 |---|---|---|
-| macOS | `osascript -e 'do shell script "<cmd>" with administrator privileges'`. Every path is passed as AppleScript `quoted form of`. | osascript error `-128` → "Admin rights were declined." |
-| Linux | `pkexec <exe> --apply-update <staged> <target>`. | Exit status 126 or 127 → "Admin rights were declined." No `pkexec` on `PATH` → "rogg can't ask for admin rights here (pkexec not found)", plus the install command to copy. |
+| macOS | `osascript -e 'do shell script "<cmd>" with administrator privileges'`. Every argument is passed as AppleScript `quoted form of`. | osascript error `-128` → "Admin rights were declined." |
+| Linux | `pkexec <exe> --apply-update <archive> <sha256> <target>`. | Exit status 126 or 127 → "Admin rights were declined." No `pkexec` on `PATH` → "rogg can't ask for admin rights here (pkexec not found)", plus the install command to copy. |
 | Windows | `ShellExecuteExW` with verb `runas` and `SEE_MASK_NOCLOSEPROCESS`; wait for the process and read its exit code. Adds the `windows` crate (Shell features only), pinned to the version already in `Cargo.lock`. | `ERROR_CANCELLED` → "Admin rights were declined." |
 
 The helper's exit status maps to the dialog's Failed reason.

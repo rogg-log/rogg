@@ -10,7 +10,7 @@
   without COM initialisation.
 - [ ] Linux, on a desktop without a polkit agent: note what `pkexec` does and what the dialog says.
 - [ ] After an elevated update the installed rogg is owned by root/admin, not the user (`ls -l` / `stat`, or
-  Properties → Security on Windows).
+  Properties → Security on Windows), and no `<target>.rogg-stage-*` folder is left beside it.
 
 ## A real update from one published build to the next
 
