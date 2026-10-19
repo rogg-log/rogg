@@ -1,11 +1,11 @@
 //! Verifying, staging and replacing for self-update (spec §4.1).
 
 use rogg_core::update::apply::{
-    Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_with_fault, can_write, copy_tree, move_into, stage, sweep, sweep_at, verify,
+    Fault, ReplaceStyle, SWEEP_IN_USE, apply, apply_with_fault, copy_tree, move_into, stage, sweep, sweep_at, verify,
 };
 use rogg_core::update::{Install, UpdateError};
 use rogg_genlog::bundle::{BundleKind, write_archive};
-use std::fs::{self, File};
+use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -292,7 +292,9 @@ fn move_into_falls_back_to_copying() {
     assert!(!file.exists());
 }
 
-/// Backdates every entry under `path` (and `path` itself) by `age`.
+/// Backdates every entry under `path` (and `path` itself) by `age`. Unix only: Windows opens a directory only with
+/// `FILE_FLAG_BACKUP_SEMANTICS`, and setting its time needs write-attribute access.
+#[cfg(unix)]
 fn age_tree(path: &Path, age: Duration) {
     let when = SystemTime::now() - age;
     if path.is_dir() {
@@ -300,7 +302,7 @@ fn age_tree(path: &Path, age: Duration) {
             age_tree(&entry.unwrap().path(), age);
         }
     }
-    File::options().read(true).open(path).unwrap().set_modified(when).unwrap();
+    fs::File::options().read(true).open(path).unwrap().set_modified(when).unwrap();
 }
 
 #[test]
@@ -337,6 +339,7 @@ fn sweep_leaves_an_update_in_progress_alone() {
     assert!(!target.exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn sweep_removes_a_stale_build_folder_and_keeps_a_fresh_one() {
     let tmp = tempfile::tempdir().unwrap();
@@ -366,6 +369,7 @@ fn sweep_removes_a_stale_build_folder_and_keeps_a_fresh_one() {
 #[cfg(unix)]
 #[test]
 fn can_write_reports_read_only_folders() {
+    use rogg_core::update::apply::can_write;
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     assert!(can_write(tmp.path()));
