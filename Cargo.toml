@@ -28,5 +28,6 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Syst
 flate2 = "=1.1.10"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
 tar = "=0.4.46"
+sha2 = "=0.10.9"
 notify = "=8.2.0"
 toml = "=1.1.6"

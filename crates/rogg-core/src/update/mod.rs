@@ -6,6 +6,8 @@ use serde::Deserialize;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+pub mod apply;
+
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateError {
     #[error("the release information couldn't be read: {0}")]
