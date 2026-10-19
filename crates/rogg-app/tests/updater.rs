@@ -1,165 +1,14 @@
 mod common;
 
 use common::http::{Gate, Route, TestServer};
-use gpui_kit::SharedString;
-use rogg_app::updater::{Elevator, Failure, UpdateState, Updater, UpdaterConfig};
-use rogg_core::platform::Os;
+use common::update::*;
+use rogg_app::updater::{Failure, UpdateState, Updater};
 use rogg_core::update::Install;
 use rogg_genlog::bundle::{BundleKind, write_archive};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-/// The tests pin the platform so the asset name doesn't depend on the host.
-const ASSET: &str = "rogg-linux-x86_64.tar.gz";
-const ASSET_PATH: &str = "/rogg-linux-x86_64.tar.gz";
-const NEW: &[u8] = b"new rogg build 14";
-
-type Calls = Arc<Mutex<Vec<(PathBuf, PathBuf)>>>;
-
-/// A temp folder holding `bin/rogg` (the installed copy) and `cache/update` (the work dir).
-struct Fixture {
-    dir: tempfile::TempDir,
-    calls: Calls,
-}
-
-impl Fixture {
-    fn new() -> Fixture {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("bin")).unwrap();
-        fs::write(dir.path().join("bin/rogg"), b"old").unwrap();
-        Fixture { dir, calls: Arc::default() }
-    }
-
-    fn target(&self) -> PathBuf {
-        self.dir.path().join("bin/rogg")
-    }
-
-    fn work_dir(&self) -> PathBuf {
-        self.dir.path().join("cache/update")
-    }
-
-    /// A config whose elevator records its calls and returns `result`.
-    fn config_with(&self, server: &TestServer, running: Option<u64>, result: Result<(), Failure>) -> UpdaterConfig {
-        let calls = self.calls.clone();
-        let elevator: Elevator = Arc::new(move |staged: &Path, target: &Path| {
-            calls.lock().unwrap().push((staged.to_path_buf(), target.to_path_buf()));
-            result.clone()
-        });
-        UpdaterConfig {
-            base: server.base(),
-            running_build: running,
-            install: Install::Binary { path: self.target() },
-            os: Os::Linux,
-            arch: "x86_64".into(),
-            work_dir: self.work_dir(),
-            elevator,
-        }
-    }
-
-    fn config(&self, server: &TestServer, running: Option<u64>) -> UpdaterConfig {
-        self.config_with(server, running, Ok(()))
-    }
-
-    fn work_dir_is_empty(&self) -> bool {
-        fs::read_dir(self.work_dir()).map(|mut d| d.next().is_none()).unwrap_or(true)
-    }
-}
-
-/// A `.tar.gz` with `rogg` holding `bytes`.
-fn archive(bytes: &[u8]) -> Vec<u8> {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(ASSET);
-    write_archive(&path, BundleKind::TarGz, &[("rogg", bytes)]).unwrap();
-    fs::read(path).unwrap()
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Build 14's manifest, listing `asset` (name, sha256, size) when given.
-fn manifest(build: u64, asset: Option<(&str, &str, usize)>) -> Vec<u8> {
-    let assets = match asset {
-        Some((name, sha, size)) => format!(r#"[{{"name":"{name}","os":"linux","arch":"x86_64","sha256":"{sha}","size":{size}}}]"#),
-        None => "[]".into(),
-    };
-    format!(
-        r#"{{"version":"0.1.0","build":{build},"commit":"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","date":"2026-10-18","channel":"stable","assets":{assets}}}"#
-    )
-    .into_bytes()
-}
-
-/// A server publishing build 14 with `archive` as the platform's asset (served by `route`).
-fn release_server(archive: &[u8], route: Route) -> TestServer {
-    let json = manifest(14, Some((ASSET, &sha256(archive), archive.len())));
-    TestServer::start(vec![("/manifest.json", Route::Bytes(200, json)), (ASSET_PATH, route)])
-}
-
-/// Polls until no job runs (up to 10 s), calling `each` with the state after every poll.
-fn run_with(updater: &mut Updater, mut each: impl FnMut(&UpdateState)) {
-    let start = Instant::now();
-    while updater.poll() {
-        each(updater.state());
-        assert!(start.elapsed() < Duration::from_secs(10), "the job didn't finish: {:?}", updater.state());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    each(updater.state());
-}
-
-fn run(updater: &mut Updater) {
-    run_with(updater, |_| {});
-}
-
-/// Polls until `done` holds for the state (up to 10 s).
-fn run_until(updater: &mut Updater, mut done: impl FnMut(&UpdateState) -> bool) {
-    let start = Instant::now();
-    loop {
-        updater.poll();
-        if done(updater.state()) {
-            return;
-        }
-        assert!(start.elapsed() < Duration::from_secs(10), "never reached the state: {:?}", updater.state());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// An updater that has found build 14 (running 11).
-fn available(fixture: &Fixture, server: &TestServer) -> Updater {
-    available_with(fixture.config(server, Some(11)))
-}
-
-fn available_with(config: UpdaterConfig) -> Updater {
-    let mut updater = Updater::new(config);
-    assert!(updater.check(false));
-    run(&mut updater);
-    assert!(matches!(updater.state(), UpdateState::Available(_)), "{:?}", updater.state());
-    updater
-}
-
-fn failure(state: &UpdateState) -> Option<&Failure> {
-    match state {
-        UpdateState::Failed { failure, .. } => Some(failure),
-        _ => None,
-    }
-}
-
-fn badge(label: &str, tooltip: &str) -> Option<(SharedString, SharedString)> {
-    Some((SharedString::from(label.to_string()), SharedString::from(tooltip.to_string())))
-}
-
-/// Pseudo-random bytes, so gzip can't shrink the archive below the progress step.
-fn noise(n: usize) -> Vec<u8> {
-    let mut x: u32 = 0x1234_5678;
-    (0..n)
-        .map(|_| {
-            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (x >> 24) as u8
-        })
-        .collect()
-}
+use std::time::Duration;
 
 #[test]
 fn a_newer_build_becomes_available() {
@@ -367,12 +216,6 @@ fn cancel_returns_to_available() {
     assert!(matches!(updater.state(), UpdateState::Available(_)), "{:?}", updater.state());
     assert_eq!(fs::read(fixture.target()).unwrap(), b"old");
     assert!(fixture.work_dir_is_empty());
-}
-
-#[cfg(unix)]
-fn read_only(dir: &Path, read_only: bool) {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(dir, fs::Permissions::from_mode(if read_only { 0o555 } else { 0o755 })).unwrap();
 }
 
 #[cfg(unix)]
