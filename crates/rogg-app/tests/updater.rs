@@ -395,6 +395,33 @@ fn an_unwritable_folder_uses_the_elevator() {
 
 #[cfg(unix)]
 #[test]
+fn the_badge_stays_while_installing() {
+    let fixture = Fixture::new();
+    let data = archive(NEW);
+    let server = release_server(&data, Route::Bytes(200, data.clone()));
+    let mut config = fixture.config(&server, Some(11));
+    // The elevator holds the job in Installing until the test lets it go.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let held = Arc::new(Mutex::new(held));
+    config.elevator = Arc::new(move |_: &Path, _: &Path| {
+        let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(10));
+        Ok(())
+    });
+    let mut updater = available_with(config);
+    let bin = fixture.dir.path().join("bin");
+    read_only(&bin, true);
+    updater.start_update();
+    run_until(&mut updater, |state| matches!(state, UpdateState::Installing(_)));
+    let installing = updater.badge();
+    release.send(()).unwrap();
+    run(&mut updater);
+    read_only(&bin, false);
+    assert_eq!(installing, badge("Update", "rogg 0.1.0 build 14 is available"));
+    assert!(matches!(updater.state(), UpdateState::Installed(_)), "{:?}", updater.state());
+}
+
+#[cfg(unix)]
+#[test]
 fn a_declined_elevation_fails_cleanly() {
     let fixture = Fixture::new();
     let data = archive(NEW);
@@ -445,6 +472,8 @@ fn no_second_job_while_one_runs() {
     assert!(!updater.start_update());
     assert!(!updater.check(true));
     assert_eq!(format!("{:?}", updater.state()), before);
+    // The badge stays during the download, so a closed dialog can be reopened (R6).
+    assert_eq!(updater.badge(), badge("Update", "rogg 0.1.0 build 14 is available"));
     assert!(updater.poll(), "the download is still running");
     assert_eq!(server.hits("/manifest.json"), 1);
     updater.cancel();

@@ -120,7 +120,7 @@ impl Updater {
             _ => return false,
         };
         let job = UpdateJob {
-            url: format!("{}/{}", self.config.base.trim_end_matches('/'), release.asset.name),
+            url: asset_url(&self.config.base, &release.manifest, &release.asset.name),
             dir: self.config.work_dir.join(release.manifest.build.to_string()),
             asset: release.asset.name.clone(),
             sha256: release.asset.sha256.clone(),
@@ -157,10 +157,13 @@ impl Updater {
         }
     }
 
-    /// The title-bar badge's label and tooltip, in `Available` and `Installed` only.
+    /// The title-bar badge's label and tooltip. "Update" shows from `Available` through `Installing`, so a closed
+    /// dialog can be reopened while the job runs; "Restart to update" shows in `Installed`. Any other state has none.
     pub fn badge(&self) -> Option<(SharedString, SharedString)> {
         match &self.state {
-            UpdateState::Available(release) => Some((
+            UpdateState::Available(release)
+            | UpdateState::Downloading { release, .. }
+            | UpdateState::Installing(release) => Some((
                 "Update".into(),
                 format!("rogg {} build {} is available", release.manifest.version, release.manifest.build).into(),
             )),
@@ -231,6 +234,18 @@ impl Updater {
             }
             state => state,
         };
+    }
+}
+
+/// Where an asset is downloaded from. From GitHub, the asset comes from the tag of the manifest that was read:
+/// `latest/download/<asset>` could already serve a newer build, whose checksum would never match. An overridden base
+/// (tests, `ROGG_UPDATE_BASE`) serves the asset beside its manifest.
+pub fn asset_url(base: &str, manifest: &Manifest, asset: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base == http::DEFAULT_BASE {
+        format!("https://github.com/rogg-log/rogg/releases/download/v{}-build.{}/{asset}", manifest.version, manifest.build)
+    } else {
+        format!("{base}/{asset}")
     }
 }
 
@@ -323,5 +338,32 @@ impl UpdateJob {
             (self.elevator)(&staged, target)?;
         }
         Ok(Outcome::Installed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest() -> Manifest {
+        Manifest::parse(r#"{"version":"0.1.0","build":14,"commit":"a1b2c3d","date":"2026-10-18","assets":[]}"#).unwrap()
+    }
+
+    #[test]
+    fn the_default_base_downloads_from_the_release_tag() {
+        assert_eq!(
+            asset_url(http::DEFAULT_BASE, &manifest(), "rogg-linux-x86_64.tar.gz"),
+            "https://github.com/rogg-log/rogg/releases/download/v0.1.0-build.14/rogg-linux-x86_64.tar.gz"
+        );
+        assert_eq!(
+            asset_url(&format!("{}/", http::DEFAULT_BASE), &manifest(), "rogg-windows-x86_64.zip"),
+            "https://github.com/rogg-log/rogg/releases/download/v0.1.0-build.14/rogg-windows-x86_64.zip"
+        );
+    }
+
+    #[test]
+    fn an_overridden_base_serves_the_asset_beside_the_manifest() {
+        assert_eq!(asset_url("http://127.0.0.1:8080", &manifest(), "a.tar.gz"), "http://127.0.0.1:8080/a.tar.gz");
+        assert_eq!(asset_url("https://staging.example/r/", &manifest(), "a.tar.gz"), "https://staging.example/r/a.tar.gz");
     }
 }
