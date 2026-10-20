@@ -18,6 +18,13 @@ fn small_doc(cx: &mut TestAppContext) -> Entity<Document> {
     doc_from(cx, LINES.join("\n"), DocumentInit::default())
 }
 
+/// These tests cover excluding, which is opt-in (Settings › Behavior).
+fn allow_exclude(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        rogg_app::settings::SettingsStore::update(cx, |s| s.behavior.exclude_terms = true);
+    });
+}
+
 fn matches(doc: &Entity<Document>, cx: &mut TestAppContext) -> Vec<u64> {
     doc.read_with(cx, |d, _| d.filter.matches.as_ref().clone())
 }
@@ -29,6 +36,7 @@ fn shown(doc: &Entity<Document>, cx: &mut TestAppContext) -> Vec<u64> {
 #[gpui_kit::test]
 fn expression_states_and_flags_filter_the_text(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
+    allow_exclude(cx);
     let doc = small_doc(cx);
     doc.update(cx, |d, cx| d.set_expression("error || timeout", cx)).unwrap();
     assert_eq!(matches(&doc, cx), [1, 3, 5, 6]);
@@ -91,6 +99,7 @@ fn invalid_regex_is_rejected_and_previous_results_stay(cx: &mut TestAppContext) 
 #[gpui_kit::test]
 fn add_term_appends_or_restates(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
+    allow_exclude(cx);
     let doc = small_doc(cx);
     doc.update(cx, |d, cx| d.set_expression("error", cx)).unwrap();
     doc.update(cx, |d, cx| d.add_term("timeout", false, cx));
@@ -104,6 +113,7 @@ fn add_term_appends_or_restates(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn add_term_matches_the_literal_word_in_regex_mode(cx: &mut TestAppContext) {
     let _dir = common::setup(cx);
+    allow_exclude(cx);
     let doc = doc_from(cx, ["x a.b{ y", "axb", "a.b{", "other"].join("\n"), DocumentInit::default());
     doc.update(cx, |d, cx| d.toggle_regex(cx));
     doc.update(cx, |d, cx| d.add_term("a.b{", false, cx));

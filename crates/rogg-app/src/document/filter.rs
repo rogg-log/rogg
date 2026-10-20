@@ -4,6 +4,7 @@
 
 use super::{Document, EngineConfig};
 use crate::history::HistoryStore;
+use crate::settings::SettingsStore;
 use gpui_kit::{BorrowAppContext, Context, SharedString};
 use rogg_core::CancelToken;
 use rogg_core::engine::{DEFAULT_CHUNK_LINES, FilterEvent, FilterJob, TailBase, run_filter, run_filter_lines};
@@ -143,6 +144,8 @@ impl Document {
     /// Applies `spec`. Changed terms or flags rescan and record history; a context-only change rebuilds the view.
     /// An invalid spec is rejected: the previous filter and results stay and `filter.error` is set.
     pub fn apply_spec(&mut self, spec: FilterSpec, cx: &mut Context<Self>) -> Result<(), SharedString> {
+        // With excluding switched off, a NOT term arriving from a session, the history or the editor is Off.
+        let spec = if exclude_allowed(cx) { spec } else { spec.without_excludes() };
         let old = &self.filter.spec;
         let rescan = self.filter.compiled.is_none() || spec.terms != old.terms || spec.regex != old.regex || spec.case_sensitive != old.case_sensitive;
         if !rescan {
@@ -183,7 +186,7 @@ impl Document {
 
     pub fn cycle_term(&mut self, index: usize, cx: &mut Context<Self>) {
         let mut spec = self.filter.spec.clone();
-        spec.cycle(index);
+        spec.cycle(index, exclude_allowed(cx));
         let _ = self.apply_spec(spec, cx);
     }
 
@@ -529,6 +532,11 @@ impl Document {
         }
         self.filter.view_job.is_some()
     }
+}
+
+/// Whether filter chips may exclude (Settings › Behavior; off by default).
+pub fn exclude_allowed(cx: &gpui_kit::App) -> bool {
+    SettingsStore::get(cx).behavior.exclude_terms
 }
 
 #[cfg(test)]

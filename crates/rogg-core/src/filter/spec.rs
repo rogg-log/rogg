@@ -10,10 +10,16 @@ pub enum TermState {
 impl TermState {
     /// Include → Off → Exclude → Include (spec §4.6).
     pub fn next(self) -> Self {
+        self.next_in(true)
+    }
+
+    /// The state after a click: Include ↔ Off, or Include → Off → Exclude → Include when excluding is allowed (the
+    /// `behavior.exclude_terms` setting). A leftover Exclude always turns on.
+    pub fn next_in(self, allow_exclude: bool) -> Self {
         match self {
             TermState::Include => TermState::Off,
-            TermState::Off => TermState::Exclude,
-            TermState::Exclude => TermState::Include,
+            TermState::Off if allow_exclude => TermState::Exclude,
+            TermState::Off | TermState::Exclude => TermState::Include,
         }
     }
 }
@@ -110,10 +116,20 @@ impl FilterSpec {
         join_expression(&self.terms)
     }
 
-    pub fn cycle(&mut self, index: usize) {
+    pub fn cycle(&mut self, index: usize, allow_exclude: bool) {
         if let Some(term) = self.terms.get_mut(index) {
-            term.state = term.state.next();
+            term.state = term.state.next_in(allow_exclude);
         }
+    }
+
+    /// The spec with every Exclude term turned Off (excluding is switched off in the settings).
+    pub fn without_excludes(mut self) -> FilterSpec {
+        for term in &mut self.terms {
+            if term.state == TermState::Exclude {
+                term.state = TermState::Off;
+            }
+        }
+        self
     }
 
     pub fn set_context(&mut self, context: u32) {
@@ -134,6 +150,9 @@ impl FilterSpec {
 
     pub fn summary(&self) -> String {
         let c = self.counts();
+        if c.exclude == 0 {
+            return format!("{} on · {} off", c.include, c.off);
+        }
         format!("{} include · {} exclude · {} off", c.include, c.exclude, c.off)
     }
 
@@ -179,9 +198,9 @@ mod tests {
     #[test]
     fn editing_keeps_states_of_unchanged_terms() {
         let mut spec = FilterSpec::from_expression("error || timeout || healthcheck || retry");
-        spec.cycle(2);
-        spec.cycle(2); // healthcheck: Include → Off → Exclude
-        spec.cycle(3); // retry: Off
+        spec.cycle(2, true);
+        spec.cycle(2, true); // healthcheck: Include → Off → Exclude
+        spec.cycle(3, true); // retry: Off
         let edited = spec.with_expression("timeout || healthcheck || connection reset");
         assert_eq!(edited.terms, vec![
             Term::new("timeout", TermState::Include),
@@ -202,7 +221,7 @@ mod tests {
         assert_eq!(spec.counts(), TermCounts { include: 2, exclude: 1, off: 1 });
         assert_eq!(spec.summary(), "2 include · 1 exclude · 1 off");
         assert!(spec.is_active());
-        spec.cycle(99); // out of range is ignored
+        spec.cycle(99, true); // out of range is ignored
         let all_off = FilterSpec { terms: vec![Term::new("a", TermState::Off)], ..Default::default() };
         assert!(!all_off.is_active());
     }

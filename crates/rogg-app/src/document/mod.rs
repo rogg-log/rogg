@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
-pub use filter::FilterState;
+pub use filter::{FilterState, exclude_allowed};
 pub use search::{Pane, PaneSearch};
 
 /// How often background job channels are polled: at most one UI update per frame.

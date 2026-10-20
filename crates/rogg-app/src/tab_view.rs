@@ -51,6 +51,11 @@ fn tab_act_ix(tab: &Entity<Tab>, f: impl Fn(&mut Tab, usize, &mut Window, &mut C
     move |i, window, cx| tab.update(cx, |t, cx| f(t, i, window, cx))
 }
 
+/// The hint at the end of the filter line's second row.
+pub fn filter_hint(allow_exclude: bool) -> &'static str {
+    if allow_exclude { "Click a state to cycle Include → Off → Exclude" } else { "Click a term's icon to turn it on or off" }
+}
+
 pub fn chip_state(state: TermState) -> ChipState {
     match state {
         TermState::Include => ChipState::Include,
@@ -146,6 +151,7 @@ pub fn parts(tab: &Entity<Tab>, window: &Window, cx: &App) -> TabParts {
                 .error(d.filter.error.clone())
                 .context(context_items, context_selected)
                 .summary(spec.summary().into())
+                .hint(filter_hint(crate::document::exclude_allowed(cx)).into())
                 .chip_colors(t.styler().map(|s| s.chips()))
                 .focused(t.focus[1].is_focused(window))
                 .on_cycle(tab_act_ix(tab, |t, i, _, cx| t.doc.update(cx, |d, cx| d.cycle_term(i, cx))))

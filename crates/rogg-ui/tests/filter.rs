@@ -15,7 +15,8 @@ fn state_cycles_include_off_exclude() {
     assert_eq!(ChipState::Include.next(), ChipState::Off);
     assert_eq!(ChipState::Off.next(), ChipState::Exclude);
     assert_eq!(ChipState::Exclude.next(), ChipState::Include);
-    assert_eq!([ChipState::Include.label(), ChipState::Off.label(), ChipState::Exclude.label()], ["IN", "OFF", "NOT"]);
+    // Shown as the icon's tooltip; the chip itself carries no state text.
+    assert_eq!([ChipState::Include.name(), ChipState::Off.name(), ChipState::Exclude.name()], ["Included", "Off", "Excluded"]);
 }
 
 #[gpui_kit::test]
@@ -35,10 +36,10 @@ fn chips_and_flags_use_reference_heights(cx: &mut TestAppContext) {
 fn chip_state_segment_includes_the_transparent_button_border(cx: &mut TestAppContext) {
     common::setup(cx);
     let w = common::open(cx, 1200., 200., |_, _| FilterBand::new(terms(1)).into_any_element());
-    // `.state`: 1px transparent left border + 5px padding + 11px icon + 4px gap + label + 5px padding + 1px divider.
-    // The test text system lays out the 9px "IN" label 11px wide, so 38px; 26px tall inside the chip's 1px border.
+    // `.state` is icon-only: 7px padding + 11px icon + 6px padding + 1px divider = 25px; 26px tall inside the chip's
+    // 1px border. (With the "IN" label it was 38px.)
     let state = common::bounds(cx, w, "token-state-0");
-    assert_eq!((state.size.width, state.size.height), (px(38.), px(26.)));
+    assert_eq!((state.size.width, state.size.height), (px(25.), px(26.)));
 }
 
 #[gpui_kit::test]

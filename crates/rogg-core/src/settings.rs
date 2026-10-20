@@ -76,6 +76,8 @@ pub struct BehaviorSettings {
     pub omitted_markers: bool,
     /// Whether rogg looks for a newer build a few seconds after it starts.
     pub check_updates: bool,
+    /// Whether a filter chip can exclude (Include → Off → Exclude); off, a click toggles Include ↔ Off.
+    pub exclude_terms: bool,
 }
 
 impl Default for BehaviorSettings {
@@ -92,6 +94,7 @@ impl Default for BehaviorSettings {
             default_profile: DEFAULT_PROFILE_NAME.into(),
             omitted_markers: true,
             check_updates: true,
+            exclude_terms: false,
         }
     }
 }

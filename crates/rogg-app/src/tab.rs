@@ -160,8 +160,17 @@ impl Tab {
     pub fn new(source: Source, init: TabInit, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let doc = cx.new(|cx| Document::new(source, init.doc, cx));
         let empty: Rc<dyn LogRowSource> = Rc::new(VecRows::new(Vec::new()));
-        let full = cx.new(|_| LogViewState::new(empty.clone()));
-        let filtered = cx.new(|_| LogViewState::new(empty));
+        let allow_exclude = crate::document::exclude_allowed(cx);
+        let full = cx.new(|_| {
+            let mut s = LogViewState::new(empty.clone());
+            s.set_allow_exclude(allow_exclude);
+            s
+        });
+        let filtered = cx.new(|_| {
+            let mut s = LogViewState::new(empty);
+            s.set_allow_exclude(allow_exclude);
+            s
+        });
         let find = [FindField::state("Find in full log", window, cx), FindField::state("Find in results", window, cx)];
         let subscriptions = vec![
             cx.observe(&doc, |tab, _, cx| tab.sync_rows(cx)),
@@ -354,6 +363,19 @@ impl Tab {
     /// Rebuilds the row sources whose document data changed: the full log on text, pins or its search; the filtered log
     /// on text, the filtered view or its search. When only the text grew, the full log's rows are extended (keeping
     /// measured wrapped heights).
+    /// The exclude setting changed: the log menus follow it, and with excluding off, NOT terms become Off.
+    pub fn sync_exclude(&mut self, cx: &mut Context<Self>) {
+        let allow = crate::document::exclude_allowed(cx);
+        for pane in [self.full.clone(), self.filtered.clone()] {
+            pane.update(cx, |s, _| s.set_allow_exclude(allow));
+        }
+        self.doc.update(cx, |d, cx| {
+            let spec = d.filter.spec.clone();
+            let _ = d.apply_spec(spec, cx);
+        });
+        cx.notify();
+    }
+
     pub fn sync_rows(&mut self, cx: &mut Context<Self>) {
         let (now, full_rows, filtered_rows) = {
             let doc = self.doc.read(cx);

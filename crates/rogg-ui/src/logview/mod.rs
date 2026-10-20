@@ -58,6 +58,7 @@ fn label_token(token: &str) -> String {
 /// Spec §5.5 context menu, built from the target recorded by the right-click.
 fn context_menu(menu: PopupMenu, state: &Entity<LogViewState>, cx: &App) -> PopupMenu {
     let Some(target) = state.read(cx).context_target().cloned() else { return menu };
+    let allow_exclude = state.read(cx).allow_exclude();
     let number = target.number;
     let (s1, s2, s3, s6) = (state.clone(), state.clone(), state.clone(), state.clone());
     let menu = menu
@@ -72,16 +73,22 @@ fn context_menu(menu: PopupMenu, state: &Entity<LogViewState>, cx: &App) -> Popu
             let (include, exclude) = (token.clone(), token.clone());
             let (s4, s5) = (state.clone(), state.clone());
             let label = label_token(&token);
-            menu.item(
+            let menu = menu.item(
                 PopupMenuItem::new(format!("Filter on “{label}”"))
                     .on_click(move |_, _, cx| emit(&s4, LogViewEvent::AddTerm { text: include.clone(), exclude: false }, cx)),
-            )
-            .item(
+            );
+            if !allow_exclude {
+                return menu;
+            }
+            menu.item(
                 PopupMenuItem::new(format!("Exclude “{label}”"))
                     .on_click(move |_, _, cx| emit(&s5, LogViewEvent::AddTerm { text: exclude.clone(), exclude: true }, cx)),
             )
         }
-        None => menu.item(PopupMenuItem::new("Filter on selection").disabled(true)).item(PopupMenuItem::new("Exclude selection").disabled(true)),
+        None => {
+            let menu = menu.item(PopupMenuItem::new("Filter on selection").disabled(true));
+            if allow_exclude { menu.item(PopupMenuItem::new("Exclude selection").disabled(true)) } else { menu }
+        }
     }
 }
 

@@ -123,6 +123,9 @@ pub fn render(this: &Entity<Workspace>, cx: &App) -> DialogFrame {
         .child(FormRow::new("row-case", "Case-sensitive filters in new tabs").control(
             Toggle::new("setting-case", b.case_sensitive).on_click(change(this, |s| s.behavior.case_sensitive = !s.behavior.case_sensitive)),
         ))
+        .child(FormRow::new("row-exclude", "Allow excluding filter terms (NOT)").control(
+            Toggle::new("setting-exclude-terms", b.exclude_terms).on_click(change(this, |s| s.behavior.exclude_terms = !s.behavior.exclude_terms)),
+        ))
         .child(FormRow::new("row-omitted", "Show omitted-line markers in the filtered log").control(
             Toggle::new("setting-omitted", b.omitted_markers).on_click(change(this, |s| s.behavior.omitted_markers = !s.behavior.omitted_markers)),
         ))

@@ -5,6 +5,7 @@ use crate::keys::shortcut_label;
 use crate::theme::{ActiveRoggTheme, ChipColor, Color, Palette, size};
 use crate::{Callback, IndexCallback};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, CursorStyle, EmptyView, Entity, Pixels, Point, SharedString, TestSupportExt, Window, div, px};
 use std::rc::Rc;
@@ -26,11 +27,12 @@ impl ChipState {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    /// The state's name, shown as the state icon's tooltip.
+    pub fn name(self) -> &'static str {
         match self {
-            ChipState::Include => "IN",
-            ChipState::Off => "OFF",
-            ChipState::Exclude => "NOT",
+            ChipState::Include => "Included",
+            ChipState::Off => "Off",
+            ChipState::Exclude => "Excluded",
         }
     }
 
@@ -51,7 +53,7 @@ pub fn chip_color(index: usize, overrides: Option<&[ChipColor]>, p: &Palette) ->
     }
 }
 
-/// `.token`: clickable state segment + monospace term; colored by slot, neutral when off, struck through when excluded.
+/// `.token`: clickable state icon + monospace term; colored by slot, neutral when off, struck through when excluded.
 #[derive(IntoElement)]
 pub struct FilterChip {
     index: usize,
@@ -89,6 +91,7 @@ impl RenderOnce for FilterChip {
             _ => (slot.border, slot.bg, slot.term),
         };
         let i = self.index;
+        let name = self.state.name();
         let on_cycle = self.on_cycle;
         div()
             .id(SharedString::from(format!("token-{i}")))
@@ -110,21 +113,17 @@ impl RenderOnce for FilterChip {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .gap(px(4.))
                     .h_full()
-                    // `.state` is a button: 1px transparent border on top/bottom/left plus 5px padding.
-                    .pl(px(6.))
-                    .pr(px(5.))
+                    // Icon only: the state's name is the tooltip.
+                    .pl(px(7.))
+                    .pr(px(6.))
                     .rounded_l(px(3.))
                     .border_r_1()
                     .border_color(p.chip_divider)
-                    .font_family(t.fonts.ui.clone())
-                    .text_size(s.px(9.))
-                    .text_color(p.muted)
                     .cursor_pointer()
                     .hover(move |s| s.bg(p.hover))
+                    .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
                     .child(icon(self.state.icon()).size(px(11.)).text_color(p.muted))
-                    .child(self.state.label())
                     .on_click(move |_, window, cx| {
                         if let Some(f) = &on_cycle {
                             f(window, cx)

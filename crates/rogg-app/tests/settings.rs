@@ -154,6 +154,14 @@ fn the_settings_dialog_applies_each_change_at_once(cx: &mut TestAppContext) {
     common::click(cx, w, "setting-context-up");
     common::click(cx, w, "setting-context-up");
     common::click(cx, w, "setting-cache-down");
+    // The dialog body scrolls; the last rows sit below the fold of the 900 px test window.
+    cx.update_window(w, |_, window, cx| {
+        use gpui_kit::test::TestWindowExt;
+        use gpui_kit::{ScrollDelta, point, px};
+        window.render_frame(cx);
+        window.scroll("dialog-body", ScrollDelta::Pixels(point(px(0.), px(-400.))), cx);
+    })
+    .unwrap();
     common::click(cx, w, "setting-depth-down");
     cx.update(|cx| {
         let s = SettingsStore::get(cx);

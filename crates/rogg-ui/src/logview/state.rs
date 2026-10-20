@@ -91,6 +91,8 @@ pub struct LogViewState {
     pub(crate) scroll_x: f32,
     pub(crate) max_scroll_x: f32,
     pub(crate) wrap: bool,
+    /// Whether the context menu offers "Exclude …" (the `behavior.exclude_terms` setting).
+    pub(crate) allow_exclude: bool,
     pub(crate) tail: bool,
     /// The selection head (the line moved by the keyboard and shown in the status bar).
     pub(crate) selected: Option<u64>,
@@ -133,6 +135,7 @@ impl LogViewState {
             scroll_x: 0.,
             max_scroll_x: 0.,
             wrap: false,
+            allow_exclude: true,
             tail: false,
             selected: None,
             range_anchor: None,
@@ -278,6 +281,14 @@ impl LogViewState {
 
     pub fn wrap(&self) -> bool {
         self.wrap
+    }
+
+    pub fn allow_exclude(&self) -> bool {
+        self.allow_exclude
+    }
+
+    pub fn set_allow_exclude(&mut self, on: bool) {
+        self.allow_exclude = on;
     }
 
     pub fn set_wrap(&mut self, wrap: bool, cx: &mut Context<Self>) {

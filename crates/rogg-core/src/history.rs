@@ -157,7 +157,7 @@ mod tests {
             context: 2,
         };
         assert_eq!(HistoryEntry::from_spec(&spec).summary(), "2 include · 1 exclude · 1 off · regex · case · ±2");
-        assert_eq!(entry("a").summary(), "1 include · 0 exclude · 0 off");
+        assert_eq!(entry("a").summary(), "1 on · 0 off", "without exclusions the summary is on / off");
     }
 
     #[test]
